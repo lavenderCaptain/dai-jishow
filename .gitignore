@@ -1,0 +1,28 @@
+# Build directories
+build/
+cmake-build-*/
+.DS_Store
+
+# C++ / Compiled artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.xcframework
+
+# Corpus raw downloads & compiled SQLite DBs (regenerated via tools/corpus-builder)
+tools/corpus-builder/raw_data/
+*.db
+*.db-wal
+*.db-shm
+
+# Apple / Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+
+# Android / Gradle
+.gradle/
+local.properties
+*.apk
+*.aab
