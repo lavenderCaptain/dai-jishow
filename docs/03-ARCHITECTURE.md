@@ -1,0 +1,62 @@
+# 03 — Cross-Platform Architecture & C11 ABI
+
+## 1. Architectural Pattern: Hub-and-Spoke Native Core
+
+Dai-Jishow uses a **shared C++20 core** exposed through a **flat C11 ABI (`dj_capi.h`)**, consumed by thin, 100% native UI shells on each OS family (SwiftUI + Metal on Apple; Jetpack Compose + AGSL on Android).
+
+```text
+  [ macOS ]   [ iOS / iPadOS ]   [ watchOS ]          [ Android ]   [ Wear OS ]
+      \              |               /                     \            /
+       +-------------+--------------+                       +----------+
+                     |                                            |
+          Swift 6 Direct C Interop                     Thin JNI Wrapper (dj-jni)
+                     \                                            /
+                      +--------------------+---------------------+
+                                           |
+                           C11 ABI Boundary (dj_capi.h)
+                                           |
+                     +---------------------+---------------------+
+                     |            C++20 Core Engine              |
+                     |  dj_storage | dj_nlp | dj_graph | dj_state|
+                     +---------------------+---------------------+
+                                           |
+                         Read-Only mmap SQLite (daijishow.db)
+```
+
+---
+
+## 2. Resource & Performance Budgets
+
+* **Zero VM / Web Overhead:** No Electron, Chromium, React Native, or JavaScript engines.
+* **Memory-Mapped Corpus:** `daijishow.db` is opened with `SQLITE_OPEN_READONLY` and `PRAGMA mmap_size = 268435456`. The OS kernel faults in only the exact 4 KB B-tree pages queried.
+* **Target Budgets:**
+  * **Binary Code Size:** `< 8 MB` (Desktop/Mobile), `< 4 MB` (Watch).
+  * **Idle Resident Memory (RSS):** `< 20 MB` (Desktop/Mobile), `< 12 MB` (Watch).
+  * **Query / Fisheye Solve Latency:** `< 0.5 ms` per frame.
+
+---
+
+## 3. Core C++20 Modules (`core/`)
+
+### 3.1 `dj_storage`
+* Wraps SQLite3 (`WITHOUT ROWID` tables, FTS5 contentless prefix/substring indexes, and `ATTACH DATABASE` support for user-imported Yomitan ZIP dictionaries).
+* Decodes quantized binary KanjiVG polylines (`uint16` coordinate streams) and pre-tokenized example sentence span blobs.
+
+### 3.2 `dj_nlp`
+* **Morphological Analyzer:** Embeds `libmecab` with a compact binary dictionary for sub-millisecond tokenization of live OCR text and recursive Japanese definition jumps.
+* **Wa-puro Romaji Parser:** Deterministic state machine converting Romaji (`dzu/tzu`, `n'ya`, double-consonant small *tsu*, `toukyou`) to Hiragana/Katakana.
+* **Reverse De-Inflector & Grammar/Idiom Matcher:** Strips verb/adjective agglutinations back to canonical `entry_id` lemmas, matches conjugated multi-word idioms via `idiom_triggers`, and annotates Japanese historical era dates (`Gengō`) and counters.
+
+### 3.3 `dj_graph`
+* Queries precomputed bidirectional `kanji_edges` (2-kanji compounds, *Yojijukugo*, and look-alike confusables).
+* Computes normalized 2D polar fisheye coordinates (`[-1.0, +1.0]`), node scales, and frequency-weighted opacities in C++ so Metal and AGSL render identical geometry without duplicating math.
+
+### 3.4 `dj_state`
+* Owns the 3D Z-Stack (`std::vector<ZCard>`), zoom-out camera state, persistent **6-Kanji Compound Ring**, **16-Search History Ring**, active-recall display masks (`Full / Hide Kana / Hide Gloss`), and SRS flashcard progress (`user_state.db`).
+
+---
+
+## 4. C11 ABI Contract (`core/include/dj_capi.h`)
+
+* **Memory Ownership:** Strings and arrays returned via `out_*` pointers live inside a per-engine arena buffer owned by `dj_engine_t` and remain valid until the next call on that handle—eliminating manual `free()` boilerplate across Swift and JNI.
+* **Coordinate Space:** All spatial coordinates (`norm_x`, `norm_y`, `z_depth`, `blur_radius`, `scale`) are normalized floats ready for GPU shader uniforms.
