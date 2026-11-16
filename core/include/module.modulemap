@@ -1,0 +1,4 @@
+module DaiJishowCore {
+    header "dj_capi.h"
+    export *
+}

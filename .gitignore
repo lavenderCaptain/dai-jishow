@@ -26,3 +26,11 @@ DerivedData/
 local.properties
 *.apk
 *.aab
+.build/
+.swiftpm/
+*.db
+*.db-wal
+*.db-shm
+build/
+data/
+.DS_Store

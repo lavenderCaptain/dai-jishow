@@ -1,17 +1,32 @@
 #!/usr/bin/env python3
-"""Compiles JMdict, KANJIDIC2, KanjiVG, and derived Dokusha graphs into daijishow.db."""
+"""
+Dai-Jishow Offline Corpus Compiler (build_corpus.py)
+====================================================
+Ingests open Japanese linguistic corpora (JMdict, KANJIDIC2, KanjiVG, Kanjium
+pitch accents, Tatoeba example sentences, and JMnedict proper names) and compiles
+them into a single, normalized, read-only SQLite database (`daijishow.db`).
+
+Design Principles:
+  - Zero-bloat runtime: Tables use `WITHOUT ROWID` and covering B-tree indexes
+    so the C++20 core can memory-map (`mmap`) the database and answer prefix
+    and graph queries in < 0.2 ms with near-zero active RAM.
+  - All XML entity expansions (e.g., `&yoji;` -> `"yojijukugo"`) and graph
+    deduplication rules are baked directly into this mainline pipeline.
+"""
 
 import argparse
+import bz2
 import gzip
 import math
+import re
 import sqlite3
 import struct
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Set, Tuple
 
-from pack_kanjivg import pack_strokes_blob
+from pack_kanjivg import extract_component_radicals, pack_strokes_blob
 
 RAW_DIR = Path(__file__).parent / "raw_data"
 
@@ -20,6 +35,8 @@ PRAGMA journal_mode = OFF;
 PRAGMA synchronous = OFF;
 PRAGMA page_size = 4096;
 
+-- Primary vocabulary & proper-name headword table.
+-- WITHOUT ROWID clusters rows directly on `entry_id` B-tree pages.
 CREATE TABLE entries (
     entry_id        INTEGER PRIMARY KEY,
     kanji_head      TEXT,
@@ -27,14 +44,19 @@ CREATE TABLE entries (
     alt_forms       TEXT,
     pos_mask        INTEGER NOT NULL DEFAULT 0,
     register_mask   INTEGER NOT NULL DEFAULT 0,
-    pitch_accent    INTEGER NOT NULL DEFAULT 255,
+    pitch_accent    INTEGER NOT NULL DEFAULT 255, -- 255=unknown, 0=Heiban, 1..N=drop mora
     freq_overall    INTEGER NOT NULL DEFAULT 999999,
     freq_novel      INTEGER NOT NULL DEFAULT 999999,
     freq_anime      INTEGER NOT NULL DEFAULT 999999,
     freq_news       INTEGER NOT NULL DEFAULT 999999,
-    pair_entry_id   INTEGER,
-    is_name         INTEGER NOT NULL DEFAULT 0
+    pair_entry_id   INTEGER,                    -- Transitive <-> Intransitive partner ID
+    is_name         INTEGER NOT NULL DEFAULT 0  -- 0=general vocab, 1=JMnedict proper name
 ) WITHOUT ROWID;
+
+-- Covering B-tree indexes for sub-millisecond prefix range scans (`>= q AND < q + U+FFFF`).
+-- Partitioning by `is_name` keeps general dictionary lookups isolated from 740k proper names.
+CREATE INDEX idx_entries_kana  ON entries(is_name, kana_head, freq_overall);
+CREATE INDEX idx_entries_kanji ON entries(is_name, kanji_head, freq_overall);
 
 CREATE TABLE senses (
     entry_id        INTEGER NOT NULL,
@@ -46,6 +68,7 @@ CREATE TABLE senses (
     PRIMARY KEY (entry_id, sense_idx)
 ) WITHOUT ROWID;
 
+-- Contentless FTS5 index for fast English gloss full-text search without duplicating strings.
 CREATE VIRTUAL TABLE entries_fts USING fts5(
     kanji_head,
     kana_head,
@@ -70,7 +93,7 @@ CREATE TABLE kanji (
     on_readings     TEXT NOT NULL,
     kun_readings    TEXT NOT NULL,
     meanings        TEXT NOT NULL,
-    stroke_blob     BLOB NOT NULL
+    stroke_blob     BLOB NOT NULL               -- Quantized uint16 polyline stroke vectors
 ) WITHOUT ROWID;
 
 CREATE TABLE kanji_radicals (
@@ -79,6 +102,7 @@ CREATE TABLE kanji_radicals (
     PRIMARY KEY (radical_id, codepoint)
 ) WITHOUT ROWID;
 
+-- Precomputed Dokusha directional compound graph (Left=Prefix, Right=Suffix, 2=Yojijukugo).
 CREATE TABLE kanji_edges (
     center_cp       INTEGER NOT NULL,
     edge_kind       INTEGER NOT NULL,
@@ -92,7 +116,7 @@ CREATE TABLE kanji_edges (
 
 CREATE TABLE idioms (
     entry_id         INTEGER PRIMARY KEY,
-    idiom_kind       INTEGER NOT NULL,
+    idiom_kind       INTEGER NOT NULL,          -- 1=Yojijukugo, 2=Kan'yoku, 3=Kotowaza
     literal_gloss    TEXT,
     figurative_gloss TEXT NOT NULL,
     en_equivalent    TEXT,
@@ -125,7 +149,7 @@ CREATE TABLE sentences (
     sent_id         INTEGER PRIMARY KEY,
     jp_text         TEXT NOT NULL,
     en_text         TEXT NOT NULL,
-    token_spans     BLOB NOT NULL
+    token_spans     BLOB NOT NULL               -- Packed [byte_off:u16, byte_len:u16, entry_id:u32]
 ) WITHOUT ROWID;
 
 CREATE TABLE sentence_index (
@@ -140,7 +164,67 @@ POS_BITS = {
     "vt": 1 << 4, "vi": 1 << 5, "adj-i": 1 << 6, "adj-na": 1 << 7,
     "adv": 1 << 8, "exp": 1 << 9, "prt": 1 << 10, "yoji": 1 << 11,
     "id": 1 << 12, "on-mim": 1 << 13, "hon": 1 << 14, "hum": 1 << 15,
+    "pol": 1 << 16, "col": 1 << 17, "sl": 1 << 18, "arch": 1 << 19,
+    "ksb": 1 << 20, "proverb": 1 << 21,
 }
+
+def map_pos_text(text: str) -> int:
+    """Maps both short EDICT codes and XML-expanded JMdict entity descriptions to POS bitmasks."""
+    t = text.strip("&;").lower()
+    if t in POS_BITS:
+        return POS_BITS[t]
+    bits = 0
+    if t.startswith("noun") or t == "n":
+        bits |= POS_BITS["n"]
+    if "ichidan verb" in t:
+        bits |= POS_BITS["v1"]
+    if "godan verb" in t:
+        bits |= POS_BITS["v5"]
+    if "suru" in t:
+        bits |= POS_BITS["vs"]
+    if "transitive verb" in t and "intransitive" not in t:
+        bits |= POS_BITS["vt"]
+    if "intransitive verb" in t:
+        bits |= POS_BITS["vi"]
+    if "adjective (keiyoushi)" in t:
+        bits |= POS_BITS["adj-i"]
+    if "adjectival nouns" in t or "quasi-adjectives" in t:
+        bits |= POS_BITS["adj-na"]
+    if t.startswith("adverb"):
+        bits |= POS_BITS["adv"]
+    if t.startswith("expressions"):
+        bits |= POS_BITS["exp"]
+    if t == "particle":
+        bits |= POS_BITS["prt"]
+    return bits
+
+def map_misc_text(text: str) -> int:
+    """Maps XML-expanded JMdict <misc> descriptions (yojijukugo, idioms, keigo, etc.) to bitmasks."""
+    t = text.strip("&;").lower()
+    if t in POS_BITS:
+        return POS_BITS[t]
+    bits = 0
+    if "yojijukugo" in t:
+        bits |= POS_BITS["yoji"]
+    if "idiomatic expression" in t:
+        bits |= POS_BITS["id"]
+    if "proverb" in t:
+        bits |= POS_BITS["proverb"]
+    if "onomatopoeic" in t or "mimetic" in t:
+        bits |= POS_BITS["on-mim"]
+    if "honorific" in t or "sonkeigo" in t:
+        bits |= POS_BITS["hon"]
+    if "humble" in t or "kenjougo" in t:
+        bits |= POS_BITS["hum"]
+    if "polite" in t or "teineigo" in t:
+        bits |= POS_BITS["pol"]
+    if "colloquial" in t:
+        bits |= POS_BITS["col"]
+    if "slang" in t:
+        bits |= POS_BITS["sl"]
+    if "archaism" in t or "archaic" in t:
+        bits |= POS_BITS["arch"]
+    return bits
 
 def is_kanji(ch: str) -> bool:
     cp = ord(ch)
@@ -175,84 +259,28 @@ def priority_to_rank(pri_tags: List[str]) -> int:
                 pass
     return 150000
 
-def build_sample_data(conn: sqlite3.Connection) -> None:
-    """Populates a realistic mini-corpus for immediate C++/UI development."""
-    cur = conn.cursor()
-
-    sample_entries = [
-        (1001, "称賛", "しょうさん", "賞賛", POS_BITS["n"] | POS_BITS["vs"] | POS_BITS["vt"], 0, 0, 3200, None, "praise; admiration; applause", "ほめたたえること。"),
-        (1002, "愛称", "あいしょう", None, POS_BITS["n"], 0, 0, 4100, None, "pet name; nickname; term of endearment", "親しみをこめて呼ぶ名前。"),
-        (1003, "名称", "めいしょう", None, POS_BITS["n"], 0, 0, 1800, None, "name; title; designation", "物事の呼び名。"),
-        (1004, "称号", "しょうごう", None, POS_BITS["n"], 0, 0, 5600, None, "title; degree; appellation", "身分や資格を表す呼び名。"),
-        (1005, "自称", "じしょう", None, POS_BITS["n"] | POS_BITS["vs"], 0, 0, 4900, None, "self-styled; self-proclaimed", "自分でそう名乗ること。"),
-        (1006, "異称", "いしょう", None, POS_BITS["n"], 0, 0, 28000, None, "another name; alias; epithet", "通常の呼び名と異なる名。"),
-        (1007, "開く", "あく", None, POS_BITS["v5"] | POS_BITS["vi"], 0, 0, 650, 1008, "to open (intransitive); to become empty", "閉じていたものが開いた状態になる。"),
-        (1008, "開ける", "あける", None, POS_BITS["v1"] | POS_BITS["vt"], 0, 3, 720, 1007, "to open (transitive); to unwrap", "閉じたものを開いた状態にする。"),
-        (1009, "猫の手も借りたい", "ねこのてもかりたい", None, POS_BITS["exp"] | POS_BITS["id"], 0, 255, 9500, None, "to be extremely busy (so busy one would borrow a cat's paw)", "非常に忙しくて誰でもいいから手伝ってほしい様子。"),
-        (1010, "一石二鳥", "いっせきにちょう", None, POS_BITS["n"] | POS_BITS["yoji"], 0, 255, 6200, None, "killing two birds with one stone", "一つの行為で二つの利益を得ること。"),
-    ]
-
-    for eid, khead, kread, alt, pos, reg, pitch, freq, pair_id, en_g, ja_g in sample_entries:
-        cur.execute(
-            "INSERT INTO entries VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (eid, khead, kread, alt, pos, reg, pitch, freq, freq, freq, freq, pair_id, 0),
-        )
-        cur.execute("INSERT INTO senses VALUES (?,?,?,?,?,?)", (eid, 0, pos, en_g, ja_g, None))
-        cur.execute("INSERT INTO entries_fts(rowid, kanji_head, kana_head, en_glosses) VALUES (?,?,?,?)",
-                    (eid, khead or "", kread, en_g))
-
-    # Idioms
-    cur.execute(
-        "INSERT INTO idioms VALUES (?,?,?,?,?,?,?)",
-        (1009, 2, "Want to borrow even a cat's paw", "To be swamped with work / extremely busy",
-         "Up to one's eyeballs in work", None, "猫,手,借りる"),
-    )
-    cur.execute(
-        "INSERT INTO idioms VALUES (?,?,?,?,?,?,?)",
-        (1010, 1, "One stone, two birds", "Achieving two goals with a single effort",
-         "Kill two birds with one stone", "From Jin Shu (Book of Jin)", "一,石,二,鳥"),
-    )
-
-    # Sample Kanji ('称', '賛', '愛', '開')
-    dummy_blob = pack_strokes_blob(["M 20,20 L 80,20", "M 50,15 L 50,90"])
-    sample_kanji = [
-        (ord("称"), 10, 8, 2, 3, 1180, 115, 0x3E4E, pack_skip("1-5-5"), pack_four_corner("2799.2"),
-         ord("稱"), None, "ショウ", "たた.える,とな.える", "appellation, praise, admire, title", dummy_blob),
-        (ord("賛"), 15, 5, 2, 5, 920, 154, 0x3B3F, pack_skip("2-8-7"), pack_four_corner("2480.6"),
-         ord("贊"), None, "サン", "たす.ける,たた.える", "approve, praise, title, assist", dummy_blob),
-        (ord("愛"), 13, 4, 3, 7, 640, 61, 0x3026, pack_skip("2-4-9"), pack_four_corner("2024.7"),
-         None, None, "アイ", "いと.しい,め.でる", "love, affection, favourite", dummy_blob),
-        (ord("開"), 12, 3, 4, 8, 210, 169, 0x332B, pack_skip("3-8-4"), pack_four_corner("7744.1"),
-         None, None, "カイ", "ひら.く,あ.く,あ.ける", "open, unfold, unseal", dummy_blob),
-    ]
-    for row in sample_kanji:
-        cur.execute("INSERT INTO kanji VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
-        cur.execute("INSERT INTO kanji_radicals VALUES (?,?)", (row[6], row[0]))
-
-    # Dokusha Prefix/Suffix Edges around '称'
-    edges = [
-        (ord("称"), 0, 0, ord("愛"), 1002, 1, 8.4),
-        (ord("称"), 0, 1, ord("名"), 1003, 1, 9.1),
-        (ord("称"), 0, 2, ord("自"), 1005, 1, 7.8),
-        (ord("称"), 0, 3, ord("異"), 1006, 1, 5.2),
-        (ord("称"), 1, 0, ord("賛"), 1001, 1, 8.9),
-        (ord("称"), 1, 1, ord("号"), 1004, 1, 7.6),
-    ]
-    cur.executemany("INSERT INTO kanji_edges VALUES (?,?,?,?,?,?,?)", edges)
-
-    # Sample Sentence
-    jp = "彼の勇気ある行動は多くの人々から称賛された。"
-    en = "His courageous actions were praised by many people."
-    # Span for '称賛' at UTF-8 byte offset 39, length 6 -> entry_id 1001
-    off = len("彼の勇気ある行動は多くの人々から".encode("utf-8"))
-    spans = struct.pack("<HHI", off, len("称賛".encode("utf-8")), 1001)
-    cur.execute("INSERT INTO sentences VALUES (?,?,?,?)", (1, jp, en, spans))
-    cur.execute("INSERT INTO sentence_index VALUES (?,?)", (1001, 1))
+def load_kanjium_accents(path: Path) -> Dict[Tuple[str, str], int]:
+    accents: Dict[Tuple[str, str], int] = {}
+    if not path.exists():
+        print(f"[warn]  {path.name} not found; skipping pitch accents")
+        return accents
+    print(f"[parse] {path.name} ...")
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= 3:
+                orth, read, acc_str = parts[0].strip(), parts[1].strip(), parts[2].strip()
+                m = re.search(r"(\d+)", acc_str)
+                if m:
+                    pos = int(m.group(1))
+                    accents[(orth, read)] = pos
+                    accents.setdefault(("", read), pos)
+    print(f"[done]  Loaded {len(accents)} pitch-accent entries")
+    return accents
 
 def parse_kanjivg(gz_path: Path) -> Dict[int, Tuple[bytes, List[int]]]:
-    """Returns {codepoint: (packed_stroke_blob, [radical_ids])}."""
     if not gz_path.exists():
-        print(f"[warn] {gz_path} not found; skipping stroke vectors")
+        print(f"[warn]  {gz_path.name} not found; skipping stroke vectors")
         return {}
     print(f"[parse] {gz_path.name} ...")
     out: Dict[int, Tuple[bytes, List[int]]] = {}
@@ -264,19 +292,21 @@ def parse_kanjivg(gz_path: Path) -> Dict[int, Tuple[bytes, List[int]]]:
                     try:
                         cp = int(kid.split("_")[-1], 16)
                         paths = [p.attrib["d"] for p in elem.iter() if p.tag.endswith("path") and "d" in p.attrib]
-                        out[cp] = (pack_strokes_blob(paths), [])
+                        rads = extract_component_radicals(elem)
+                        out[cp] = (pack_strokes_blob(paths), rads)
                     except ValueError:
                         pass
                 elem.clear()
-    print(f"[done]  Loaded {len(out)} KanjiVG stroke diagrams")
+    print(f"[done]  Loaded {len(out)} KanjiVG stroke diagrams & sub-radical trees")
     return out
 
 def parse_kanjidic2(gz_path: Path, conn: sqlite3.Connection, kvg_map: Dict[int, Tuple[bytes, List[int]]]) -> None:
     if not gz_path.exists():
-        raise FileNotFoundError(f"Missing {gz_path}. Run fetch_sources.py first or use --sample.")
+        raise FileNotFoundError(f"Missing {gz_path}. Run fetch_sources.py first.")
     print(f"[parse] {gz_path.name} ...")
     cur = conn.cursor()
     count = 0
+    rad_links = 0
     with gzip.open(gz_path, "rb") as f:
         for _, elem in ET.iterparse(f, events=("end",)):
             if elem.tag == "character":
@@ -323,30 +353,41 @@ def parse_kanjidic2(gz_path: Path, conn: sqlite3.Connection, kvg_map: Dict[int, 
                         if "m_lang" not in m_el.attrib and m_el.text:
                             meanings.append(m_el.text)
 
-                    blob = kvg_map.get(cp, (b"\x00", []))[0]
+                    blob, sub_rads = kvg_map.get(cp, (b"\x00", []))
                     cur.execute(
                         "INSERT OR IGNORE INTO kanji VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (cp, strokes, grade, jlpt, 0, freq, rad_id, jis_code, skip_code, four_corner,
                          None, None, ",".join(on_r), ",".join(kun_r), "; ".join(meanings), blob),
                     )
+                    all_rads = set(sub_rads)
                     if rad_id > 0:
-                        cur.execute("INSERT OR IGNORE INTO kanji_radicals VALUES (?,?)", (rad_id, cp))
+                        all_rads.add(rad_id)
+                    for r in all_rads:
+                        cur.execute("INSERT OR IGNORE INTO kanji_radicals VALUES (?,?)", (r, cp))
+                        rad_links += 1
                     count += 1
                 elem.clear()
-    print(f"[done]  Inserted {count} kanji records")
+    print(f"[done]  Inserted {count} kanji records ({rad_links} multi-radical links)")
 
-def parse_jmdict_and_build_graphs(gz_path: Path, conn: sqlite3.Connection) -> None:
+def parse_jmdict_and_build_graphs(
+    gz_path: Path,
+    conn: sqlite3.Connection,
+    accents: Dict[Tuple[str, str], int],
+) -> Dict[str, int]:
     if not gz_path.exists():
-        raise FileNotFoundError(f"Missing {gz_path}. Run fetch_sources.py first or use --sample.")
+        raise FileNotFoundError(f"Missing {gz_path}. Run fetch_sources.py first.")
     print(f"[parse] {gz_path.name} ...")
     cur = conn.cursor()
 
-    # Track 2-kanji compounds for Dokusha Fisheye Graph:
-    # pair_stats[(c1, c2)] = (best_freq, best_entry_id, count)
     pair_stats: Dict[Tuple[int, int], Tuple[int, int, int]] = {}
     kanji_doc_freq: Dict[int, int] = defaultdict(int)
+    yoji_entries: List[Tuple[str, int, int]] = []
     total_compounds = 0
     entry_count = 0
+
+    surface_to_best: Dict[str, Tuple[int, int]] = {}
+    pending_xrefs: List[Tuple[int, str, int]] = []
+    entry_pos_map: Dict[int, int] = {}
 
     with gzip.open(gz_path, "rb") as f:
         for _, elem in ET.iterparse(f, events=("end",)):
@@ -361,30 +402,41 @@ def parse_jmdict_and_build_graphs(gz_path: Path, conn: sqlite3.Connection) -> No
                 alt_forms = "|".join(k_elems[1:] + r_elems[1:]) or None
                 freq_rank = priority_to_rank(pri_tags)
 
+                pitch = accents.get((kanji_head or "", kana_head), accents.get(("", kana_head), 255))
+
                 all_en_glosses: List[str] = []
                 entry_pos_mask = 0
                 is_yoji = False
                 is_idiom = False
+                is_proverb = False
 
                 for s_idx, sense in enumerate(elem.findall("sense")):
                     s_pos = 0
                     for pos_el in sense.findall("pos"):
-                        code = (pos_el.text or "").strip("&;")
-                        if code in POS_BITS:
-                            s_pos |= POS_BITS[code]
+                        if pos_el.text:
+                            s_pos |= map_pos_text(pos_el.text)
                     for misc_el in sense.findall("misc"):
-                        mcode = (misc_el.text or "").strip("&;")
-                        if mcode == "yoji":
-                            is_yoji = True
-                            s_pos |= POS_BITS["yoji"]
-                        elif mcode == "id":
-                            is_idiom = True
-                            s_pos |= POS_BITS["id"]
-                        elif mcode in POS_BITS:
-                            s_pos |= POS_BITS[mcode]
+                        if misc_el.text:
+                            mbits = map_misc_text(misc_el.text)
+                            s_pos |= mbits
+                            if mbits & POS_BITS["yoji"]:
+                                is_yoji = True
+                            if mbits & POS_BITS["id"]:
+                                is_idiom = True
+                            if mbits & POS_BITS["proverb"]:
+                                is_proverb = True
+
+                    for xref_el in sense.findall("xref"):
+                        if xref_el.text:
+                            target = xref_el.text.split("・")[0].strip()
+                            if target:
+                                pending_xrefs.append((eid, target, s_pos))
 
                     entry_pos_mask |= s_pos
-                    glosses = [g.text for g in sense.findall("gloss") if g.text and g.attrib.get("{http://www.w3.org/XML/1998/namespace}lang", "eng") == "eng"]
+                    glosses = [
+                        g.text for g in sense.findall("gloss")
+                        if g.text and g.attrib.get("{http://www.w3.org/XML/1998/namespace}lang", "eng") == "eng"
+                    ]
                     if glosses:
                         gloss_str = "; ".join(glosses)
                         all_en_glosses.append(gloss_str)
@@ -395,7 +447,7 @@ def parse_jmdict_and_build_graphs(gz_path: Path, conn: sqlite3.Connection) -> No
                     joined_en = " / ".join(all_en_glosses)
                     cur.execute(
                         "INSERT INTO entries VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (eid, kanji_head, kana_head, alt_forms, entry_pos_mask, 0, 255,
+                        (eid, kanji_head, kana_head, alt_forms, entry_pos_mask, 0, pitch,
                          freq_rank, freq_rank, freq_rank, freq_rank, None, 0),
                     )
                     cur.execute(
@@ -403,68 +455,227 @@ def parse_jmdict_and_build_graphs(gz_path: Path, conn: sqlite3.Connection) -> No
                         (eid, kanji_head or "", kana_head, joined_en),
                     )
                     entry_count += 1
+                    entry_pos_map[eid] = entry_pos_mask
 
-                    # Index 2-kanji compounds for Dokusha Fisheye Explorer
-                    if kanji_head and len(kanji_head) == 2 and is_kanji(kanji_head[0]) and is_kanji(kanji_head[1]):
-                        c1, c2 = ord(kanji_head[0]), ord(kanji_head[1])
-                        if c1 != c2 and c1 != 0x3005 and c2 != 0x3005:
-                            kanji_doc_freq[c1] += 1
-                            kanji_doc_freq[c2] += 1
-                            total_compounds += 1
-                            prev = pair_stats.get((c1, c2))
-                            if prev is None:
-                                pair_stats[(c1, c2)] = (freq_rank, eid, 1)
-                            else:
-                                best_f = min(prev[0], freq_rank)
-                                best_e = eid if freq_rank < prev[0] else prev[1]
-                                pair_stats[(c1, c2)] = (best_f, best_e, prev[2] + 1)
+                    for form in k_elems + r_elems:
+                        prev_s = surface_to_best.get(form)
+                        if prev_s is None or freq_rank < prev_s[0]:
+                            surface_to_best[form] = (freq_rank, eid)
 
-                    # Index Idioms & Yojijukugo
-                    if (is_yoji or is_idiom) and kanji_head:
-                        kind = 1 if is_yoji else 2
+                    seen_pairs_for_entry: Set[Tuple[int, int]] = set()
+                    for k_form in k_elems:
+                        if len(k_form) == 2 and is_kanji(k_form[0]) and is_kanji(k_form[1]):
+                            c1, c2 = ord(k_form[0]), ord(k_form[1])
+                            if c1 != c2 and c1 != 0x3005 and c2 != 0x3005 and (c1, c2) not in seen_pairs_for_entry:
+                                seen_pairs_for_entry.add((c1, c2))
+                                kanji_doc_freq[c1] += 1
+                                kanji_doc_freq[c2] += 1
+                                total_compounds += 1
+                                prev = pair_stats.get((c1, c2))
+                                if prev is None:
+                                    pair_stats[(c1, c2)] = (freq_rank, eid, 1)
+                                else:
+                                    best_f = min(prev[0], freq_rank)
+                                    best_e = eid if freq_rank < prev[0] else prev[1]
+                                    pair_stats[(c1, c2)] = (best_f, best_e, prev[2] + 1)
+
+                    if (is_yoji or is_idiom or is_proverb) and kanji_head:
+                        kind = 1 if is_yoji else (3 if is_proverb else 2)
                         anchors = ",".join(dict.fromkeys(ch for ch in kanji_head if is_kanji(ch)))
                         cur.execute(
                             "INSERT OR IGNORE INTO idioms VALUES (?,?,?,?,?,?,?)",
                             (eid, kind, None, joined_en, None, None, anchors),
                         )
+                        if is_yoji and len(kanji_head) == 4 and all(is_kanji(ch) for ch in kanji_head):
+                            yoji_entries.append((kanji_head, eid, freq_rank))
 
                 elem.clear()
 
     print(f"[done]  Inserted {entry_count} dictionary entries")
-    print(f"[graph] Building Dokusha prefix/suffix fisheye edges from {len(pair_stats)} unique 2-kanji pairs ...")
 
+    linked_pairs = 0
+    for eid, target, s_pos in pending_xrefs:
+        target_info = surface_to_best.get(target)
+        if not target_info:
+            continue
+        tid = target_info[1]
+        if tid == eid:
+            continue
+        t_pos = entry_pos_map.get(tid, 0)
+        is_vt_vi = ((s_pos & POS_BITS["vt"]) and (t_pos & POS_BITS["vi"])) or                    ((s_pos & POS_BITS["vi"]) and (t_pos & POS_BITS["vt"]))
+        if is_vt_vi:
+            cur.execute("UPDATE entries SET pair_entry_id = ? WHERE entry_id = ? AND pair_entry_id IS NULL", (tid, eid))
+            cur.execute("UPDATE entries SET pair_entry_id = ? WHERE entry_id = ? AND pair_entry_id IS NULL", (eid, tid))
+            linked_pairs += 1
+    print(f"[done]  Linked {linked_pairs} transitive/intransitive verb pairs")
+
+    print(f"[graph] Building Dokusha fisheye edges from {len(pair_stats)} unique 2-kanji pairs & {len(yoji_entries)} yojijukugo ...")
     left_adj: Dict[int, List[Tuple[float, int, int, int]]] = defaultdict(list)
     right_adj: Dict[int, List[Tuple[float, int, int, int]]] = defaultdict(list)
+    yoji_adj: Dict[int, List[Tuple[float, int, int, int]]] = defaultdict(list)
 
     for (c1, c2), (best_freq, best_eid, cnt) in pair_stats.items():
-        # Combine frequency rank + Pointwise Mutual Information
         p_xy = cnt / max(1, total_compounds)
         p_x = kanji_doc_freq[c1] / max(1, total_compounds)
         p_y = kanji_doc_freq[c2] / max(1, total_compounds)
         pmi = math.log2(max(1e-9, p_xy / (p_x * p_y)))
         score = (1_000_000.0 / max(100, best_freq)) + max(0.0, pmi) * 10.0
 
-        left_adj[c2].append((score, c1, best_eid, cnt))   # c1 precedes center c2
-        right_adj[c1].append((score, c2, best_eid, cnt))  # c2 follows center c1
+        left_adj[c2].append((score, c1, best_eid, cnt))
+        right_adj[c1].append((score, c2, best_eid, cnt))
+
+    for word, eid, freq_rank in yoji_entries:
+        score = 1_000_000.0 / max(100, freq_rank)
+        cps = [ord(ch) for ch in word]
+        for idx, cp in enumerate(cps):
+            partner = cps[(idx + 1) % 4]
+            if partner != cp:
+                yoji_adj[cp].append((score, partner, eid, 1))
+
+    def emit_dedup_edges(adj_map: Dict[int, List[Tuple[float, int, int, int]]], edge_kind: int, max_rank: int) -> List[Tuple]:
+        rows = []
+        for cp, items in adj_map.items():
+            items.sort(key=lambda x: -x[0])
+            seen_eids: Set[int] = set()
+            seen_neighbors: Set[int] = set()
+            rank = 0
+            for score, neighbor, eid, cnt in items:
+                if eid in seen_eids or neighbor in seen_neighbors:
+                    continue
+                seen_eids.add(eid)
+                seen_neighbors.add(neighbor)
+                rows.append((cp, edge_kind, rank, neighbor, eid, cnt, round(score, 3)))
+                rank += 1
+                if rank >= max_rank:
+                    break
+        return rows
 
     edge_rows = []
-    for cp, items in left_adj.items():
-        items.sort(key=lambda x: -x[0])
-        for rank, (score, neighbor, eid, cnt) in enumerate(items[:40]):
-            edge_rows.append((cp, 0, rank, neighbor, eid, cnt, round(score, 3)))
-
-    for cp, items in right_adj.items():
-        items.sort(key=lambda x: -x[0])
-        for rank, (score, neighbor, eid, cnt) in enumerate(items[:40]):
-            edge_rows.append((cp, 1, rank, neighbor, eid, cnt, round(score, 3)))
+    edge_rows.extend(emit_dedup_edges(left_adj, 0, 40))
+    edge_rows.extend(emit_dedup_edges(right_adj, 1, 40))
+    edge_rows.extend(emit_dedup_edges(yoji_adj, 2, 12))
 
     cur.executemany("INSERT INTO kanji_edges VALUES (?,?,?,?,?,?,?)", edge_rows)
-    print(f"[done]  Inserted {len(edge_rows)} directional fisheye edges")
+    print(f"[done]  Inserted {len(edge_rows)} deduplicated directional + yojijukugo fisheye edges")
+
+    return {k: v[1] for k, v in surface_to_best.items()}
+
+def parse_tatoeba_sentences(conn: sqlite3.Connection, surface_to_eid: Dict[str, int], max_pairs: int = 80000) -> None:
+    jpn_path = RAW_DIR / "tatoeba_jpn.tsv.bz2"
+    eng_path = RAW_DIR / "tatoeba_eng.tsv.bz2"
+    links_path = RAW_DIR / "tatoeba_jpn_eng.tsv.bz2"
+    if not (jpn_path.exists() and eng_path.exists() and links_path.exists()):
+        print("[warn]  Tatoeba files not found; skipping example sentences")
+        return
+
+    print("[parse] Tatoeba JP-EN sentence corpus ...")
+    jpn_map: Dict[int, str] = {}
+    with bz2.open(jpn_path, "rt", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= 3:
+                try:
+                    jpn_map[int(parts[0])] = parts[2]
+                except ValueError:
+                    pass
+
+    eng_map: Dict[int, str] = {}
+    with bz2.open(eng_path, "rt", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= 3:
+                try:
+                    eng_map[int(parts[0])] = parts[2]
+                except ValueError:
+                    pass
+
+    cur = conn.cursor()
+    seen_jp: Set[str] = set()
+    sent_count = 0
+    idx_count = 0
+
+    with bz2.open(links_path, "rt", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if sent_count >= max_pairs:
+                break
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 2:
+                continue
+            try:
+                j_id, e_id = int(parts[0]), int(parts[1])
+            except ValueError:
+                continue
+            jp_text = jpn_map.get(j_id)
+            en_text = eng_map.get(e_id)
+            if not jp_text or not en_text or jp_text in seen_jp:
+                continue
+            seen_jp.add(jp_text)
+
+            spans_bytes = bytearray()
+            linked_eids: Set[int] = set()
+            pos = 0
+            n = len(jp_text)
+            while pos < n:
+                matched = False
+                for length in range(min(8, n - pos), 1, -1):
+                    sub = jp_text[pos:pos + length]
+                    eid = surface_to_eid.get(sub)
+                    if eid and any(is_kanji(c) for c in sub):
+                        b_off = len(jp_text[:pos].encode("utf-8"))
+                        b_len = len(sub.encode("utf-8"))
+                        spans_bytes.extend(struct.pack("<HHI", b_off, b_len, eid))
+                        linked_eids.add(eid)
+                        pos += length
+                        matched = True
+                        break
+                if not matched:
+                    pos += 1
+
+            sent_count += 1
+            cur.execute("INSERT INTO sentences VALUES (?,?,?,?)", (sent_count, jp_text, en_text, bytes(spans_bytes)))
+            for eid in linked_eids:
+                cur.execute("INSERT OR IGNORE INTO sentence_index VALUES (?,?)", (eid, sent_count))
+                idx_count += 1
+
+    print(f"[done]  Inserted {sent_count} JP-EN example sentences ({idx_count} lemma links)")
+
+def parse_jmnedict(gz_path: Path, conn: sqlite3.Connection) -> None:
+    if not gz_path.exists():
+        print(f"[warn]  {gz_path.name} not found; skipping proper names")
+        return
+    print(f"[parse] {gz_path.name} (proper names) ...")
+    cur = conn.cursor()
+    count = 0
+    with gzip.open(gz_path, "rb") as f:
+        for _, elem in ET.iterparse(f, events=("end",)):
+            if elem.tag == "entry":
+                raw_id = int(elem.findtext("ent_seq") or 0)
+                eid = 10_000_000 + raw_id
+                k_elems = [ke.findtext("keb") for ke in elem.findall("k_ele") if ke.findtext("keb")]
+                r_elems = [re_el.findtext("reb") for re_el in elem.findall("r_ele") if re_el.findtext("reb")]
+                kanji_head = k_elems[0] if k_elems else None
+                kana_head = r_elems[0] if r_elems else ""
+                glosses = [t.text for t in elem.findall("trans/trans_det") if t.text]
+                if kana_head and glosses:
+                    joined = "; ".join(glosses)
+                    cur.execute(
+                        "INSERT OR IGNORE INTO entries VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (eid, kanji_head, kana_head, None, 1, 0, 255, 250000, 250000, 250000, 250000, None, 1),
+                    )
+                    cur.execute("INSERT OR IGNORE INTO senses VALUES (?,?,?,?,?,?)", (eid, 0, 1, joined, None, None))
+                    cur.execute(
+                        "INSERT INTO entries_fts(rowid, kanji_head, kana_head, en_glosses) VALUES (?,?,?,?)",
+                        (eid, kanji_head or "", kana_head, joined),
+                    )
+                    count += 1
+                elem.clear()
+    print(f"[done]  Inserted {count} JMnedict proper-name entries")
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compile Dai-Jishow SQLite corpus")
     parser.add_argument("--out", type=Path, default=Path("build/daijishow.db"), help="Output SQLite path")
-    parser.add_argument("--sample", action="store_true", help="Build fast sample DB without downloading XML")
+    parser.add_argument("--include-names", action="store_true", help="Include JMnedict proper names")
+    parser.add_argument("--max-sentences", type=int, default=80000, help="Max Tatoeba JP-EN pairs to index")
     args = parser.parse_args()
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -474,13 +685,14 @@ def main() -> None:
     conn = sqlite3.connect(str(args.out))
     conn.executescript(SCHEMA_SQL)
 
-    if args.sample:
-        print("[mode]  Building sample daijishow.db ...")
-        build_sample_data(conn)
-    else:
-        kvg_map = parse_kanjivg(RAW_DIR / "kanjivg.xml.gz")
-        parse_kanjidic2(RAW_DIR / "kanjidic2.xml.gz", conn, kvg_map)
-        parse_jmdict_and_build_graphs(RAW_DIR / "JMdict_e.gz", conn)
+    accents = load_kanjium_accents(RAW_DIR / "kanjium_accents.txt")
+    kvg_map = parse_kanjivg(RAW_DIR / "kanjivg.xml.gz")
+    parse_kanjidic2(RAW_DIR / "kanjidic2.xml.gz", conn, kvg_map)
+    surface_to_eid = parse_jmdict_and_build_graphs(RAW_DIR / "JMdict_e.gz", conn, accents)
+    parse_tatoeba_sentences(conn, surface_to_eid, max_pairs=args.max_sentences)
+
+    if args.include_names:
+        parse_jmnedict(RAW_DIR / "JMnedict.xml.gz", conn)
 
     conn.commit()
     print("[opt]   Running ANALYZE & VACUUM for mmap alignment ...")
