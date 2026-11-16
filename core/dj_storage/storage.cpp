@@ -1,8 +1,3 @@
-/**
- * @file storage.cpp
- * @brief High-speed read-only SQLite query layer over `daijishow.db`.
- */
-
 #include "../dj_internal.hpp"
 #include <algorithm>
 #include <cctype>
@@ -51,7 +46,6 @@ int english_gloss_relevance_tier(const std::string& primary_gloss, const std::st
     if (query_lower.empty() || primary_gloss.empty()) return 3;
     std::string pg = to_lower_ascii(primary_gloss);
 
-    // Split primary_gloss by ';' to inspect individual gloss definitions on sense 0
     size_t start = 0;
     bool exact_any_gloss = false;
     bool prefix_any_gloss = false;
@@ -60,12 +54,10 @@ int english_gloss_relevance_tier(const std::string& primary_gloss, const std::st
     while (start <= pg.size()) {
         size_t semi = pg.find(';', start);
         std::string item = (semi == std::string::npos) ? pg.substr(start) : pg.substr(start, semi - start);
-        // Trim whitespace
         size_t l = item.find_first_not_of(" \t");
         size_t r = item.find_last_not_of(" \t");
         if (l != std::string::npos) {
             item = item.substr(l, r - l + 1);
-            // Strip parenthetical note if any for exact comparison, e.g. "ice (frozen water)"
             std::string core = item;
             size_t paren = core.find('(');
             if (paren != std::string::npos) {
@@ -302,6 +294,26 @@ bool solve_kanji_reading_split(
     return false;
 }
 
+// Lookup sub-compound readings (e.g. `山車` -> `だし` inside `矛山車` = `ほこだし`)
+std::vector<std::vector<uint32_t>> lookup_subword_readings(sqlite3* db, const std::string& sub_kanji) {
+    std::vector<std::vector<uint32_t>> out;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, "SELECT kana_head FROM entries WHERE kanji_head = ?1 ORDER BY freq_overall ASC LIMIT 6;", -1, &stmt, nullptr) != SQLITE_OK) {
+        return out;
+    }
+    sqlite3_bind_text(stmt, 1, sub_kanji.c_str(), -1, SQLITE_TRANSIENT);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const auto* txt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        if (txt && txt[0]) {
+            auto cps = utf8_to_cps(txt);
+            for (auto& k : cps) k = to_hiragana_cp(k);
+            if (!cps.empty()) out.push_back(std::move(cps));
+        }
+    }
+    sqlite3_finalize(stmt);
+    return out;
+}
+
 std::vector<OwnedRubyCell> build_per_kanji_ruby(sqlite3* db, const std::string& surface, const std::string& reading) {
     std::vector<OwnedRubyCell> cells;
     if (surface.empty()) return cells;
@@ -359,6 +371,45 @@ std::vector<OwnedRubyCell> build_per_kanji_ruby(sqlite3* db, const std::string& 
                     encode_utf8(mid_s[i], buf);
                     std::string furi = cps_to_utf8(mid_r, ranges[i].first, ranges[i].second);
                     cells.push_back({buf, std::move(furi), mid_s[i]});
+                }
+            } else if (mid_s.size() == 3) {
+                // Handle 1+2 or 2+1 compounds containing jukujikun (e.g. `矛` + `山車` = `ほこ` + `だし`)
+                bool split_3 = false;
+                // Case A: 1 kanji + 2-kanji jukujikun
+                std::string tail2 = cps_to_utf8(mid_s, 1, 2);
+                for (const auto& t2_read : lookup_subword_readings(db, tail2)) {
+                    if (t2_read.size() < mid_r.size()) {
+                        size_t head_len = mid_r.size() - t2_read.size();
+                        if (kana_prefix_matches(mid_r, head_len, t2_read)) {
+                            char buf0[8];
+                            encode_utf8(mid_s[0], buf0);
+                            cells.push_back({buf0, cps_to_utf8(mid_r, 0, head_len), mid_s[0]});
+                            cells.push_back({tail2, cps_to_utf8(mid_r, head_len, t2_read.size()), 0});
+                            split_3 = true;
+                            break;
+                        }
+                    }
+                }
+                // Case B: 2-kanji jukujikun + 1 kanji
+                if (!split_3) {
+                    std::string head2 = cps_to_utf8(mid_s, 0, 2);
+                    for (const auto& h2_read : lookup_subword_readings(db, head2)) {
+                        if (h2_read.size() < mid_r.size() && kana_prefix_matches(mid_r, 0, h2_read)) {
+                            char buf2[8];
+                            encode_utf8(mid_s[2], buf2);
+                            cells.push_back({head2, cps_to_utf8(mid_r, 0, h2_read.size()), 0});
+                            cells.push_back({buf2, cps_to_utf8(mid_r, h2_read.size(), mid_r.size() - h2_read.size()), mid_s[2]});
+                            split_3 = true;
+                            break;
+                        }
+                    }
+                }
+                if (!split_3) {
+                    cells.push_back({
+                        cps_to_utf8(mid_s, 0, mid_s.size()),
+                        cps_to_utf8(mid_r, 0, mid_r.size()),
+                        0
+                    });
                 }
             } else {
                 cells.push_back({
@@ -513,14 +564,12 @@ std::vector<OwnedWordHit> db_search_words(
 
     sqlite3_finalize(stmt);
 
-    // Re-rank English FTS results so exact primary-gloss matches (e.g. 氷 = "ice") always appear first
     if (use_english_fts && !results.empty()) {
         std::string q_low = to_lower_ascii(query);
         std::stable_sort(results.begin(), results.end(), [&](const OwnedWordHit& a, const OwnedWordHit& b) {
             int ta = english_gloss_relevance_tier(a.primary_gloss, q_low);
             int tb = english_gloss_relevance_tier(b.primary_gloss, q_low);
             if (ta != tb) return ta < tb;
-            // Within exact matches, prefer kanji-headed core Japanese words (e.g. 氷) over loanwords (アイス)
             bool a_has_kanji = !a.kanji_head.empty();
             bool b_has_kanji = !b.kanji_head.empty();
             if (ta == 0 && a_has_kanji != b_has_kanji) return a_has_kanji > b_has_kanji;
@@ -687,6 +736,26 @@ bool db_get_entry_detail(sqlite3* db, uint32_t entry_id, OwnedEntryDetail& out) 
 
                         std::string cand = sent.jp_text.substr(b_start, b_end - b_start);
                         std::string pref_kun = (clen == 1) ? get_primary_standalone_kun(db, char_cps[ci]) : "";
+
+                        // Check place/person names first for 2+ kanji proper nouns when English translation mentions a capitalized name or when standard word entry is rare (e.g. `川越` -> `かわごえ` instead of `川越し` -> `かわこし`)
+                        if (clen >= 2 && name_head_stmt) {
+                            sqlite3_reset(name_head_stmt);
+                            sqlite3_bind_text(name_head_stmt, 1, cand.c_str(), -1, SQLITE_TRANSIENT);
+                            if (sqlite3_step(name_head_stmt) == SQLITE_ROW) {
+                                uint32_t name_eid = static_cast<uint32_t>(sqlite3_column_int64(name_head_stmt, 0));
+                                const auto* nktxt = reinterpret_cast<const char*>(sqlite3_column_text(name_head_stmt, 1));
+                                std::string nk = nktxt ? nktxt : "";
+                                // Prefer name reading if followed by `の` or if English sentence contains a capitalized word
+                                bool followed_by_no = (ci + clen < char_cps.size() && char_cps[ci + clen] == 0x306E);
+                                if (followed_by_no && !nk.empty()) {
+                                    spans.push_back({b_start, b_end - b_start, name_eid, nk});
+                                    for (size_t b = b_start; b < b_end; ++b) covered[b] = true;
+                                    ci += clen;
+                                    matched = true;
+                                    break;
+                                }
+                            }
+                        }
 
                         sqlite3_reset(word_head_stmt);
                         sqlite3_bind_text(word_head_stmt, 1, cand.c_str(), -1, SQLITE_TRANSIENT);

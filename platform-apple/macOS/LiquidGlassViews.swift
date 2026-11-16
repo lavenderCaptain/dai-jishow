@@ -1,17 +1,5 @@
-/**
- * LiquidGlassViews.swift
- * ======================
- * High-contrast dark Liquid Glass components with:
- *   - Per-Kanji Ruby Alignment (`でん` over `電`, `わ` over `話`)
- *   - Large, interactive Variant pill buttons
- *   - Properly bounded, color-coded, commonality-scaled Fisheye bubbles with floating mouse-over pop-ups
- *   - Component radicals on the Kanji Detail & Stroke-Order screen
- */
-
 import SwiftUI
 import DaiJishowCore
-
-// MARK: - High-Contrast Smoked Liquid Glass Container
 
 struct LiquidGlassCard<Content: View>: View {
     let cornerRadius: CGFloat
@@ -48,7 +36,7 @@ struct LiquidGlassCard<Content: View>: View {
     }
 }
 
-// MARK: - Per-Kanji Ruby Cell (`でん` directly over `電`, `わ` directly over `話`)
+// MARK: - Per-Kanji Ruby Cell (supports both single-kanji & multi-kanji jukujikun cells with individually clickable kanji)
 
 struct RubyCellView: View {
     let cell: RubyCell
@@ -77,9 +65,28 @@ struct RubyCellView: View {
                 .buttonStyle(.plain)
                 .help("Explore 「\(cell.surface)」 in Dokusha Fisheye")
             } else {
-                Text(cell.surface)
-                    .font(.system(size: 46, weight: .bold))
-                    .foregroundStyle(.white)
+                // Multi-kanji jukujikun cell (e.g. `山車` with centered `だし`): make each individual kanji clickable!
+                HStack(spacing: 0) {
+                    ForEach(Array(cell.surface.unicodeScalars.enumerated()), id: \.offset) { _, scalar in
+                        let ch = String(scalar)
+                        if engine.isKanjiScalar(scalar.value) {
+                            Button {
+                                engine.openFisheye(codepoint: scalar.value, recordHistory: true)
+                            } label: {
+                                Text(ch)
+                                    .font(.system(size: 46, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .underline(color: .cyan.opacity(0.65))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Explore 「\(ch)」 in Dokusha Fisheye")
+                        } else {
+                            Text(ch)
+                                .font(.system(size: 46, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                }
             }
         }
     }
@@ -128,8 +135,6 @@ struct WrappingTokenFlow: Layout {
         }
     }
 }
-
-// MARK: - Interactive Example Sentence with Furigana & Clickable Words
 
 struct InteractiveSentenceView: View {
     let sentence: SentenceItem
@@ -321,19 +326,43 @@ struct WordDetailView: View {
 struct FisheyeExplorerView: View {
     @ObservedObject var engine: DaiJishowEngine
     @State private var lastAspect: Float = 1.5
+    @State private var hoveredLegendTier: String?
+    @State private var explodedOverflowSide: UInt8?
 
-    private let legendItems: [(String, Color)] = [
-        ("Core", Color(red: 0.22, green: 0.74, blue: 0.97)),
-        ("Jōyō", Color(red: 0.20, green: 0.83, blue: 0.60)),
-        ("Literary", Color(red: 0.98, green: 0.75, blue: 0.14)),
-        ("Kyūjitai", Color(red: 0.65, green: 0.55, blue: 0.98))
+    private struct LegendTier: Identifiable {
+        let id: String
+        let color: Color
+        let description: String
+    }
+
+    private let legendItems: [LegendTier] = [
+        LegendTier(
+            id: "Core",
+            color: Color(red: 0.22, green: 0.74, blue: 0.97),
+            description: "Everyday Core — High-frequency compounds in the top ~2,500 Japanese words."
+        ),
+        LegendTier(
+            id: "Jōyō",
+            color: Color(red: 0.20, green: 0.83, blue: 0.60),
+            description: "Standard Jōyō — Official 2,136 Jōyō kanji & standard newspaper vocabulary."
+        ),
+        LegendTier(
+            id: "Literary",
+            color: Color(red: 0.98, green: 0.75, blue: 0.14),
+            description: "Literary / Specialized — Formal, written, or domain-specific compounds."
+        ),
+        LegendTier(
+            id: "Kyūjitai",
+            color: Color(red: 0.65, green: 0.55, blue: 0.98),
+            description: "Kyūjitai / Non-Jōyō — Traditional pre-1946 forms or Jinmeiyō / rare kanji."
+        )
     ]
 
     var body: some View {
         VStack(spacing: 12) {
-            HStack {
+            HStack(spacing: 12) {
                 if let k = engine.activeKanji {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 10) {
                         Text(k.glyph)
                             .font(.system(size: 34, weight: .bold))
                             .foregroundStyle(.white)
@@ -345,6 +374,7 @@ struct FisheyeExplorerView: View {
                             Text("On: \(k.onReadings.joined(separator: "・"))   Kun: \(k.kunReadings.joined(separator: "・"))")
                                 .font(.caption)
                                 .foregroundStyle(.white.opacity(0.75))
+                                .lineLimit(1)
                         }
                     }
                     Button("Kanji Details & Strokes") {
@@ -355,34 +385,68 @@ struct FisheyeExplorerView: View {
 
                 Spacer()
 
-                HStack(spacing: 10) {
-                    ForEach(legendItems, id: \.0) { label, color in
+                // Interactive Color Legend with Hover Pop-over Explanations
+                HStack(spacing: 8) {
+                    ForEach(legendItems) { item in
                         HStack(spacing: 4) {
                             Circle()
-                                .fill(color.opacity(0.35))
-                                .overlay(Circle().strokeBorder(color, lineWidth: 1.5))
-                                .frame(width: 10, height: 10)
-                            Text(label)
+                                .fill(item.color.opacity(0.35))
+                                .overlay(Circle().strokeBorder(item.color, lineWidth: 1.5))
+                                .frame(width: 9, height: 9)
+                            Text(item.id)
                                 .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.white.opacity(0.75))
+                                .foregroundStyle(.white.opacity(0.82))
                                 .fixedSize()
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            hoveredLegendTier == item.id ? item.color.opacity(0.22) : Color.clear,
+                            in: Capsule()
+                        )
+                        .onHover { hovering in
+                            hoveredLegendTier = hovering ? item.id : (hoveredLegendTier == item.id ? nil : hoveredLegendTier)
+                        }
+                        .popover(isPresented: Binding(
+                            get: { hoveredLegendTier == item.id },
+                            set: { if !$0 && hoveredLegendTier == item.id { hoveredLegendTier = nil } }
+                        ), arrowEdge: .bottom) {
+                            Text(item.description)
+                                .font(.caption)
+                                .foregroundStyle(.white)
+                                .padding(10)
+                                .frame(width: 240)
                         }
                     }
                 }
-                .padding(.trailing, 8)
+
+                // Max Popular Items Selector
+                Picker("Max", selection: $engine.maxFisheyePerSide) {
+                    Text("Top 8").tag(8)
+                    Text("Top 12").tag(12)
+                    Text("Top 16").tag(16)
+                    Text("Top 24").tag(24)
+                }
+                .labelsHidden()
+                .frame(width: 86)
+                .onChange(of: engine.maxFisheyePerSide) { _, _ in
+                    if let cp = engine.activeKanji?.codepoint {
+                        engine.solveFisheye(center: cp, focusX: 0, focusY: 0, aspectRatio: lastAspect, animated: true)
+                    }
+                }
 
                 Picker("Orbit Mode", selection: $engine.fisheyeMode) {
-                    Text("2-Kanji Compounds").tag(DJ_EDGE_COMPOUNDS)
-                    Text("四字熟語 (Yojijukugo)").tag(DJ_EDGE_YOJIJUKUGO)
+                    Text("2-Kanji").tag(DJ_EDGE_COMPOUNDS)
+                    Text("四字熟語").tag(DJ_EDGE_YOJIJUKUGO)
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 300)
+                .frame(width: 170)
                 .onChange(of: engine.fisheyeMode) { _, _ in
                     if let cp = engine.activeKanji?.codepoint {
                         engine.selectedFisheyeNode = nil
                         engine.hoveredFisheyeNode = nil
-                        engine.solveFisheye(center: cp, focusX: 0, focusY: 0, aspectRatio: lastAspect)
+                        engine.solveFisheye(center: cp, focusX: 0, focusY: 0, aspectRatio: lastAspect, animated: true)
                     }
                 }
             }
@@ -430,13 +494,12 @@ struct FisheyeExplorerView: View {
                         }
                     }
 
-                    // Each bubble has an explicit circular diameter & contentShape(Circle()) BEFORE .position()
-                    // so hit-testing & onHover work cleanly for EVERY single kanji bubble!
+                    // Main Fisheye Bubbles with Compound Share % below the Kanji
                     ForEach(engine.fisheyeNodes) { node in
                         let isSelected = engine.selectedFisheyeNode?.id == node.id
                         let isHovered = engine.hoveredFisheyeNode?.id == node.id
                         let active = isSelected || isHovered
-                        let diameter = 46.0 * node.scale
+                        let diameter = 52.0 * node.scale
                         let pos = CGPoint(x: center.x + node.normX * halfW, y: center.y + node.normY * halfH)
 
                         Button {
@@ -448,34 +511,39 @@ struct FisheyeExplorerView: View {
                                 }
                             }
                         } label: {
-                            Text(node.glyph)
-                                .font(.system(size: 24 * node.scale, weight: active ? .bold : .semibold))
-                                .foregroundStyle(.white)
-                                .frame(width: diameter, height: diameter)
-                                .background(
-                                    Circle()
-                                        .fill(
-                                            active
-                                                ? node.tierColor.opacity(0.45)
-                                                : Color(red: 0.11, green: 0.15, blue: 0.22).opacity(0.94)
-                                        )
-                                        .overlay(
-                                            Circle().fill(node.tierColor.opacity(active ? 0.25 : 0.16))
-                                        )
-                                )
-                                .overlay(
-                                    Circle()
-                                        .strokeBorder(
-                                            active ? Color.white : node.tierColor.opacity(0.75),
-                                            lineWidth: active ? 2.2 : 1.4
-                                        )
-                                )
-                                .shadow(color: active ? node.tierColor.opacity(0.45) : .clear, radius: 10)
+                            VStack(spacing: 0) {
+                                Text(node.glyph)
+                                    .font(.system(size: 21 * node.scale, weight: active ? .bold : .semibold))
+                                    .foregroundStyle(.white)
+                                Text(node.shareText)
+                                    .font(.system(size: 8.5 * max(0.85, node.scale * 0.85), weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(node.tierColor.opacity(0.95))
+                            }
+                            .frame(width: diameter, height: diameter)
+                            .background(
+                                Circle()
+                                    .fill(
+                                        active
+                                            ? node.tierColor.opacity(0.45)
+                                            : Color(red: 0.11, green: 0.15, blue: 0.22).opacity(0.94)
+                                    )
+                                    .overlay(
+                                        Circle().fill(node.tierColor.opacity(active ? 0.25 : 0.16))
+                                    )
+                            )
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(
+                                        active ? Color.white : node.tierColor.opacity(0.75),
+                                        lineWidth: active ? 2.2 : 1.4
+                                    )
+                            )
+                            .shadow(color: active ? node.tierColor.opacity(0.45) : .clear, radius: 10)
                         }
                         .buttonStyle(.plain)
                         .frame(width: diameter, height: diameter)
                         .contentShape(Circle())
-                        .opacity(max(0.68, node.opacity))
+                        .opacity(max(0.70, node.opacity))
                         .onHover { hovering in
                             if hovering {
                                 engine.hoveredFisheyeNode = node
@@ -484,18 +552,35 @@ struct FisheyeExplorerView: View {
                                         center: cp,
                                         focusX: Float(node.normX),
                                         focusY: Float(node.normY),
-                                        aspectRatio: ar
+                                        aspectRatio: ar,
+                                        animated: true
                                     )
                                 }
                             } else if engine.hoveredFisheyeNode?.id == node.id {
                                 engine.hoveredFisheyeNode = nil
                                 if let cp = engine.activeKanji?.codepoint {
-                                    engine.solveFisheye(center: cp, focusX: 0, focusY: 0, aspectRatio: ar)
+                                    engine.solveFisheye(center: cp, focusX: 0, focusY: 0, aspectRatio: ar, animated: true)
                                 }
                             }
                         }
                         .position(pos)
                         .zIndex(active ? 10 : 1)
+                    }
+
+                    // Overflow "+N more" Bubbles on Left (side 0) & Right (side 1) that explode out mini sub-bubbles on hover!
+                    if engine.leftOverflowCount > 0 {
+                        overflowClusterView(
+                            side: 0,
+                            count: engine.leftOverflowCount,
+                            anchorPos: CGPoint(x: 64, y: geo.size.height - 52)
+                        )
+                    }
+                    if engine.rightOverflowCount > 0 {
+                        overflowClusterView(
+                            side: 1,
+                            count: engine.rightOverflowCount,
+                            anchorPos: CGPoint(x: geo.size.width - 64, y: geo.size.height - 52)
+                        )
                     }
 
                     if let centerKanji = engine.activeKanji {
@@ -512,9 +597,13 @@ struct FisheyeExplorerView: View {
 
                     // Floating mouse-over pop-up bubble for whichever kanji is currently hovered
                     if let hov = engine.hoveredFisheyeNode {
-                        let nodeX = center.x + hov.normX * halfW
-                        let nodeY = center.y + hov.normY * halfH
-                        let popY = (hov.normY < -0.35) ? (nodeY + 56) : (nodeY - 58)
+                        let nodeX = hov.isOverflowPreview
+                            ? (hov.side == 0 ? 150.0 : geo.size.width - 150.0)
+                            : (center.x + hov.normX * halfW)
+                        let nodeY = hov.isOverflowPreview
+                            ? (geo.size.height - 135.0)
+                            : (center.y + hov.normY * halfH)
+                        let popY = (!hov.isOverflowPreview && hov.normY < -0.35) ? (nodeY + 60) : (nodeY - 62)
                         let popX = min(max(nodeX, 145), geo.size.width - 145)
 
                         VStack(alignment: .leading, spacing: 3) {
@@ -526,7 +615,7 @@ struct FisheyeExplorerView: View {
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(hov.tierColor)
                                 Spacer(minLength: 4)
-                                Text(hov.tierLabel)
+                                Text("\(hov.tierLabel) • \(hov.shareText)")
                                     .font(.caption2.bold())
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 6)
@@ -540,7 +629,7 @@ struct FisheyeExplorerView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .frame(width: 265, alignment: .leading)
+                        .frame(width: 275, alignment: .leading)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .fill(Color(red: 0.08, green: 0.11, blue: 0.17).opacity(0.96))
@@ -552,7 +641,7 @@ struct FisheyeExplorerView: View {
                         .shadow(color: .black.opacity(0.55), radius: 14, x: 0, y: 6)
                         .position(x: popX, y: popY)
                         .allowsHitTesting(false)
-                        .zIndex(20)
+                        .zIndex(25)
                     }
                 }
                 .onAppear { lastAspect = ar }
@@ -583,7 +672,7 @@ struct FisheyeExplorerView: View {
                     }
                     .buttonStyle(.bordered)
                 } else {
-                    Text("Hover any kanji bubble for a quick preview; click once to pin it below, or click again to pivot onto it.")
+                    Text("Hover any kanji bubble for a preview; click once to pin it below, or click again to pivot onto it.")
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.75))
                     Spacer()
@@ -594,6 +683,75 @@ struct FisheyeExplorerView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 14)
         }
+    }
+
+    @ViewBuilder
+    private func overflowClusterView(side: UInt8, count: Int, anchorPos: CGPoint) -> some View {
+        let previews = engine.overflowPreviewNodes.filter { $0.side == side }
+        let isExploded = (explodedOverflowSide == side)
+
+        ZStack {
+            if isExploded {
+                ForEach(Array(previews.enumerated()), id: \.element.id) { idx, sub in
+                    let angleDeg = (side == 0)
+                        ? (-85.0 + Double(idx) * 22.0)
+                        : (-95.0 - Double(idx) * 22.0)
+                    let rad = angleDeg * .pi / 180.0
+                    let radius: CGFloat = 56.0
+                    let dx = CGFloat(cos(rad)) * radius
+                    let dy = CGFloat(sin(rad)) * radius
+
+                    Button {
+                        engine.openFisheye(codepoint: sub.codepoint, recordHistory: true)
+                    } label: {
+                        Text(sub.glyph)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                            .background(Color(red: 0.13, green: 0.18, blue: 0.26), in: Circle())
+                            .overlay(Circle().strokeBorder(sub.tierColor, lineWidth: 1.4))
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Circle())
+                    .onHover { hov in
+                        if hov { engine.hoveredFisheyeNode = sub }
+                        else if engine.hoveredFisheyeNode?.id == sub.id { engine.hoveredFisheyeNode = nil }
+                    }
+                    .offset(x: dx, y: dy)
+                    .transition(.scale.combined(with: .opacity))
+                }
+            }
+
+            VStack(spacing: 1) {
+                Text("+\(count)")
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+                Text("more")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.75))
+            }
+            .frame(width: 48, height: 48)
+            .background(Color.white.opacity(isExploded ? 0.16 : 0.08), in: Circle())
+            .overlay(
+                Circle()
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1.3, dash: [3, 3]))
+                    .foregroundStyle(.cyan.opacity(0.75))
+            )
+            .contentShape(Circle())
+        }
+        .frame(width: 140, height: 140)
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.72)) {
+                if hovering {
+                    explodedOverflowSide = side
+                } else if explodedOverflowSide == side {
+                    explodedOverflowSide = nil
+                }
+            }
+        }
+        .position(anchorPos)
+        .zIndex(15)
     }
 }
 

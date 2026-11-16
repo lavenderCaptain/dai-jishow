@@ -1,8 +1,3 @@
-/**
- * @file fisheye.cpp
- * @brief Dokusha Spatial Fisheye Graph Solver supporting 2-Kanji Compounds and 四字熟語 (Yojijukugo).
- */
-
 #include "../dj_internal.hpp"
 #include <algorithm>
 #include <cmath>
@@ -113,11 +108,16 @@ std::vector<OwnedFisheyeNode> solve_fisheye_graph(
     sqlite3* db,
     uint32_t center_cp,
     dj_fisheye_mode_t mode,
+    bool include_names,
     float focus_x,
     float focus_y,
     float aspect_ratio,
-    size_t max_per_side) {
+    size_t max_per_side,
+    size_t& out_left_overflow,
+    size_t& out_right_overflow) {
 
+    out_left_overflow = 0;
+    out_right_overflow = 0;
     std::vector<OwnedFisheyeNode> nodes;
     if (!db || center_cp == 0 || max_per_side == 0) return nodes;
 
@@ -135,21 +135,21 @@ std::vector<OwnedFisheyeNode> solve_fisheye_graph(
     std::vector<ScoredCandidate> side_cands[2];
 
     if (mode == DJ_EDGE_YOJIJUKUGO) {
-        // Query 4-kanji compounds (四字熟語) containing center_cp directly from `entries`
         char center_utf8[8];
         encode_utf8(center_cp, center_utf8);
         std::string like_pat = std::string("%") + center_utf8 + "%";
+        std::string name_cond = include_names ? "" : "AND e.is_name = 0 ";
 
-        const char* yoji_sql =
+        std::string yoji_sql =
             "SELECT e.entry_id, e.kanji_head, e.kana_head, "
             "       COALESCE((SELECT en_glosses FROM senses s WHERE s.entry_id = e.entry_id AND s.sense_idx = 0), ''), "
             "       COALESCE(e.freq_overall, 999999) "
             "FROM entries e "
-            "WHERE e.is_name = 0 AND LENGTH(e.kanji_head) = 4 AND e.kanji_head LIKE ?1 "
-            "ORDER BY e.freq_overall ASC LIMIT 240;";
+            "WHERE LENGTH(e.kanji_head) = 4 AND e.kanji_head LIKE ?1 " + name_cond +
+            "ORDER BY e.freq_overall ASC LIMIT 300;";
 
         sqlite3_stmt* ystmt = nullptr;
-        if (sqlite3_prepare_v2(db, yoji_sql, -1, &ystmt, nullptr) == SQLITE_OK) {
+        if (sqlite3_prepare_v2(db, yoji_sql.c_str(), -1, &ystmt, nullptr) == SQLITE_OK) {
             sqlite3_bind_text(ystmt, 1, like_pat.c_str(), -1, SQLITE_TRANSIENT);
             std::unordered_map<uint64_t, bool> seen_side_cp;
 
@@ -171,8 +171,6 @@ std::vector<OwnedFisheyeNode> solve_fisheye_graph(
                 }
                 if (!all_k || center_idx < 0) continue;
 
-                // Pick companion kanji: if center is in first half (0,1), show trailing kanji (side=1);
-                // if center is in second half (2,3), show leading kanji (side=0).
                 uint8_t side = (center_idx <= 1) ? 1 : 0;
                 uint32_t neighbor_cp = (side == 1) ? cps[3] : cps[0];
                 if (neighbor_cp == center_cp) {
@@ -225,11 +223,11 @@ std::vector<OwnedFisheyeNode> solve_fisheye_graph(
             "SELECT ke.neighbor_cp, " + side_expr + ", " + weight_expr + ", " + entry_expr + ", "
             "       COALESCE(e.kanji_head, e.kana_head, ''), COALESCE(e.kana_head, ''), "
             "       COALESCE((SELECT en_glosses FROM senses s WHERE s.entry_id = e.entry_id AND s.sense_idx = 0), ''), "
-            "       COALESCE(e.freq_overall, 999999) "
+            "       COALESCE(e.freq_overall, 999999), COALESCE(e.is_name, 0) "
             "FROM kanji_edges ke "
             "LEFT JOIN entries e ON e.entry_id = " + entry_expr + " " +
             where_clause +
-            "ORDER BY " + weight_expr + " DESC LIMIT ?3;";
+            "ORDER BY " + weight_expr + " DESC LIMIT 120;";
 
         sqlite3_stmt* stmt = nullptr;
         if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
@@ -238,12 +236,16 @@ std::vector<OwnedFisheyeNode> solve_fisheye_graph(
                 sqlite3_reset(stmt);
                 sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(center_cp));
                 sqlite3_bind_int(stmt, 2, side);
-                sqlite3_bind_int64(stmt, 3, static_cast<sqlite3_int64>(max_per_side * 4));
 
+                std::unordered_map<uint32_t, bool> seen_cp;
                 size_t row_idx = 0;
                 while (sqlite3_step(stmt) == SQLITE_ROW) {
+                    uint32_t ncp = static_cast<uint32_t>(sqlite3_column_int64(stmt, 0));
+                    if (seen_cp[ncp]) continue;
+                    seen_cp[ncp] = true;
+
                     OwnedFisheyeNode n;
-                    n.codepoint = static_cast<uint32_t>(sqlite3_column_int64(stmt, 0));
+                    n.codepoint = ncp;
                     encode_utf8(n.codepoint, n.utf8_glyph);
                     int raw_side = sqlite3_column_int(stmt, 1);
                     uint8_t actual_side = schema.side_col.empty()
@@ -296,6 +298,58 @@ std::vector<OwnedFisheyeNode> solve_fisheye_graph(
             }
             sqlite3_finalize(stmt);
         }
+
+        // When `Names` toggle is enabled, also surface prominent 2-kanji name compounds (`is_name = 1`)
+        if (include_names) {
+            char center_utf8[8];
+            encode_utf8(center_cp, center_utf8);
+            std::string pat_prefix = std::string(center_utf8) + "_";
+            std::string pat_suffix = std::string("_") + center_utf8;
+
+            const char* name_sql =
+                "SELECT e.entry_id, e.kanji_head, e.kana_head, "
+                "       COALESCE((SELECT en_glosses FROM senses s WHERE s.entry_id = e.entry_id AND s.sense_idx = 0), 'Name') "
+                "FROM entries e "
+                "WHERE e.is_name = 1 AND LENGTH(e.kanji_head) = 2 AND (e.kanji_head LIKE ?1 OR e.kanji_head LIKE ?2) "
+                "ORDER BY e.freq_overall ASC LIMIT 60;";
+
+            sqlite3_stmt* nstmt = nullptr;
+            if (sqlite3_prepare_v2(db, name_sql, -1, &nstmt, nullptr) == SQLITE_OK) {
+                sqlite3_bind_text(nstmt, 1, pat_prefix.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(nstmt, 2, pat_suffix.c_str(), -1, SQLITE_TRANSIENT);
+                while (sqlite3_step(nstmt) == SQLITE_ROW) {
+                    uint32_t eid = static_cast<uint32_t>(sqlite3_column_int64(nstmt, 0));
+                    const auto* kh = reinterpret_cast<const char*>(sqlite3_column_text(nstmt, 1));
+                    const auto* ka = reinterpret_cast<const char*>(sqlite3_column_text(nstmt, 2));
+                    const auto* gl = reinterpret_cast<const char*>(sqlite3_column_text(nstmt, 3));
+                    if (!kh) continue;
+                    auto cps = utf8_to_cps_local(kh);
+                    if (cps.size() != 2) continue;
+
+                    uint8_t side = (cps[0] == center_cp) ? 1 : 0;
+                    uint32_t ncp = (side == 1) ? cps[1] : cps[0];
+                    if (!is_kanji_cp_local(ncp)) continue;
+
+                    bool exists = false;
+                    for (const auto& existing : side_cands[side]) {
+                        if (existing.node.codepoint == ncp) { exists = true; break; }
+                    }
+                    if (exists) continue;
+
+                    OwnedFisheyeNode n;
+                    n.codepoint = ncp;
+                    encode_utf8(ncp, n.utf8_glyph);
+                    n.side = side;
+                    n.commonality_tier = 1;
+                    n.top_entry_id = eid;
+                    n.compound_word = kh;
+                    n.compound_kana = ka ? ka : "";
+                    n.compound_gloss = std::string("[Name] ") + (gl ? gl : "");
+                    side_cands[side].push_back({std::move(n), 2.5, 1.02f});
+                }
+                sqlite3_finalize(nstmt);
+            }
+        }
     }
 
     for (uint8_t side = 0; side <= 1; ++side) {
@@ -303,18 +357,25 @@ std::vector<OwnedFisheyeNode> solve_fisheye_graph(
         std::sort(cands.begin(), cands.end(), [](const ScoredCandidate& a, const ScoredCandidate& b) {
             return a.effective_score > b.effective_score;
         });
-        if (cands.size() > max_per_side) {
-            cands.resize(max_per_side);
-        }
 
-        const size_t total = cands.size();
-        for (size_t idx = 0; idx < total; ++idx) {
+        double total_score = 0.0;
+        for (const auto& c : cands) total_score += std::max(0.1, c.effective_score);
+        if (total_score <= 0.0) total_score = 1.0;
+
+        size_t visible_count = std::min(cands.size(), max_per_side);
+        size_t overflow_count = (cands.size() > max_per_side) ? (cands.size() - max_per_side) : 0;
+        if (side == 0) out_left_overflow = overflow_count;
+        else out_right_overflow = overflow_count;
+
+        for (size_t idx = 0; idx < visible_count; ++idx) {
+            double sc_val = cands[idx].effective_score;
             OwnedFisheyeNode n = std::move(cands[idx].node);
+            n.share_pct = static_cast<float>((sc_val / total_score) * 100.0);
             float comm_scale = cands[idx].commonality_scale;
 
             const size_t ring = (idx < 5) ? 0 : 1;
             const size_t ring_idx = (ring == 0) ? idx : (idx - 5);
-            const size_t ring_count = (ring == 0) ? std::min<size_t>(total, 5) : (total - 5);
+            const size_t ring_count = (ring == 0) ? std::min<size_t>(visible_count, 5) : (visible_count - 5);
 
             float t = (ring_count <= 1) ? 0.5f : (static_cast<float>(ring_idx) / static_cast<float>(ring_count - 1));
             float span = (ring == 0) ? 0.68f : 0.78f;
@@ -352,11 +413,26 @@ std::vector<OwnedFisheyeNode> solve_fisheye_graph(
             clamp_node_hemisphere(n);
             nodes.push_back(std::move(n));
         }
+
+        // Emit up to 5 overflow preview sub-nodes (`is_overflow_preview = 1`) for the "+N more" pop-out bubble
+        size_t preview_count = std::min<size_t>(overflow_count, 5);
+        for (size_t p = 0; p < preview_count; ++p) {
+            size_t src_idx = visible_count + p;
+            double sc_val = cands[src_idx].effective_score;
+            OwnedFisheyeNode n = std::move(cands[src_idx].node);
+            n.is_overflow_preview = 1;
+            n.share_pct = static_cast<float>((sc_val / total_score) * 100.0);
+            n.scale = 0.65f;
+            n.opacity = 0.95f;
+            nodes.push_back(std::move(n));
+        }
     }
 
     for (int iter = 0; iter < 6; ++iter) {
         for (size_t i = 0; i < nodes.size(); ++i) {
+            if (nodes[i].is_overflow_preview) continue;
             for (size_t j = i + 1; j < nodes.size(); ++j) {
+                if (nodes[j].is_overflow_preview) continue;
                 float dx = (nodes[j].norm_x - nodes[i].norm_x) * ar;
                 float dy = (nodes[j].norm_y - nodes[i].norm_y);
                 float d = std::sqrt(dx * dx + dy * dy);

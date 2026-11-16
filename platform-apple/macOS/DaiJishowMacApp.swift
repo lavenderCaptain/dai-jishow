@@ -1,10 +1,3 @@
-/**
- * DaiJishowMacApp.swift
- * =====================
- * Native macOS entry point for Dai-Jishow (大辞書) with clean breadcrumb navigation,
- * instant Wa-puro / English search dropdown, and the 6-Kanji Compound Ring dock.
- */
-
 import SwiftUI
 import AppKit
 import DaiJishowCore
@@ -36,10 +29,20 @@ struct DaiJishowMacApp: App {
     var body: some Scene {
         WindowGroup("Dai-Jishow 大辞書") {
             MainWorkspaceView(engine: engine)
-                .frame(minWidth: 1040, minHeight: 740)
+                .frame(minWidth: 1060, minHeight: 750)
                 .preferredColorScheme(.dark)
         }
         .windowStyle(.hiddenTitleBar)
+        .commands {
+            CommandGroup(after: .windowArrangement) {
+                Button("Toggle History Z-Stack") {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                        engine.isZStackOpen.toggle()
+                    }
+                }
+                .keyboardShortcut(.escape, modifiers: [])
+            }
+        }
     }
 }
 
@@ -64,17 +67,21 @@ struct MainWorkspaceView: View {
                 topBar
 
                 ZStack(alignment: .top) {
-                    LiquidGlassCard(cornerRadius: 22) {
-                        activeCardView
+                    if engine.isZStackOpen {
+                        historyZStackView
+                    } else {
+                        LiquidGlassCard(cornerRadius: 22) {
+                            activeCardView
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     if !engine.searchResults.isEmpty {
                         searchResultsOverlay
                     }
                 }
 
-                bottomKanjiRingDock
+                bottomNavigationDock
             }
             .padding(16)
         }
@@ -89,7 +96,7 @@ struct MainWorkspaceView: View {
 
     private var topBar: some View {
         LiquidGlassCard(cornerRadius: 16) {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 HStack(spacing: 4) {
                     Button {
                         engine.goBack()
@@ -121,16 +128,24 @@ struct MainWorkspaceView: View {
                         .foregroundStyle(.white)
                         .focused($searchFieldFocused)
                         .onChange(of: engine.searchQuery) { _, _ in
+                            engine.isZStackOpen = false
                             engine.performSearch()
                         }
                         .onSubmit {
-                            if let first = engine.searchResults.first {
-                                engine.openWordEntry(entryId: first.id)
-                                engine.searchResults = []
-                            }
+                            engine.isZStackOpen = false
+                            engine.submitSearchQuery()
                         }
 
                     if !engine.searchQuery.isEmpty {
+                        if engine.searchResults.isEmpty {
+                            Button("Results") {
+                                engine.performSearch()
+                            }
+                            .font(.caption.bold())
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+
                         Button {
                             engine.searchQuery = ""
                             engine.searchResults = []
@@ -153,7 +168,13 @@ struct MainWorkspaceView: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .foregroundStyle(.white)
-                    .onChange(of: engine.includeNames) { _, _ in engine.performSearch() }
+                    .fixedSize()
+                    .onChange(of: engine.includeNames) { _, _ in
+                        engine.performSearch()
+                        if engine.activeScreen == .fisheye, let cp = engine.activeKanji?.codepoint {
+                            engine.solveFisheye(center: cp, focusX: 0, focusY: 0, aspectRatio: 1.5, animated: true)
+                        }
+                    }
 
                 Divider().frame(height: 20).overlay(Color.white.opacity(0.2))
 
@@ -162,15 +183,29 @@ struct MainWorkspaceView: View {
                         Text(mode.rawValue).tag(mode)
                     }
                 }
+                .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 225)
+                .frame(width: 215)
 
                 Button {
+                    engine.isZStackOpen = false
                     engine.openRadicalBuilder()
                 } label: {
                     Label("Radicals", systemImage: "square.grid.3x3")
                 }
                 .buttonStyle(.bordered)
+                .fixedSize()
+
+                Button {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                        engine.isZStackOpen.toggle()
+                    }
+                } label: {
+                    Label("History Stack (\(engine.history.count))", systemImage: "square.stack.3d.up")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(engine.isZStackOpen ? .cyan : Color.white.opacity(0.18))
+                .fixedSize()
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -189,6 +224,51 @@ struct MainWorkspaceView: View {
         case .fisheye:
             FisheyeExplorerView(engine: engine)
         }
+    }
+
+    // 3D Z-Axis History Navigator Stack
+    private var historyZStackView: some View {
+        let recentStack = Array(engine.history.prefix(engine.historyIndex + 1).reversed().prefix(7))
+        return ZStack {
+            ForEach(Array(recentStack.enumerated()), id: \.element.id) { depth, item in
+                let actualIndex = engine.historyIndex - depth
+                LiquidGlassCard(cornerRadius: 24) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Text(depth == 0 ? "ACTIVE CARD" : "HISTORY DEPTH -\(depth)")
+                                .font(.caption.bold())
+                                .foregroundStyle(Color(red: 0.45, green: 0.88, blue: 1.0))
+                            Spacer()
+                            Text("Click card to restore")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.65))
+                        }
+
+                        Text(item.label)
+                            .font(.system(size: 46, weight: .bold))
+                            .foregroundStyle(.white)
+
+                        Text(item.subtitle)
+                            .font(.title3)
+                            .foregroundStyle(.white.opacity(0.82))
+                            .lineLimit(2)
+
+                        Spacer()
+                    }
+                    .padding(28)
+                }
+                .frame(maxWidth: 820, maxHeight: 450)
+                .scaleEffect(1.0 - CGFloat(depth) * 0.065)
+                .offset(y: CGFloat(depth) * -32)
+                .rotation3DEffect(.degrees(Double(depth) * 3.5), axis: (x: 1, y: 0, z: 0))
+                .opacity(max(0.28, 1.0 - Double(depth) * 0.14))
+                .zIndex(Double(20 - depth))
+                .onTapGesture {
+                    engine.jumpToHistory(index: actualIndex)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var searchResultsOverlay: some View {
@@ -247,16 +327,18 @@ struct MainWorkspaceView: View {
         .shadow(color: .black.opacity(0.65), radius: 30, x: 0, y: 16)
     }
 
-    private var bottomKanjiRingDock: some View {
+    private var bottomNavigationDock: some View {
         LiquidGlassCard(cornerRadius: 14) {
             HStack(spacing: 12) {
-                Text("6-KANJI RING")
+                Text("RECENT KANJI")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.white.opacity(0.65))
+                    .fixedSize()
 
                 ForEach(engine.recentKanji, id: \.self) { cp in
                     let glyph = String(UnicodeScalar(cp)!)
                     Button {
+                        engine.isZStackOpen = false
                         engine.openFisheye(codepoint: cp, recordHistory: true)
                     } label: {
                         Text(glyph)
@@ -275,28 +357,53 @@ struct MainWorkspaceView: View {
 
                 Divider().frame(height: 18).overlay(Color.white.opacity(0.2))
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
+                // Overflow-safe Breadcrumb Trail that auto-scrolls to the active item
+                if engine.history.count > 6 {
+                    Menu {
                         ForEach(Array(engine.history.enumerated()), id: \.element.id) { idx, crumb in
-                            if idx > 0 {
-                                Image(systemName: "chevron.right")
-                                    .font(.caption2)
-                                    .foregroundStyle(.white.opacity(0.4))
-                            }
-                            Button {
+                            Button("\(idx + 1). \(crumb.label)") {
                                 engine.jumpToHistory(index: idx)
-                            } label: {
-                                Text(crumb.label)
-                                    .font(.caption.weight(idx == engine.historyIndex ? .bold : .medium))
-                                    .foregroundStyle(idx == engine.historyIndex ? Color(red: 0.45, green: 0.88, blue: 1.0) : .white.opacity(0.75))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(
-                                        idx == engine.historyIndex ? Color.cyan.opacity(0.22) : Color.white.opacity(0.06),
-                                        in: Capsule()
-                                    )
                             }
-                            .buttonStyle(.plain)
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                }
+
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(Array(engine.history.enumerated()), id: \.element.id) { idx, crumb in
+                                if idx > 0 {
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2)
+                                        .foregroundStyle(.white.opacity(0.4))
+                                }
+                                Button {
+                                    engine.jumpToHistory(index: idx)
+                                } label: {
+                                    Text(crumb.label)
+                                        .font(.caption.weight(idx == engine.historyIndex ? .bold : .medium))
+                                        .foregroundStyle(idx == engine.historyIndex ? Color(red: 0.45, green: 0.88, blue: 1.0) : .white.opacity(0.75))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            idx == engine.historyIndex ? Color.cyan.opacity(0.22) : Color.white.opacity(0.06),
+                                            in: Capsule()
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                                .fixedSize()
+                                .id(idx)
+                            }
+                        }
+                    }
+                    .onChange(of: engine.historyIndex) { _, newIdx in
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo(newIdx, anchor: .trailing)
                         }
                     }
                 }

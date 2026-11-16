@@ -1,9 +1,3 @@
-/**
- * EngineBridge.swift
- * ==================
- * Thin, type-safe Swift wrapper around the C11 ABI (`DaiJishowCore`).
- */
-
 import Foundation
 import SwiftUI
 import DaiJishowCore
@@ -88,15 +82,17 @@ struct KanjiDetail {
 }
 
 struct FisheyeNode: Identifiable {
-    var id: String { "\(side)-\(codepoint)" }
+    var id: String { "\(isOverflowPreview)-\(side)-\(codepoint)" }
     let codepoint: UInt32
     let glyph: String
     let side: UInt8
     let commonalityTier: UInt8
+    let isOverflowPreview: Bool
     let topEntryId: UInt32
     let compoundWord: String
     let compoundKana: String
     let compoundGloss: String
+    let sharePct: Float
     let normX: CGFloat
     let normY: CGFloat
     let scale: CGFloat
@@ -104,10 +100,10 @@ struct FisheyeNode: Identifiable {
 
     var tierColor: Color {
         switch commonalityTier {
-        case 0: return Color(red: 0.22, green: 0.74, blue: 0.97) // Everyday Core (Sky Cyan)
-        case 1: return Color(red: 0.20, green: 0.83, blue: 0.60) // Standard Joyo (Emerald)
-        case 2: return Color(red: 0.98, green: 0.75, blue: 0.14) // Literary / Uncommon (Amber)
-        default: return Color(red: 0.65, green: 0.55, blue: 0.98) // Traditional / Kyujitai (Violet)
+        case 0: return Color(red: 0.22, green: 0.74, blue: 0.97) // Core
+        case 1: return Color(red: 0.20, green: 0.83, blue: 0.60) // Joyo
+        case 2: return Color(red: 0.98, green: 0.75, blue: 0.14) // Literary
+        default: return Color(red: 0.65, green: 0.55, blue: 0.98) // Kyujitai
         }
     }
 
@@ -117,6 +113,16 @@ struct FisheyeNode: Identifiable {
         case 1: return "Jōyō"
         case 2: return "Literary"
         default: return "Kyūjitai"
+        }
+    }
+
+    var shareText: String {
+        if sharePct >= 1.0 {
+            return String(format: "%.0f%%", sharePct)
+        } else if sharePct >= 0.1 {
+            return String(format: "%.1f%%", sharePct)
+        } else {
+            return "<0.1%"
         }
     }
 }
@@ -133,6 +139,7 @@ struct NavBreadcrumb: Identifiable, Equatable {
     let kind: ActiveScreenKind
     let targetId: UInt32
     let label: String
+    let subtitle: String
 }
 
 enum RecallMode: String, CaseIterable, Identifiable {
@@ -154,11 +161,16 @@ final class DaiJishowEngine: ObservableObject {
     @Published var activeScreen: ActiveScreenKind = .fisheye
     @Published var history: [NavBreadcrumb] = []
     @Published var historyIndex: Int = -1
+    @Published var isZStackOpen: Bool = false
     @Published var recentKanji: [UInt32] = []
 
     @Published var activeEntry: EntryDetail?
     @Published var activeKanji: KanjiDetail?
     @Published var fisheyeNodes: [FisheyeNode] = []
+    @Published var overflowPreviewNodes: [FisheyeNode] = []
+    @Published var leftOverflowCount: Int = 0
+    @Published var rightOverflowCount: Int = 0
+    @Published var maxFisheyePerSide: Int = 12
     @Published var fisheyeMode: dj_fisheye_mode_t = DJ_EDGE_COMPOUNDS
     @Published var selectedFisheyeNode: FisheyeNode?
     @Published var hoveredFisheyeNode: FisheyeNode?
@@ -193,7 +205,7 @@ final class DaiJishowEngine: ObservableObject {
             }
         }
         history.append(item)
-        if history.count > 16 {
+        if history.count > 24 {
             history.removeFirst()
         }
         historyIndex = history.count - 1
@@ -214,6 +226,7 @@ final class DaiJishowEngine: ObservableObject {
     func jumpToHistory(index: Int) {
         guard index >= 0 && index < history.count else { return }
         historyIndex = index
+        isZStackOpen = false
         restoreBreadcrumb(history[index])
     }
 
@@ -269,6 +282,16 @@ final class DaiJishowEngine: ObservableObject {
         self.searchResults = hits
     }
 
+    func submitSearchQuery() {
+        if searchResults.isEmpty {
+            performSearch()
+        }
+        if let first = searchResults.first {
+            openWordEntry(entryId: first.id)
+            searchResults = []
+        }
+    }
+
     func openVariantForm(_ variant: String) {
         guard let h = handle else { return }
         var rawPtr: UnsafePointer<dj_word_hit_t>?
@@ -312,7 +335,7 @@ final class DaiJishowEngine: ObservableObject {
                 senses: cur.senses,
                 sentences: cur.sentences
             )
-            recordNavigation(NavBreadcrumb(kind: .wordEntry, targetId: cur.header.id, label: variant))
+            recordNavigation(NavBreadcrumb(kind: .wordEntry, targetId: cur.header.id, label: variant, subtitle: cur.header.primaryGloss))
         }
     }
 
@@ -425,7 +448,12 @@ final class DaiJishowEngine: ObservableObject {
         }
 
         if recordHistory {
-            recordNavigation(NavBreadcrumb(kind: .wordEntry, targetId: entryId, label: detail.header.displayHeadword))
+            recordNavigation(NavBreadcrumb(
+                kind: .wordEntry,
+                targetId: entryId,
+                label: detail.header.displayHeadword,
+                subtitle: detail.header.primaryGloss
+            ))
         }
     }
 
@@ -434,7 +462,12 @@ final class DaiJishowEngine: ObservableObject {
         pushRecentKanji(codepoint)
         self.activeScreen = .kanjiDetail
         if recordHistory, let sc = UnicodeScalar(codepoint) {
-            recordNavigation(NavBreadcrumb(kind: .kanjiDetail, targetId: codepoint, label: "\(String(sc)) (Kanji)"))
+            recordNavigation(NavBreadcrumb(
+                kind: .kanjiDetail,
+                targetId: codepoint,
+                label: "\(String(sc)) (Kanji)",
+                subtitle: activeKanji?.meanings ?? "Kanji Detail"
+            ))
         }
     }
 
@@ -443,11 +476,16 @@ final class DaiJishowEngine: ObservableObject {
         self.selectedFisheyeNode = nil
         self.hoveredFisheyeNode = nil
         self.activeScreen = .fisheye
-        solveFisheye(center: codepoint, focusX: 0, focusY: 0, aspectRatio: 1.5)
+        solveFisheye(center: codepoint, focusX: 0, focusY: 0, aspectRatio: 1.5, animated: false)
         pushRecentKanji(codepoint)
 
         if recordHistory, let sc = UnicodeScalar(codepoint) {
-            recordNavigation(NavBreadcrumb(kind: .fisheye, targetId: codepoint, label: String(sc)))
+            recordNavigation(NavBreadcrumb(
+                kind: .fisheye,
+                targetId: codepoint,
+                label: String(sc),
+                subtitle: activeKanji?.meanings ?? "Compound Explorer"
+            ))
         }
     }
 
@@ -490,37 +528,61 @@ final class DaiJishowEngine: ObservableObject {
         return true
     }
 
-    func solveFisheye(center: UInt32, focusX: Float, focusY: Float, aspectRatio: Float) {
+    func solveFisheye(center: UInt32, focusX: Float, focusY: Float, aspectRatio: Float, animated: Bool = true) {
         guard let h = handle else { return }
         var rawPtr: UnsafePointer<dj_fisheye_node_t>?
-        let count = dj_graph_solve_fisheye(h, center, fisheyeMode, focusX, focusY, aspectRatio, 14, &rawPtr)
-        var list: [FisheyeNode] = []
+        var leftOv: Int = 0
+        var rightOv: Int = 0
+        let count = dj_graph_solve_fisheye(
+            h, center, fisheyeMode, includeNames, focusX, focusY, aspectRatio,
+            maxFisheyePerSide, &leftOv, &rightOv, &rawPtr
+        )
+        var mainList: [FisheyeNode] = []
+        var previewList: [FisheyeNode] = []
         if let ptr = rawPtr, count > 0 {
-            list.reserveCapacity(count)
             for i in 0..<count {
                 let n = ptr[i]
-                list.append(FisheyeNode(
+                let node = FisheyeNode(
                     codepoint: n.codepoint,
                     glyph: String(UnicodeScalar(n.codepoint) ?? UnicodeScalar(0x3000)!),
                     side: n.side,
                     commonalityTier: n.commonality_tier,
+                    isOverflowPreview: n.is_overflow_preview != 0,
                     topEntryId: n.top_entry_id,
                     compoundWord: String(cString: n.compound_word),
                     compoundKana: String(cString: n.compound_kana),
                     compoundGloss: String(cString: n.compound_gloss),
+                    sharePct: n.share_pct,
                     normX: CGFloat(n.norm_x),
                     normY: CGFloat(n.norm_y),
                     scale: CGFloat(n.scale),
                     opacity: Double(n.opacity)
-                ))
+                )
+                if node.isOverflowPreview {
+                    previewList.append(node)
+                } else {
+                    mainList.append(node)
+                }
             }
         }
-        self.fisheyeNodes = list
+        let apply = {
+            self.leftOverflowCount = leftOv
+            self.rightOverflowCount = rightOv
+            self.fisheyeNodes = mainList
+            self.overflowPreviewNodes = previewList
+        }
+        if animated {
+            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.78, blendDuration: 0.12)) {
+                apply()
+            }
+        } else {
+            apply()
+        }
     }
 
     func openRadicalBuilder() {
         self.activeScreen = .radicalBuilder
-        recordNavigation(NavBreadcrumb(kind: .radicalBuilder, targetId: 0, label: "Radicals"))
+        recordNavigation(NavBreadcrumb(kind: .radicalBuilder, targetId: 0, label: "Radicals", subtitle: "7-Slot Radical Builder"))
     }
 
     func searchRadicals(selectedIds: [UInt8], targetStrokes: Int16, tolerance: Int8) {
