@@ -1,6 +1,6 @@
 #pragma once
 
-#include "include/daijishow.h"
+#include "include/dj_capi.h"
 #include <sqlite3.h>
 #include <array>
 #include <cstdint>
@@ -119,6 +119,7 @@ std::vector<OwnedFisheyeNode> solve_fisheye_graph(
     uint32_t center_cp,
     dj_fisheye_mode_t mode,
     bool include_names,
+    bool has_focus,
     float focus_x,
     float focus_y,
     float aspect_ratio,

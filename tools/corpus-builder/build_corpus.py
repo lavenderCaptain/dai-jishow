@@ -57,6 +57,9 @@ CREATE TABLE entries (
 -- Partitioning by `is_name` keeps general dictionary lookups isolated from 740k proper names.
 CREATE INDEX idx_entries_kana  ON entries(is_name, kana_head, freq_overall);
 CREATE INDEX idx_entries_kanji ON entries(is_name, kanji_head, freq_overall);
+CREATE INDEX idx_entries_name_len2_suffix
+    ON entries(is_name, SUBSTR(kanji_head, 2, 1), freq_overall)
+    WHERE is_name = 1 AND kanji_head IS NOT NULL AND LENGTH(kanji_head) = 2;
 
 CREATE TABLE senses (
     entry_id        INTEGER NOT NULL,
@@ -102,7 +105,8 @@ CREATE TABLE kanji_radicals (
     PRIMARY KEY (radical_id, codepoint)
 ) WITHOUT ROWID;
 
--- Precomputed Dokusha directional compound graph (Left=Prefix, Right=Suffix, 2=Yojijukugo).
+-- Precomputed Dokusha directional compound graph:
+-- edge_kind: 0=Left(Prefix) Vocab, 1=Right(Suffix) Vocab, 2=Yojijukugo, 3=Left Name, 4=Right Name
 CREATE TABLE kanji_edges (
     center_cp       INTEGER NOT NULL,
     edge_kind       INTEGER NOT NULL,
@@ -369,6 +373,24 @@ def parse_kanjidic2(gz_path: Path, conn: sqlite3.Connection, kvg_map: Dict[int, 
                 elem.clear()
     print(f"[done]  Inserted {count} kanji records ({rad_links} multi-radical links)")
 
+def emit_dedup_edges(adj_map: Dict[int, List[Tuple[float, int, int, int]]], edge_kind: int, max_rank: int) -> List[Tuple]:
+    rows = []
+    for cp, items in adj_map.items():
+        items.sort(key=lambda x: -x[0])
+        seen_eids: Set[int] = set()
+        seen_neighbors: Set[int] = set()
+        rank = 0
+        for score, neighbor, eid, cnt in items:
+            if eid in seen_eids or neighbor in seen_neighbors:
+                continue
+            seen_eids.add(eid)
+            seen_neighbors.add(neighbor)
+            rows.append((cp, edge_kind, rank, neighbor, eid, cnt, round(score, 3)))
+            rank += 1
+            if rank >= max_rank:
+                break
+    return rows
+
 def parse_jmdict_and_build_graphs(
     gz_path: Path,
     conn: sqlite3.Connection,
@@ -395,7 +417,8 @@ def parse_jmdict_and_build_graphs(
                 eid = int(elem.findtext("ent_seq") or 0)
                 k_elems = [ke.findtext("keb") for ke in elem.findall("k_ele") if ke.findtext("keb")]
                 r_elems = [re_el.findtext("reb") for re_el in elem.findall("r_ele") if re_el.findtext("reb")]
-                pri_tags = [p.text for p in elem.findall("k_ele/ke_pri") if p.text] +                            [p.text for p in elem.findall("r_ele/re_pri") if p.text]
+                pri_tags = [p.text for p in elem.findall("k_ele/ke_pri") if p.text] + \
+                           [p.text for p in elem.findall("r_ele/re_pri") if p.text]
 
                 kanji_head = k_elems[0] if k_elems else None
                 kana_head = r_elems[0] if r_elems else ""
@@ -502,7 +525,8 @@ def parse_jmdict_and_build_graphs(
         if tid == eid:
             continue
         t_pos = entry_pos_map.get(tid, 0)
-        is_vt_vi = ((s_pos & POS_BITS["vt"]) and (t_pos & POS_BITS["vi"])) or                    ((s_pos & POS_BITS["vi"]) and (t_pos & POS_BITS["vt"]))
+        is_vt_vi = ((s_pos & POS_BITS["vt"]) and (t_pos & POS_BITS["vi"])) or \
+                   ((s_pos & POS_BITS["vi"]) and (t_pos & POS_BITS["vt"]))
         if is_vt_vi:
             cur.execute("UPDATE entries SET pair_entry_id = ? WHERE entry_id = ? AND pair_entry_id IS NULL", (tid, eid))
             cur.execute("UPDATE entries SET pair_entry_id = ? WHERE entry_id = ? AND pair_entry_id IS NULL", (eid, tid))
@@ -532,28 +556,11 @@ def parse_jmdict_and_build_graphs(
             if partner != cp:
                 yoji_adj[cp].append((score, partner, eid, 1))
 
-    def emit_dedup_edges(adj_map: Dict[int, List[Tuple[float, int, int, int]]], edge_kind: int, max_rank: int) -> List[Tuple]:
-        rows = []
-        for cp, items in adj_map.items():
-            items.sort(key=lambda x: -x[0])
-            seen_eids: Set[int] = set()
-            seen_neighbors: Set[int] = set()
-            rank = 0
-            for score, neighbor, eid, cnt in items:
-                if eid in seen_eids or neighbor in seen_neighbors:
-                    continue
-                seen_eids.add(eid)
-                seen_neighbors.add(neighbor)
-                rows.append((cp, edge_kind, rank, neighbor, eid, cnt, round(score, 3)))
-                rank += 1
-                if rank >= max_rank:
-                    break
-        return rows
-
+    # Cache up to 160 directional edges per side so the C++ fisheye pre-cache loads everything in one query
     edge_rows = []
-    edge_rows.extend(emit_dedup_edges(left_adj, 0, 40))
-    edge_rows.extend(emit_dedup_edges(right_adj, 1, 40))
-    edge_rows.extend(emit_dedup_edges(yoji_adj, 2, 12))
+    edge_rows.extend(emit_dedup_edges(left_adj, 0, 160))
+    edge_rows.extend(emit_dedup_edges(right_adj, 1, 160))
+    edge_rows.extend(emit_dedup_edges(yoji_adj, 2, 60))
 
     cur.executemany("INSERT INTO kanji_edges VALUES (?,?,?,?,?,?,?)", edge_rows)
     print(f"[done]  Inserted {len(edge_rows)} deduplicated directional + yojijukugo fisheye edges")
@@ -646,6 +653,9 @@ def parse_jmnedict(gz_path: Path, conn: sqlite3.Connection) -> None:
     print(f"[parse] {gz_path.name} (proper names) ...")
     cur = conn.cursor()
     count = 0
+
+    name_pair_stats: Dict[Tuple[int, int], Tuple[int, int]] = {}
+
     with gzip.open(gz_path, "rb") as f:
         for _, elem in ET.iterparse(f, events=("end",)):
             if elem.tag == "entry":
@@ -668,8 +678,32 @@ def parse_jmnedict(gz_path: Path, conn: sqlite3.Connection) -> None:
                         (eid, kanji_head or "", kana_head, joined),
                     )
                     count += 1
+
+                    for k_form in k_elems:
+                        if len(k_form) == 2 and is_kanji(k_form[0]) and is_kanji(k_form[1]):
+                            c1, c2 = ord(k_form[0]), ord(k_form[1])
+                            if c1 != c2 and c1 != 0x3005 and c2 != 0x3005:
+                                prev = name_pair_stats.get((c1, c2))
+                                if prev is None:
+                                    name_pair_stats[(c1, c2)] = (eid, 1)
+                                else:
+                                    name_pair_stats[(c1, c2)] = (prev[0], prev[1] + 1)
                 elem.clear()
     print(f"[done]  Inserted {count} JMnedict proper-name entries")
+
+    # Precompute directional name edges (edge_kind 3 = left/prefix name, 4 = right/suffix name)
+    name_left_adj: Dict[int, List[Tuple[float, int, int, int]]] = defaultdict(list)
+    name_right_adj: Dict[int, List[Tuple[float, int, int, int]]] = defaultdict(list)
+    for (c1, c2), (best_eid, cnt) in name_pair_stats.items():
+        score = 2.5 + math.log2(1.0 + cnt)
+        name_left_adj[c2].append((score, c1, best_eid, cnt))
+        name_right_adj[c1].append((score, c2, best_eid, cnt))
+
+    name_edge_rows = []
+    name_edge_rows.extend(emit_dedup_edges(name_left_adj, 3, 160))
+    name_edge_rows.extend(emit_dedup_edges(name_right_adj, 4, 160))
+    cur.executemany("INSERT INTO kanji_edges VALUES (?,?,?,?,?,?,?)", name_edge_rows)
+    print(f"[done]  Inserted {len(name_edge_rows)} precomputed JMnedict fisheye edges")
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compile Dai-Jishow SQLite corpus")

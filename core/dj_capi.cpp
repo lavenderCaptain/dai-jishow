@@ -201,6 +201,7 @@ size_t dj_graph_solve_fisheye(
     uint32_t                  center_codepoint,
     dj_fisheye_mode_t         mode,
     bool                      include_names,
+    bool                      has_focus,
     float                     focus_norm_x,
     float                     focus_norm_y,
     float                     aspect_ratio,
@@ -216,7 +217,7 @@ size_t dj_graph_solve_fisheye(
 
     size_t left_ov = 0, right_ov = 0;
     engine->owned_fisheye = dj::solve_fisheye_graph(
-        engine->db, center_codepoint, mode, include_names,
+        engine->db, center_codepoint, mode, include_names, has_focus,
         focus_norm_x, focus_norm_y, aspect_ratio, max_per_side, left_ov, right_ov);
 
     if (out_left_overflow) *out_left_overflow = left_ov;

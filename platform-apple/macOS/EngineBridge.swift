@@ -142,6 +142,13 @@ struct NavBreadcrumb: Identifiable, Equatable {
     let subtitle: String
 }
 
+enum HistorySnapshot {
+    case wordEntry(EntryDetail)
+    case kanjiDetail(KanjiDetail)
+    case fisheye(kanji: KanjiDetail, nodes: [FisheyeNode], leftOverflow: Int, rightOverflow: Int)
+    case radicalBuilder(selectedIds: [UInt8], targetStrokes: Int, matches: [UInt32])
+}
+
 enum RecallMode: String, CaseIterable, Identifiable {
     case full = "Full"
     case hideKana = "Hide Kana"
@@ -152,6 +159,8 @@ enum RecallMode: String, CaseIterable, Identifiable {
 @MainActor
 final class DaiJishowEngine: ObservableObject {
     private var handle: OpaquePointer?
+    private var searchDebounceTask: Task<Void, Never>?
+    private var historySnapshots: [UUID: HistorySnapshot] = [:]
 
     @Published var searchQuery: String = ""
     @Published var includeNames: Bool = false
@@ -162,6 +171,7 @@ final class DaiJishowEngine: ObservableObject {
     @Published var history: [NavBreadcrumb] = []
     @Published var historyIndex: Int = -1
     @Published var isZStackOpen: Bool = false
+    @Published var zStackFocusedIndex: Int = 0
     @Published var recentKanji: [UInt32] = []
 
     @Published var activeEntry: EntryDetail?
@@ -171,9 +181,13 @@ final class DaiJishowEngine: ObservableObject {
     @Published var leftOverflowCount: Int = 0
     @Published var rightOverflowCount: Int = 0
     @Published var maxFisheyePerSide: Int = 12
+    @Published var showFisheyePercentages: Bool = true
     @Published var fisheyeMode: dj_fisheye_mode_t = DJ_EDGE_COMPOUNDS
     @Published var selectedFisheyeNode: FisheyeNode?
     @Published var hoveredFisheyeNode: FisheyeNode?
+
+    @Published var radicalSelectedIds: [UInt8] = []
+    @Published var radicalTargetStrokes: Int = 0
     @Published var radicalMatches: [UInt32] = []
 
     init(dbPath: String) {
@@ -194,19 +208,143 @@ final class DaiJishowEngine: ObservableObject {
     var canGoBack: Bool { historyIndex > 0 }
     var canGoForward: Bool { historyIndex + 1 < history.count }
 
+    private func captureCurrentSnapshot(for item: NavBreadcrumb) {
+        switch item.kind {
+        case .wordEntry:
+            if let entry = activeEntry, entry.header.id == item.targetId {
+                historySnapshots[item.id] = .wordEntry(entry)
+            }
+        case .kanjiDetail:
+            if let k = activeKanji, k.codepoint == item.targetId {
+                historySnapshots[item.id] = .kanjiDetail(k)
+            }
+        case .fisheye:
+            if let k = activeKanji, k.codepoint == item.targetId {
+                historySnapshots[item.id] = .fisheye(
+                    kanji: k,
+                    nodes: fisheyeNodes,
+                    leftOverflow: leftOverflowCount,
+                    rightOverflow: rightOverflowCount
+                )
+            }
+        case .radicalBuilder:
+            historySnapshots[item.id] = .radicalBuilder(
+                selectedIds: radicalSelectedIds,
+                targetStrokes: radicalTargetStrokes,
+                matches: radicalMatches
+            )
+        }
+    }
+
+    func snapshot(for item: NavBreadcrumb) -> HistorySnapshot? {
+        historySnapshots[item.id]
+    }
+
+    func invalidateFisheyeSnapshots() {
+        for item in history where item.kind == .fisheye {
+            historySnapshots.removeValue(forKey: item.id)
+        }
+    }
+
+    func openHistoryStack() {
+        guard !history.isEmpty else {
+            isZStackOpen = true
+            return
+        }
+        // Save the latest state of the currently active history item
+        if historyIndex >= 0 && historyIndex < history.count {
+            captureCurrentSnapshot(for: history[historyIndex])
+        }
+        zStackFocusedIndex = min(max(0, historyIndex), history.count - 1)
+        // Pre-hydrate snapshots for visible cards around the focused card
+        let start = max(0, zStackFocusedIndex - 4)
+        let end = min(history.count - 1, zStackFocusedIndex + 4)
+        for idx in start...end {
+            ensureHistorySnapshot(at: idx)
+        }
+        isZStackOpen = true
+    }
+
+    func stepZStack(by delta: Int) {
+        guard !history.isEmpty else { return }
+        let next = min(max(0, zStackFocusedIndex + delta), history.count - 1)
+        guard next != zStackFocusedIndex else { return }
+        zStackFocusedIndex = next
+        ensureHistorySnapshot(at: next)
+        if next - 1 >= 0 { ensureHistorySnapshot(at: next - 1) }
+        if next + 1 < history.count { ensureHistorySnapshot(at: next + 1) }
+    }
+
+    func ensureHistorySnapshot(at index: Int) {
+        guard index >= 0 && index < history.count else { return }
+        let item = history[index]
+        if historySnapshots[item.id] != nil { return }
+        guard let h = handle else { return }
+
+        switch item.kind {
+        case .wordEntry:
+            var raw = dj_entry_detail_t()
+            if dj_dict_get_entry_detail(h, item.targetId, &raw) {
+                historySnapshots[item.id] = .wordEntry(parseEntryDetail(raw))
+            }
+        case .kanjiDetail:
+            if let k = fetchKanjiDetail(codepoint: item.targetId) {
+                historySnapshots[item.id] = .kanjiDetail(k)
+            }
+        case .fisheye:
+            if let k = fetchKanjiDetail(codepoint: item.targetId) {
+                var rawPtr: UnsafePointer<dj_fisheye_node_t>?
+                var leftOv = 0
+                var rightOv = 0
+                let count = dj_graph_solve_fisheye(
+                    h, item.targetId, fisheyeMode, includeNames, false, 0, 0, 1.85,
+                    maxFisheyePerSide, &leftOv, &rightOv, &rawPtr
+                )
+                var mainList: [FisheyeNode] = []
+                if let ptr = rawPtr, count > 0 {
+                    for i in 0..<count {
+                        let node = makeFisheyeNode(from: ptr[i])
+                        if !node.isOverflowPreview {
+                            mainList.append(node)
+                        }
+                    }
+                }
+                historySnapshots[item.id] = .fisheye(
+                    kanji: k,
+                    nodes: mainList,
+                    leftOverflow: leftOv,
+                    rightOverflow: rightOv
+                )
+            }
+        case .radicalBuilder:
+            historySnapshots[item.id] = .radicalBuilder(
+                selectedIds: radicalSelectedIds,
+                targetStrokes: radicalTargetStrokes,
+                matches: radicalMatches
+            )
+        }
+    }
+
     private func recordNavigation(_ item: NavBreadcrumb) {
         if historyIndex >= 0 && historyIndex < history.count {
             let current = history[historyIndex]
             if current.kind == item.kind && current.targetId == item.targetId {
+                captureCurrentSnapshot(for: current)
                 return
             }
             if historyIndex + 1 < history.count {
+                let dropped = history[(historyIndex + 1)..<history.count]
+                for d in dropped {
+                    historySnapshots.removeValue(forKey: d.id)
+                }
                 history.removeSubrange((historyIndex + 1)..<history.count)
             }
         }
         history.append(item)
+        captureCurrentSnapshot(for: item)
         if history.count > 24 {
-            history.removeFirst()
+            let removed = history.removeFirst()
+            historySnapshots.removeValue(forKey: removed.id)
         }
         historyIndex = history.count - 1
     }
@@ -239,18 +377,32 @@ final class DaiJishowEngine: ObservableObject {
         case .kanjiDetail:
             openKanjiDetail(codepoint: item.targetId, recordHistory: false)
         case .radicalBuilder:
+            if case .radicalBuilder(let sel, let strokes, let matches) = historySnapshots[item.id] {
+                self.radicalSelectedIds = sel
+                self.radicalTargetStrokes = strokes
+                self.radicalMatches = matches
+            }
             activeScreen = .radicalBuilder
         }
     }
 
     func performSearch() {
-        guard let h = handle else { return }
+        searchDebounceTask?.cancel()
         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             searchResults = []
             return
         }
 
+        searchDebounceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(75))
+            guard !Task.isCancelled, let self else { return }
+            self.executeSearchNow(trimmed: trimmed)
+        }
+    }
+
+    private func executeSearchNow(trimmed: String) {
+        guard let h = handle else { return }
         if trimmed.unicodeScalars.count == 1, let scalar = trimmed.unicodeScalars.first, isKanjiScalar(scalar.value) {
             pushRecentKanji(scalar.value)
         }
@@ -283,8 +435,10 @@ final class DaiJishowEngine: ObservableObject {
     }
 
     func submitSearchQuery() {
-        if searchResults.isEmpty {
-            performSearch()
+        searchDebounceTask?.cancel()
+        let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if searchResults.isEmpty && !trimmed.isEmpty {
+            executeSearchNow(trimmed: trimmed)
         }
         if let first = searchResults.first {
             openWordEntry(entryId: first.id)
@@ -458,7 +612,8 @@ final class DaiJishowEngine: ObservableObject {
     }
 
     func openKanjiDetail(codepoint: UInt32, recordHistory: Bool = true) {
-        guard openKanjiDetailSilently(codepoint: codepoint) else { return }
+        guard let detail = fetchKanjiDetail(codepoint: codepoint) else { return }
+        self.activeKanji = detail
         pushRecentKanji(codepoint)
         self.activeScreen = .kanjiDetail
         if recordHistory, let sc = UnicodeScalar(codepoint) {
@@ -466,17 +621,20 @@ final class DaiJishowEngine: ObservableObject {
                 kind: .kanjiDetail,
                 targetId: codepoint,
                 label: "\(String(sc)) (Kanji)",
-                subtitle: activeKanji?.meanings ?? "Kanji Detail"
+                subtitle: detail.meanings
             ))
         }
     }
 
     func openFisheye(codepoint: UInt32, recordHistory: Bool = true) {
-        _ = openKanjiDetailSilently(codepoint: codepoint)
+        if let detail = fetchKanjiDetail(codepoint: codepoint) {
+            self.activeKanji = detail
+        }
         self.selectedFisheyeNode = nil
         self.hoveredFisheyeNode = nil
         self.activeScreen = .fisheye
-        solveFisheye(center: codepoint, focusX: 0, focusY: 0, aspectRatio: 1.5, animated: false)
+        // Pre-caches all prefix & suffix nodes (including overflow) in C++ RAM immediately on view open
+        solveFisheye(center: codepoint, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: 1.85, animated: false)
         pushRecentKanji(codepoint)
 
         if recordHistory, let sc = UnicodeScalar(codepoint) {
@@ -489,10 +647,10 @@ final class DaiJishowEngine: ObservableObject {
         }
     }
 
-    private func openKanjiDetailSilently(codepoint: UInt32) -> Bool {
-        guard let h = handle else { return false }
+    private func fetchKanjiDetail(codepoint: UInt32) -> KanjiDetail? {
+        guard let h = handle else { return nil }
         var raw = dj_kanji_detail_t()
-        guard dj_kanji_get_detail(h, codepoint, &raw) else { return false }
+        guard dj_kanji_get_detail(h, codepoint, &raw) else { return nil }
         var polylines: [[CGPoint]] = []
         if let polyPtr = raw.stroke_polylines {
             for i in 0..<raw.polyline_count {
@@ -508,7 +666,7 @@ final class DaiJishowEngine: ObservableObject {
             }
         }
         let glyph = String(UnicodeScalar(codepoint)!)
-        self.activeKanji = KanjiDetail(
+        return KanjiDetail(
             codepoint: codepoint,
             glyph: glyph,
             strokes: Int(raw.strokes),
@@ -525,39 +683,42 @@ final class DaiJishowEngine: ObservableObject {
             componentRadicals: String(cString: raw.component_radicals),
             strokePolylines: polylines
         )
-        return true
     }
 
-    func solveFisheye(center: UInt32, focusX: Float, focusY: Float, aspectRatio: Float, animated: Bool = true) {
+    private func makeFisheyeNode(from n: dj_fisheye_node_t) -> FisheyeNode {
+        let scalar = UnicodeScalar(n.codepoint) ?? UnicodeScalar(0x3000)!
+        return FisheyeNode(
+            codepoint: n.codepoint,
+            glyph: String(scalar),
+            side: n.side,
+            commonalityTier: n.commonality_tier,
+            isOverflowPreview: n.is_overflow_preview != 0,
+            topEntryId: n.top_entry_id,
+            compoundWord: String(cString: n.compound_word),
+            compoundKana: String(cString: n.compound_kana),
+            compoundGloss: String(cString: n.compound_gloss),
+            sharePct: n.share_pct,
+            normX: CGFloat(n.norm_x),
+            normY: CGFloat(n.norm_y),
+            scale: CGFloat(n.scale),
+            opacity: Double(n.opacity)
+        )
+    }
+
+    func solveFisheye(center: UInt32, hasFocus: Bool, focusX: Float, focusY: Float, aspectRatio: Float, animated: Bool = true) {
         guard let h = handle else { return }
         var rawPtr: UnsafePointer<dj_fisheye_node_t>?
         var leftOv: Int = 0
         var rightOv: Int = 0
         let count = dj_graph_solve_fisheye(
-            h, center, fisheyeMode, includeNames, focusX, focusY, aspectRatio,
+            h, center, fisheyeMode, includeNames, hasFocus, focusX, focusY, aspectRatio,
             maxFisheyePerSide, &leftOv, &rightOv, &rawPtr
         )
         var mainList: [FisheyeNode] = []
         var previewList: [FisheyeNode] = []
         if let ptr = rawPtr, count > 0 {
             for i in 0..<count {
-                let n = ptr[i]
-                let node = FisheyeNode(
-                    codepoint: n.codepoint,
-                    glyph: String(UnicodeScalar(n.codepoint) ?? UnicodeScalar(0x3000)!),
-                    side: n.side,
-                    commonalityTier: n.commonality_tier,
-                    isOverflowPreview: n.is_overflow_preview != 0,
-                    topEntryId: n.top_entry_id,
-                    compoundWord: String(cString: n.compound_word),
-                    compoundKana: String(cString: n.compound_kana),
-                    compoundGloss: String(cString: n.compound_gloss),
-                    sharePct: n.share_pct,
-                    normX: CGFloat(n.norm_x),
-                    normY: CGFloat(n.norm_y),
-                    scale: CGFloat(n.scale),
-                    opacity: Double(n.opacity)
-                )
+                let node = makeFisheyeNode(from: ptr[i])
                 if node.isOverflowPreview {
                     previewList.append(node)
                 } else {
@@ -572,7 +733,7 @@ final class DaiJishowEngine: ObservableObject {
             self.overflowPreviewNodes = previewList
         }
         if animated {
-            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.78, blendDuration: 0.12)) {
+            withAnimation(.interactiveSpring(response: 0.22, dampingFraction: 0.80, blendDuration: 0.10)) {
                 apply()
             }
         } else {
@@ -586,9 +747,14 @@ final class DaiJishowEngine: ObservableObject {
     }
 
     func searchRadicals(selectedIds: [UInt8], targetStrokes: Int16, tolerance: Int8) {
+        self.radicalSelectedIds = selectedIds
+        self.radicalTargetStrokes = Int(targetStrokes)
         guard let h = handle else { return }
         if selectedIds.isEmpty {
             radicalMatches = []
+            if historyIndex >= 0 && historyIndex < history.count && history[historyIndex].kind == .radicalBuilder {
+                captureCurrentSnapshot(for: history[historyIndex])
+            }
             return
         }
         var rawPtr: UnsafePointer<UInt32>?
@@ -602,6 +768,9 @@ final class DaiJishowEngine: ObservableObject {
             }
         }
         self.radicalMatches = cps
+        if historyIndex >= 0 && historyIndex < history.count && history[historyIndex].kind == .radicalBuilder {
+            captureCurrentSnapshot(for: history[historyIndex])
+        }
     }
 
     func pushRecentKanji(_ cp: UInt32) {

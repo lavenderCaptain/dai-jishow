@@ -112,7 +112,7 @@ typedef struct {
     const char* utf8_glyph;
     uint8_t     side;                /* 0 = left/prefix, 1 = right/suffix */
     uint8_t     commonality_tier;    /* 0 = Core, 1 = Joyo, 2 = Literary, 3 = Kyujitai/Non-Joyo */
-    uint8_t     is_overflow_preview; /* 0 = main bubble, 1 = mini sub-bubble for "+N more" */
+    uint8_t     is_overflow_preview; /* 0 = main bubble, 1 = overflow sub-bubble for "+N more" */
     uint32_t    top_entry_id;
     const char* compound_word;
     const char* compound_kana;
@@ -158,6 +158,7 @@ size_t dj_graph_solve_fisheye(
     uint32_t                  center_codepoint,
     dj_fisheye_mode_t         mode,
     bool                      include_names,
+    bool                      has_focus,
     float                     focus_norm_x,
     float                     focus_norm_y,
     float                     aspect_ratio,
