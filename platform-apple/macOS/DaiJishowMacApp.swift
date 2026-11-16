@@ -254,6 +254,17 @@ struct MainWorkspaceView: View {
                     Label("Radicals", systemImage: "square.grid.3x3")
                 }
                 .buttonStyle(.bordered)
+                .tint(engine.activeScreen == .radicalBuilder && !engine.isZStackOpen ? .cyan : nil)
+                .fixedSize()
+
+                Button {
+                    engine.isZStackOpen = false
+                    engine.openKanjiLookup()
+                } label: {
+                    Label("Kanji", systemImage: "character.book.closed")
+                }
+                .buttonStyle(.bordered)
+                .tint(engine.activeScreen == .kanjiLookup && !engine.isZStackOpen ? .cyan : nil)
                 .fixedSize()
 
                 Button {
@@ -285,6 +296,8 @@ struct MainWorkspaceView: View {
             KanjiDetailView(engine: engine)
         case .radicalBuilder:
             RadicalBuilderView(engine: engine)
+        case .kanjiLookup:
+            KanjiLookupView(engine: engine)
         case .fisheye:
             FisheyeExplorerView(engine: engine)
         }
