@@ -5,10 +5,36 @@
 #include <string>
 #include <vector>
 
+/**
+ * @file storage.cpp
+ * @brief `dj_storage` — all read-only SQLite access for the Dai-Jishow core.
+ *
+ * This module is the single place that talks to the corpus database. It
+ * provides:
+ *
+ *  - Word search (`db_search_words`) for the five `dj_search_mode_t`
+ *    strategies, including the romaji → kana AUTO path and the English FTS5
+ *    fallback with gloss re-ranking.
+ *  - Full entry detail (`db_get_entry_detail`): head + paired entry, per-
+ *    kanji ruby (furigana) segmentation, senses, and up to 8 lemmatized
+ *    example sentences with UTF-16 token spans (including a greedy
+ *    segmentation pass for kanji the pre-tokenizer didn't cover).
+ *  - Full kanji detail (`db_get_kanji_detail`), including decoding of the
+ *    quantized KanjiVG stroke blob and the component-radical breakdown.
+ *  - Radical search (`db_search_radicals`) as an intersection of Kangxi
+ *    radical tables.
+ *
+ * Everything here is read-only: the database is opened with
+ * `SQLITE_OPEN_READONLY` (see `dj_capi.cpp`) and only `SELECT` statements
+ * are issued.
+ */
+
 namespace dj {
 
 namespace {
 
+/// Kangxi radical glyphs indexed by radical id (1..214). Slot 0 is an empty
+/// placeholder because radical ids are 1-based.
 constexpr const char* kKangxiRadicalGlyphs[215] = {
     "", "一", "丨", "丶", "丿", "乙", "亅", "二", "亠", "人", "儿",
     "入", "八", "冂", "冖", "冫", "几", "凵", "刀", "力", "勹",
@@ -34,6 +60,7 @@ constexpr const char* kKangxiRadicalGlyphs[215] = {
     "齒", "龍", "龜", "龠"
 };
 
+/// Lower-case an ASCII string (non-ASCII bytes are left untouched).
 std::string to_lower_ascii(const std::string& s) {
     std::string out = s;
     for (char& c : out) {
@@ -42,6 +69,18 @@ std::string to_lower_ascii(const std::string& s) {
     return out;
 }
 
+/// Score how well the *primary* (sense-0) English gloss matches an English
+/// query, for re-ranking the FTS5 fallback results.
+///
+/// The gloss string is `;`-separated; each gloss item is inspected
+/// independently and the best tier across all items wins:
+///
+///   0 — the query is an exact match for a whole gloss (or its core, with any
+///       trailing parenthetical stripped).
+///   1 — the query is a leading word of a gloss (`"to <query>"` introducers
+///       are allowed).
+///   2 — the query appears as a substring somewhere in a gloss.
+///   3 — no match (or the query / gloss is empty).
 int english_gloss_relevance_tier(const std::string& primary_gloss, const std::string& query_lower) {
     if (query_lower.empty() || primary_gloss.empty()) return 3;
     std::string pg = to_lower_ascii(primary_gloss);
@@ -83,10 +122,21 @@ int english_gloss_relevance_tier(const std::string& primary_gloss, const std::st
     return 3;
 }
 
+/// Compute the exclusive upper bound of a UTF-8 prefix for B-tree range
+/// scans.
+///
+/// Appending `U+FFFF` (bytes `EF BF BF`) to the prefix yields a value that
+/// sorts *above* every valid UTF-8 string sharing that prefix (and below any
+/// string with a longer/different prefix), so SQLite can execute a pure
+/// index range scan `prefix <= col < upper` without a full table scan.
 std::string utf8_prefix_upper_bound(const std::string& prefix) {
     return prefix + std::string({static_cast<char>(0xEF), static_cast<char>(0xBF), static_cast<char>(0xBF)});
 }
 
+/// Count the UTF-16 code units occupied by a byte range of a UTF-8 string
+/// (ASCII and BMP characters = 1 unit, supplementary-plane characters = 2).
+/// Used to convert the byte-based token spans stored in the corpus into the
+/// UTF-16 coordinates the host text renderer expects.
 uint16_t utf8_byte_range_to_utf16_units(const std::string& s, size_t start_byte, size_t byte_len) {
     size_t end = std::min(s.size(), start_byte + byte_len);
     uint16_t units = 0;
@@ -110,6 +160,8 @@ uint16_t utf8_byte_range_to_utf16_units(const std::string& s, size_t start_byte,
     return units;
 }
 
+/// Decode one codepoint at `pos` and advance `pos` past it. Malformed
+/// trailing bytes are skipped one byte at a time as a fallback.
 uint32_t next_utf8_cp(const std::string& s, size_t& pos) {
     if (pos >= s.size()) return 0;
     unsigned char c = static_cast<unsigned char>(s[pos]);
@@ -138,6 +190,7 @@ uint32_t next_utf8_cp(const std::string& s, size_t& pos) {
     return c;
 }
 
+/// Decode an entire UTF-8 string into a vector of codepoints.
 std::vector<uint32_t> utf8_to_cps(const std::string& s) {
     std::vector<uint32_t> cps;
     size_t pos = 0;
@@ -147,6 +200,7 @@ std::vector<uint32_t> utf8_to_cps(const std::string& s) {
     return cps;
 }
 
+/// Encode the `cps[start .. start+len)` codepoint range back to UTF-8.
 std::string cps_to_utf8(const std::vector<uint32_t>& cps, size_t start, size_t len) {
     std::string out;
     char buf[8];
@@ -158,19 +212,29 @@ std::string cps_to_utf8(const std::vector<uint32_t>& cps, size_t start, size_t l
     return out;
 }
 
+/// @return `true` for CJK Unified Ideographs (U+4E00–U+9FFF), Extension A
+///         (U+3400–U+4DBF), and the iteration mark 〯 (U+3005).
 bool is_kanji_cp(uint32_t cp) {
     return (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF) || cp == 0x3005;
 }
 
+/// @return `true` for a hiragana codepoint (U+3041–U+3096).
 bool is_hiragana_cp(uint32_t cp) {
     return (cp >= 0x3041 && cp <= 0x3096);
 }
 
+/// Map a katakana codepoint onto the equivalent hiragana (the katakana block
+/// is exactly the hiragana block shifted by +0x60); other codepoints pass
+/// through unchanged.
 uint32_t to_hiragana_cp(uint32_t cp) {
     if (cp >= 0x30A1 && cp <= 0x30F6) return cp - 0x60;
     return cp;
 }
 
+/// Fold a kana onto its *base* form for tolerant prefix matching:
+/// daku-ten/han-ten kana map back to their unvoiced partner (ぎ → が,
+/// ぱ → は, ぷ → ぶ, ...) and youon small vowels map to their parent (ゅ →
+/// ゆ, ょ → よ). Only applied to the *first* mora of a reading match.
 uint32_t base_kana_cp(uint32_t cp) {
     cp = to_hiragana_cp(cp);
     if (cp >= 0x304C && cp <= 0x3062 && (cp % 2 == 0)) return cp - 1;
@@ -182,6 +246,11 @@ uint32_t base_kana_cp(uint32_t cp) {
     return cp;
 }
 
+/// @return `true` when `cand` matches `target` starting at `offset`, with
+///         three tolerances: any mora may differ by script only (hiragana vs
+///         katakana), the first mora may differ by daku-ten (base-form
+///         match), and a trailing small *tsu* (っ / ッ) in `target` is ignored
+///         on the final mora (geminate handling).
 bool kana_prefix_matches(const std::vector<uint32_t>& target, size_t offset, const std::vector<uint32_t>& cand) {
     if (cand.empty() || offset + cand.size() > target.size()) return false;
     for (size_t i = 0; i < cand.size(); ++i) {
@@ -195,6 +264,12 @@ bool kana_prefix_matches(const std::vector<uint32_t>& target, size_t offset, con
     return true;
 }
 
+/// Collect every candidate reading (On + Kun) for one kanji as hiragana
+/// codepoint sequences, longest-first, for the reading-split solver.
+///
+/// Each reading token from the corpus is cleaned before use: the
+/// pitch-accent digit suffix (`.`) is stripped, okurigana dash markers
+/// (`-`) are trimmed, and katakana is folded to hiragana.
 std::vector<std::vector<uint32_t>> get_kanji_candidate_readings(sqlite3* db, uint32_t cp) {
     std::vector<std::vector<uint32_t>> cands;
     sqlite3_stmt* stmt = nullptr;
@@ -233,6 +308,9 @@ std::vector<std::vector<uint32_t>> get_kanji_candidate_readings(sqlite3* db, uin
     return cands;
 }
 
+/// Fetch the first *standalone* Kun reading (no pitch-accent digit, no
+/// okurigana dash) for a kanji — the preferred reading to use when the kanji
+/// appears as a single-kanji word.
 std::string get_primary_standalone_kun(sqlite3* db, uint32_t cp) {
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db, "SELECT kun_readings FROM kanji WHERE codepoint = ?1;", -1, &stmt, nullptr) != SQLITE_OK) {
@@ -263,6 +341,13 @@ std::string get_primary_standalone_kun(sqlite3* db, uint32_t cp) {
     return best;
 }
 
+/// Backtracking solver that partitions the kana reading of a kanji compound
+/// into per-kanji chunks.
+///
+/// For each kanji (left-to-right) it tries that kanji's candidate readings
+/// and requires the reading at `k_pos` to match (via `kana_prefix_matches`);
+/// the last kanji must consume exactly the remaining kana. Returns `true`
+/// and fills `out_ranges` with `{start, length}` pairs on success.
 bool solve_kanji_reading_split(
     const std::vector<uint32_t>& kanji_cps,
     const std::vector<std::vector<std::vector<uint32_t>>>& all_cands,
@@ -314,6 +399,15 @@ std::vector<std::vector<uint32_t>> lookup_subword_readings(sqlite3* db, const st
     return out;
 }
 
+/// Segment an entry head (`surface`) + its kana `reading` into per-kanji
+/// ruby cells.
+///
+/// The leading/suffixing kana (prefix / okuri) become their own cells with
+/// empty furigana. The middle kanji run is split per-kanji using
+/// `solve_kanji_reading_split`. If that fails for a 3-kanji compound that
+/// contains a jukujikun (e.g. 矛 + 山車 = ほこ + だし), a 1+2 / 2+1 subword
+/// lookup is attempted; otherwise the whole middle run becomes a single
+/// cell.
 std::vector<OwnedRubyCell> build_per_kanji_ruby(sqlite3* db, const std::string& surface, const std::string& reading) {
     std::vector<OwnedRubyCell> cells;
     if (surface.empty()) return cells;
@@ -436,6 +530,8 @@ std::vector<OwnedRubyCell> build_per_kanji_ruby(sqlite3* db, const std::string& 
     return cells;
 }
 
+/// Copy one `entries` row (the 10 shared SELECT-list columns) into an
+/// `OwnedWordHit`.
 void bind_hit_from_row(sqlite3_stmt* stmt, OwnedWordHit& h) {
     h.entry_id = static_cast<uint32_t>(sqlite3_column_int64(stmt, 0));
     h.kanji_head = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
@@ -451,6 +547,19 @@ void bind_hit_from_row(sqlite3_stmt* stmt, OwnedWordHit& h) {
 
 } // namespace
 
+/// Execute a dictionary search and return the owned result rows.
+///
+/// Query pipeline:
+///   1. In `DJ_SEARCH_AUTO`, a romaji query is transliterated to kana; if
+///      the transliteration still contains ASCII letters (i.e. it wasn't
+///      clean romaji), the query is treated as English and routed to the
+///      FTS5 index instead.
+///   2. The SQL is chosen per mode: FTS5 `MATCH`, exact, homonyms (kana
+///      only), any (`LIKE`), or the default prefix range scan.
+///   3. FTS5 results are re-ranked by `english_gloss_relevance_tier` and
+///      then truncated to `limit`.
+///
+/// Results are always ordered by `freq_overall` (most common first).
 std::vector<OwnedWordHit> db_search_words(
     sqlite3* db,
     const std::string& raw_query,
@@ -583,6 +692,20 @@ std::vector<OwnedWordHit> db_search_words(
     return results;
 }
 
+/// Load the full detail for one dictionary entry.
+///
+/// Assembles, in order:
+///   - the header row + its paired entry (via `pair_entry_id`);
+///   - the per-kanji ruby segmentation of the display head;
+///   - all senses (sense 0 also back-fills the header's `primary_gloss`);
+///   - up to 8 lemmatized example sentences, whose pre-tokenized spans are
+///     decoded from the `token_spans` blob. Any kanji the pre-tokenizer
+///     missed is then segmented greedily (longest first, up to 5 kanji),
+///     preferring a proper-name reading when one is followed by の, and
+///     falling back to a verb-stem match.
+///
+/// Token spans are converted from corpus byte offsets to UTF-16 units so
+/// the host renderer can paint them directly.
 bool db_get_entry_detail(sqlite3* db, uint32_t entry_id, OwnedEntryDetail& out) {
     if (!db || entry_id == 0) return false;
     out = OwnedEntryDetail{};
@@ -831,6 +954,14 @@ bool db_get_entry_detail(sqlite3* db, uint32_t entry_id, OwnedEntryDetail& out) 
     return true;
 }
 
+/// Load the full detail for one kanji.
+///
+/// Besides the scalar metadata and reading/meaning strings, this decodes the
+/// quantized KanjiVG stroke blob (1 byte stroke count, then per stroke 1
+/// byte point count followed by 2×`uint16` coordinates quantized to
+/// `0..65535`) into normalized `dj_point_t` polylines, and assembles the
+/// `component_radicals` breakdown string from the primary radical plus any
+/// additional radicals in the `kanji_radicals` table.
 bool db_get_kanji_detail(sqlite3* db, uint32_t codepoint, OwnedKanjiDetail& out) {
     if (!db || codepoint == 0) return false;
     out = OwnedKanjiDetail{};
@@ -909,6 +1040,9 @@ bool db_get_kanji_detail(sqlite3* db, uint32_t codepoint, OwnedKanjiDetail& out)
     return true;
 }
 
+/// Find kanji containing *all* of the given Kangxi radicals (intersection),
+/// optionally restricted to a stroke range, sorted by frequency then stroke
+/// count (capped at 300 results).
 std::vector<uint32_t> db_search_radicals(
     sqlite3* db,
     const uint8_t* radical_ids,

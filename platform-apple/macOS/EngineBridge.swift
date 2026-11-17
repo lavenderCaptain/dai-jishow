@@ -61,7 +61,132 @@ struct EntryDetail {
     let rubyCells: [RubyCell]
     let senses: [SenseItem]
     let sentences: [SentenceItem]
+
+    var hasJapaneseGlosses: Bool {
+        senses.contains { !$0.jaGlosses.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
 }
+
+// MARK: - Word Cockpit Rich Lexical Models
+
+enum GlossLanguageMode: String, CaseIterable, Identifiable {
+    case english = "EN"
+    case japanese = "国語"
+    case both = "Both"
+    var id: String { rawValue }
+}
+
+struct PitchAccentContour {
+    let downstep: UInt8
+    let morae: [String]
+    let highStates: [Bool]      // length == morae.count
+    let particleHigh: Bool      // pitch of trailing particle (e.g. が)
+    let patternName: String     // e.g. "頭高 [1]", "平板 [0]", "中高 [2]", "尾高 [3]"
+    let patternSublabel: String // e.g. "Atamadaka", "Heiban", "Nakadaka", "Odaka"
+
+    static func build(kana: String, pitchAccent: UInt8) -> PitchAccentContour? {
+        guard pitchAccent != 255 else { return nil }
+        let morae = KanaNormalizer.splitMorae(kana)
+        guard !morae.isEmpty else { return nil }
+
+        let n = morae.count
+        let k = Int(pitchAccent)
+        var highs = [Bool](repeating: false, count: n)
+        let particleHigh: Bool
+        let name: String
+        let sublabel: String
+
+        if k == 0 {
+            // Heiban: L-H-H...H + H particle
+            for i in 1..<n { highs[i] = true }
+            particleHigh = true
+            name = "平板 [0]"
+            sublabel = "Heiban (Flat)"
+        } else if k == 1 {
+            // Atamadaka: H-L-L...L + L particle
+            highs[0] = true
+            particleHigh = false
+            name = "頭高 [1]"
+            sublabel = "Atamadaka (Initial Drop)"
+        } else if k >= n {
+            // Odaka: L-H-H...H + L particle
+            for i in 1..<n { highs[i] = true }
+            particleHigh = false
+            name = "尾高 [\(k)]"
+            sublabel = "Odaka (Tail Drop)"
+        } else {
+            // Nakadaka: L-H...H(up to k)-L...L + L particle
+            for i in 1..<min(k, n) { highs[i] = true }
+            particleHigh = false
+            name = "中高 [\(k)]"
+            sublabel = "Nakadaka (Mid Drop)"
+        }
+
+        return PitchAccentContour(
+            downstep: pitchAccent,
+            morae: morae,
+            highStates: highs,
+            particleHigh: particleHigh,
+            patternName: name,
+            patternSublabel: sublabel
+        )
+    }
+}
+
+struct WordTelemetry {
+    let frequencyTier: String
+    let frequencyRankText: String
+    let popularityRatio: Double   // 0.12 ... 1.0
+    let tierColor: Color
+    let gradeLabel: String?
+    let jlptLabel: String?
+    let totalStrokes: Int
+}
+
+struct WordKanjiDNA: Identifiable {
+    let id: Int
+    let codepoint: UInt32
+    let glyph: String
+    let strokes: Int
+    let gradeLabel: String
+    let jlptLabel: String
+    let meanings: String
+    let onReadings: [String]
+    let kunReadings: [String]
+    let matchedReadingNormalized: String?
+    let isJukujikun: Bool
+}
+
+struct CollocationPattern: Identifiable, Hashable {
+    let id: String
+    let pattern: String
+    let roleLabel: String
+    let count: Int
+}
+
+struct InflectionForm: Identifiable {
+    let id: String
+    let label: String
+    let surface: String
+    let kana: String
+}
+
+struct WordLexicalInsights {
+    let entryId: UInt32
+    let telemetry: WordTelemetry
+    let senseTags: [UInt32: [String]]
+    let kanjiDNA: [WordKanjiDNA]
+    let homonyms: [WordHit]
+    let prefixCompounds: [WordHit]
+    let suffixCompounds: [WordHit]
+    let collocations: [CollocationPattern]
+    let fallbackSentences: [SentenceItem]
+    let fallbackSourceWord: String?
+    let inflections: [InflectionForm]
+    let inflectionHeader: String?
+}
+
+// MARK: - Kanji Index & Detail Models
 
 struct KanjiIndexItem: Identifiable, Hashable {
     var id: UInt32 { codepoint }
@@ -271,9 +396,14 @@ enum RecallMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-// MARK: - Kana & Romaji Normalization Helpers
+// MARK: - Kana, Mora & Romaji Normalization Helpers
 
 enum KanaNormalizer {
+    private static let smallCombiningKana: Set<Character> = [
+        "ゃ", "ゅ", "ょ", "ぁ", "ぃ", "ぅ", "ぇ", "ぉ", "ゎ",
+        "ャ", "ュ", "ョ", "ァ", "ィ", "ゥ", "ェ", "ォ", "ヮ"
+    ]
+
     private static let romajiTable: [(String, String)] = [
         ("ltsu", "っ"), ("xtsu", "っ"),
         ("sha", "しゃ"), ("shu", "しゅ"), ("sho", "しょ"),
@@ -314,6 +444,20 @@ enum KanaNormalizer {
         ("a", "あ"), ("i", "い"), ("u", "う"), ("e", "え"), ("o", "お")
     ]
 
+    static func splitMorae(_ kana: String) -> [String] {
+        let trimmed = kana.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        var morae: [String] = []
+        for ch in trimmed {
+            if smallCombiningKana.contains(ch), let last = morae.popLast() {
+                morae.append(last + String(ch))
+            } else {
+                morae.append(String(ch))
+            }
+        }
+        return morae
+    }
+
     static func katakanaToHiragana(_ input: String) -> String {
         var out = ""
         out.reserveCapacity(input.count)
@@ -336,6 +480,12 @@ enum KanaNormalizer {
         return katakanaToHiragana(stripped)
     }
 
+    /// Stem before okurigana dot (e.g. "おお.きい" -> "おお")
+    static func stemBeforeDot(_ raw: String) -> String {
+        let base = raw.split(separator: ".").first.map(String.init) ?? raw
+        return cleanReadingToken(base)
+    }
+
     static func romajiToHiragana(_ input: String) -> String {
         let s = katakanaToHiragana(input.lowercased().trimmingCharacters(in: .whitespacesAndNewlines))
         var result = ""
@@ -343,7 +493,6 @@ enum KanaNormalizer {
 
         while idx < s.endIndex {
             let rem = s[idx...]
-            // Double consonant -> っ (except 'n')
             if rem.count >= 2 {
                 let c1 = rem[rem.startIndex]
                 let c2 = rem[rem.index(after: rem.startIndex)]
@@ -390,16 +539,27 @@ enum KanaNormalizer {
 
 @MainActor
 final class DaiJishowEngine: ObservableObject {
+    private static let cockpitDefaultsKey = "daijishow.wordCockpitExpanded"
+
     private var handle: OpaquePointer?
     private var searchDebounceTask: Task<Void, Never>?
     private var historySnapshots: [UUID: HistorySnapshot] = [:]
     private var cachedKanjiCatalog: [KanjiIndexItem]?
     private var cachedKanjiByCodepoint: [UInt32: KanjiIndexItem]?
+    private var wordInsightsCache: [String: WordLexicalInsights] = [:]
 
     @Published var searchQuery: String = ""
     @Published var includeNames: Bool = false
     @Published var recallMode: RecallMode = .full
     @Published var searchResults: [WordHit] = []
+
+    @Published var isWordCockpitExpanded: Bool {
+        didSet {
+            UserDefaults.standard.set(isWordCockpitExpanded, forKey: Self.cockpitDefaultsKey)
+        }
+    }
+    @Published var glossLanguageMode: GlossLanguageMode = .english
+    @Published var activeWordInsights: WordLexicalInsights?
 
     @Published var activeScreen: ActiveScreenKind = .fisheye
     @Published var history: [NavBreadcrumb] = []
@@ -429,23 +589,25 @@ final class DaiJishowEngine: ObservableObject {
     @Published var kanjiLookupSort: KanjiSortOrder = .popularity
     @Published var kanjiLookupStrokeCount: Int = 8
     @Published var kanjiLookupStrokeTolerance: Int = 0
-    @Published var kanjiLookupLevelFilter: Int = 0 // 0=All, 1=Joyo, 2=G1..6, 3=JLPT
+    @Published var kanjiLookupLevelFilter: Int = 0
     @Published var kanjiLookupReadingQuery: String = ""
-    @Published var kanjiLookupReadingScope: Int = 0 // 0=All, 1=On, 2=Kun
+    @Published var kanjiLookupReadingScope: Int = 0
     @Published var kanjiLookupReadingExact: Bool = false
-    @Published var kanjiLookupSkipPattern: Int = 1 // 1..4
-    @Published var kanjiLookupSkipPart1: Int = 0 // 0=Any
-    @Published var kanjiLookupSkipPart2: Int = 0 // 0=Any
+    @Published var kanjiLookupSkipPattern: Int = 1
+    @Published var kanjiLookupSkipPart1: Int = 0
+    @Published var kanjiLookupSkipPart2: Int = 0
     @Published var kanjiLookupFourCorner: String = ""
-    @Published var kanjiLookupGradeFilter: Int = 1 // 1..6, 8=Secondary Joyo, -5..-1=JLPT N5..N1
+    @Published var kanjiLookupGradeFilter: Int = 1
     @Published var kanjiLookupMeaningQuery: String = ""
     @Published var kanjiLookupResults: [KanjiIndexItem] = []
 
     init(dbPath: String) {
+        let savedCockpit = UserDefaults.standard.object(forKey: Self.cockpitDefaultsKey) as? Bool
+        self.isWordCockpitExpanded = savedCockpit ?? true
         self.handle = dj_engine_create(dbPath)
         if self.handle != nil {
-            pushRecentKanji(0x96FB) // 電
-            openFisheye(codepoint: 0x96FB, recordHistory: true)
+            pushRecentKanji(0x5927) // 大
+            openFisheye(codepoint: 0x5927, recordHistory: true)
         }
     }
 
@@ -458,6 +620,498 @@ final class DaiJishowEngine: ObservableObject {
     var isReady: Bool { handle != nil }
     var canGoBack: Bool { historyIndex > 0 }
     var canGoForward: Bool { historyIndex + 1 < history.count }
+
+    // MARK: - Word Cockpit Lexical Insights Builder (<1ms from Indexed Data)
+
+    func ensureWordInsights(for entry: EntryDetail) -> WordLexicalInsights {
+        let cacheKey = "\(entry.header.id)-\(entry.header.displayHeadword)-\(includeNames)"
+        if let cached = wordInsightsCache[cacheKey] {
+            if activeEntry?.header.id == entry.header.id {
+                self.activeWordInsights = cached
+            }
+            return cached
+        }
+
+        ensureKanjiCatalogLoaded()
+        let insights = buildWordInsights(for: entry)
+        wordInsightsCache[cacheKey] = insights
+        if activeEntry?.header.id == entry.header.id {
+            self.activeWordInsights = insights
+        }
+        return insights
+    }
+
+    private func buildWordInsights(for entry: EntryDetail) -> WordLexicalInsights {
+        let headword = entry.header.displayHeadword
+        let kana = entry.header.kanaHead
+
+        // 1. Kanji DNA + Telemetry Rollup
+        var dnaList: [WordKanjiDNA] = []
+        var totalStrokes = 0
+        var highestGrade = 0
+        var hardestJlpt = 6 // 5 is easiest, 1 is hardest
+
+        var cellIdx = 0
+        for cell in entry.rubyCells {
+            let cellKanjiScalars = cell.surface.unicodeScalars.filter { isKanjiScalar($0.value) }
+            guard !cellKanjiScalars.isEmpty else { continue }
+
+            let isMultiKanjiCell = cellKanjiScalars.count > 1
+            let normFuri = KanaNormalizer.cleanReadingToken(cell.furigana)
+
+            for scalar in cellKanjiScalars {
+                let cp = scalar.value
+                let glyph = String(scalar)
+                let meta = cachedKanjiByCodepoint?[cp]
+                let strokes = meta?.strokes ?? 0
+                totalStrokes += strokes
+
+                if let g = meta?.grade, (1...10).contains(g) {
+                    highestGrade = max(highestGrade, g)
+                }
+                if let j = meta?.jlpt, (1...5).contains(j) {
+                    hardestJlpt = min(hardestJlpt, j)
+                }
+
+                let onList = meta?.onReadings ?? []
+                let kunList = meta?.kunReadings ?? []
+
+                var matchedNorm: String?
+                if !isMultiKanjiCell && !normFuri.isEmpty {
+                    let candidates = (onList + kunList).map { KanaNormalizer.stemBeforeDot($0) }.filter { !$0.isEmpty }
+                    matchedNorm = Self.matchReadingToken(furigana: normFuri, candidates: candidates)
+                }
+
+                dnaList.append(WordKanjiDNA(
+                    id: cellIdx,
+                    codepoint: cp,
+                    glyph: glyph,
+                    strokes: strokes,
+                    gradeLabel: meta?.gradeLabel ?? "",
+                    jlptLabel: meta?.jlptLabel ?? "",
+                    meanings: meta?.meanings ?? "",
+                    onReadings: onList,
+                    kunReadings: kunList,
+                    matchedReadingNormalized: matchedNorm,
+                    isJukujikun: isMultiKanjiCell && !normFuri.isEmpty
+                ))
+                cellIdx += 1
+            }
+        }
+
+        let rank = entry.header.freqRank
+        let tierInfo: (label: String, ratio: Double, color: Color, rankStr: String) = {
+            if entry.header.isName {
+                return ("Proper Name", 0.35, Color.purple, rank < 999_999 ? "#\(rank)" : "Name")
+            } else if rank <= 500 {
+                return ("Core Top 500", 1.0, Color(red: 0.22, green: 0.74, blue: 0.97), "#\(rank)")
+            } else if rank <= 2500 {
+                return ("Core Top 2,500", 0.84, Color(red: 0.22, green: 0.74, blue: 0.97), "#\(rank)")
+            } else if rank <= 10000 {
+                return ("Jōyō Common", 0.66, Color(red: 0.20, green: 0.83, blue: 0.60), "#\(rank)")
+            } else if rank <= 35000 {
+                return ("Standard", 0.45, Color(red: 0.98, green: 0.75, blue: 0.14), "#\(rank)")
+            } else if rank < 999_999 {
+                return ("Literary", 0.26, Color(red: 0.65, green: 0.55, blue: 0.98), "#\(rank)")
+            } else {
+                return ("Unranked", 0.16, Color.white.opacity(0.55), "—")
+            }
+        }()
+
+        let gradeText: String? = {
+            switch highestGrade {
+            case 1...6: return "Grade \(highestGrade)"
+            case 8: return "Secondary Jōyō"
+            case 9, 10: return "Jinmeiyō"
+            default: return nil
+            }
+        }()
+        let jlptText: String? = (1...5).contains(hardestJlpt) ? "JLPT N\(hardestJlpt)" : nil
+
+        let telemetry = WordTelemetry(
+            frequencyTier: tierInfo.label,
+            frequencyRankText: tierInfo.rankStr,
+            popularityRatio: tierInfo.ratio,
+            tierColor: tierInfo.color,
+            gradeLabel: gradeText,
+            jlptLabel: jlptText,
+            totalStrokes: totalStrokes
+        )
+
+        // 2. Per-Sense Part-of-Speech / Grammatical Tags
+        var senseTags: [UInt32: [String]] = [:]
+        for sense in entry.senses {
+            senseTags[sense.id] = Self.inferSenseTags(sense: sense, entry: entry)
+        }
+
+        // 3. Homonyms (同音異義語) via exact kana match
+        var homonyms: [WordHit] = []
+        if let h = handle, !kana.isEmpty {
+            var exactPtr: UnsafePointer<dj_word_hit_t>?
+            let exactCount = kana.withCString { cStr in
+                dj_dict_search(h, cStr, DJ_SEARCH_EXACT, includeNames, 24, &exactPtr)
+            }
+            if let ptr = exactPtr, exactCount > 0 {
+                for i in 0..<exactCount {
+                    let item = ptr[i]
+                    if item.entry_id == entry.header.id { continue }
+                    let hitKana = String(cString: item.kana_head)
+                    guard hitKana == kana else { continue }
+                    homonyms.append(WordHit(
+                        id: item.entry_id,
+                        kanjiHead: String(cString: item.kanji_head),
+                        kanaHead: hitKana,
+                        altForms: String(cString: item.alt_forms),
+                        primaryGloss: String(cString: item.primary_gloss),
+                        posMask: item.pos_mask,
+                        pitchAccent: item.pitch_accent,
+                        freqRank: item.freq_rank,
+                        pairEntryId: item.pair_entry_id,
+                        isName: item.is_name
+                    ))
+                }
+            }
+            homonyms.sort { a, b in
+                if a.isName != b.isName { return !a.isName }
+                if a.freqRank != b.freqRank { return a.freqRank < b.freqRank }
+                return a.id < b.id
+            }
+            if homonyms.count > 12 {
+                homonyms = Array(homonyms.prefix(12))
+            }
+        }
+
+        // 4. Word Family (Prefix & Suffix Compounds)
+        var prefixList: [WordHit] = []
+        var suffixList: [WordHit] = []
+        if let h = handle, !headword.isEmpty {
+            var candidateMap: [UInt32: WordHit] = [:]
+
+            var autoPtr: UnsafePointer<dj_word_hit_t>?
+            let autoCount = headword.withCString { cStr in
+                dj_dict_search(h, cStr, DJ_SEARCH_AUTO, includeNames, 90, &autoPtr)
+            }
+            if let ptr = autoPtr, autoCount > 0 {
+                for i in 0..<autoCount {
+                    let item = ptr[i]
+                    if item.entry_id == entry.header.id { continue }
+                    let kHead = String(cString: item.kanji_head)
+                    guard !kHead.isEmpty, kHead != headword, kHead.contains(headword) else { continue }
+                    candidateMap[item.entry_id] = WordHit(
+                        id: item.entry_id,
+                        kanjiHead: kHead,
+                        kanaHead: String(cString: item.kana_head),
+                        altForms: String(cString: item.alt_forms),
+                        primaryGloss: String(cString: item.primary_gloss),
+                        posMask: item.pos_mask,
+                        pitchAccent: item.pitch_accent,
+                        freqRank: item.freq_rank,
+                        pairEntryId: item.pair_entry_id,
+                        isName: item.is_name
+                    )
+                }
+            }
+
+            // For single-kanji entries, also harvest top graph compounds from Fisheye
+            if headword.unicodeScalars.count == 1,
+               let sc = headword.unicodeScalars.first,
+               isKanjiScalar(sc.value) {
+                var graphPtr: UnsafePointer<dj_fisheye_node_t>?
+                var lOv = 0
+                var rOv = 0
+                let gCount = dj_graph_solve_fisheye(
+                    h, sc.value, DJ_EDGE_COMPOUNDS, includeNames, false, 0, 0, 1.85,
+                    24, &lOv, &rOv, &graphPtr
+                )
+                var topIds: [UInt32] = []
+                if let ptr = graphPtr, gCount > 0 {
+                    for i in 0..<gCount {
+                        let eid = ptr[i].top_entry_id
+                        if eid > 0 && eid != entry.header.id && candidateMap[eid] == nil {
+                            topIds.append(eid)
+                        }
+                    }
+                }
+                for eid in topIds.prefix(16) {
+                    var det = dj_entry_detail_t()
+                    if dj_dict_get_entry_detail(h, eid, &det) {
+                        let hdr = det.header
+                        let kHead = String(cString: hdr.kanji_head)
+                        if kHead.contains(headword) && kHead != headword {
+                            candidateMap[eid] = WordHit(
+                                id: hdr.entry_id,
+                                kanjiHead: kHead,
+                                kanaHead: String(cString: hdr.kana_head),
+                                altForms: String(cString: hdr.alt_forms),
+                                primaryGloss: String(cString: hdr.primary_gloss),
+                                posMask: hdr.pos_mask,
+                                pitchAccent: hdr.pitch_accent,
+                                freqRank: hdr.freq_rank,
+                                pairEntryId: hdr.pair_entry_id,
+                                isName: hdr.is_name
+                            )
+                        }
+                    }
+                }
+            }
+
+            let allFamily = candidateMap.values.sorted { a, b in
+                if a.isName != b.isName { return !a.isName }
+                if a.freqRank != b.freqRank { return a.freqRank < b.freqRank }
+                return a.displayHeadword.count < b.displayHeadword.count
+            }
+
+            prefixList = Array(allFamily.filter { $0.displayHeadword.hasPrefix(headword) }.prefix(8))
+            suffixList = Array(allFamily.filter { $0.displayHeadword.hasSuffix(headword) && !$0.displayHeadword.hasPrefix(headword) }.prefix(8))
+        }
+
+        // 5. Fallback Sentences (if direct entry has 0 sentences) & Corpus Collocations
+        var activeSentences = entry.sentences
+        var fallbackSource: String? = nil
+
+        if activeSentences.isEmpty, let h = handle {
+            let relatedPool = (prefixList + suffixList).sorted { $0.freqRank < $1.freqRank }
+            for candidate in relatedPool.prefix(4) {
+                var det = dj_entry_detail_t()
+                if dj_dict_get_entry_detail(h, candidate.id, &det) {
+                    let parsed = parseEntryDetail(det)
+                    if !parsed.sentences.isEmpty {
+                        activeSentences = Array(parsed.sentences.prefix(5))
+                        fallbackSource = candidate.displayHeadword
+                        break
+                    }
+                }
+            }
+        }
+
+        let collocations = Self.extractCollocations(
+            headword: fallbackSource ?? headword,
+            entryId: entry.header.id,
+            sentences: activeSentences
+        )
+
+        // 6. Conjugation / Inflection Matrix (Verbs & Adjectives)
+        let (inflections, inflectionHeader) = Self.generateInflections(for: entry)
+
+        return WordLexicalInsights(
+            entryId: entry.header.id,
+            telemetry: telemetry,
+            senseTags: senseTags,
+            kanjiDNA: dnaList,
+            homonyms: homonyms,
+            prefixCompounds: prefixList,
+            suffixCompounds: suffixList,
+            collocations: collocations,
+            fallbackSentences: entry.sentences.isEmpty ? activeSentences : [],
+            fallbackSourceWord: fallbackSource,
+            inflections: inflections,
+            inflectionHeader: inflectionHeader
+        )
+    }
+
+    private static func matchReadingToken(furigana: String, candidates: [String]) -> String? {
+        if candidates.contains(furigana) { return furigana }
+        // Rendaku / voicing & sokuon equivalence check
+        let unvoiced = unvoiceInitialKana(furigana)
+        for cand in candidates {
+            if cand == unvoiced { return cand }
+            if furigana.hasSuffix("っ") && cand.dropLast() == furigana.dropLast() {
+                return cand
+            }
+        }
+        return nil
+    }
+
+    private static func unvoiceInitialKana(_ s: String) -> String {
+        guard let first = s.first else { return s }
+        let map: [Character: Character] = [
+            "が": "か", "ぎ": "き", "ぐ": "く", "げ": "け", "ご": "こ",
+            "ざ": "さ", "じ": "し", "ず": "す", "ぜ": "せ", "ぞ": "そ",
+            "だ": "た", "ぢ": "ち", "づ": "つ", "で": "て", "ど": "と",
+            "ば": "は", "び": "ひ", "ぶ": "ふ", "べ": "へ", "ぼ": "ほ",
+            "ぱ": "は", "ぴ": "ひ", "ぷ": "ふ", "ぺ": "へ", "ぽ": "ほ"
+        ]
+        if let mapped = map[first] {
+            return String(mapped) + s.dropFirst()
+        }
+        return s
+    }
+
+    private static func inferSenseTags(sense: SenseItem, entry: EntryDetail) -> [String] {
+        var tags: [String] = []
+        let glosses = sense.enGlosses
+            .split(separator: ";")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        let kana = entry.header.kanaHead
+
+        if glosses.contains(where: { $0.hasPrefix("-") }) {
+            tags.append("Suffix")
+        }
+        if glosses.contains(where: { $0.hasSuffix("-") }) {
+            tags.append("Prefix")
+        }
+        if glosses.contains(where: { $0.hasPrefix("to ") }) {
+            if entry.header.pairEntryId > 0 {
+                if kana.hasSuffix("す") {
+                    tags.append("Transitive • 他動詞")
+                } else {
+                    tags.append("Intransitive • 自動詞")
+                }
+            }
+            if kana == "する" || kana.hasSuffix("する") {
+                tags.append("Suru Verb")
+            } else if kana.hasSuffix("える") || kana.hasSuffix("いる") {
+                tags.append("Verb")
+            } else {
+                tags.append("Godan Verb")
+            }
+        }
+        if tags.isEmpty {
+            if kana.hasSuffix("い") && !kana.hasSuffix("たい") && !kana.hasSuffix("ない") &&
+                glosses.contains(where: { !$0.hasPrefix("to ") && !$0.contains(" ") }) {
+                tags.append("i-Adj")
+            } else {
+                tags.append("Noun / Expr.")
+            }
+        }
+        return Array(tags.prefix(2))
+    }
+
+    private static func extractCollocations(headword: String, entryId: UInt32, sentences: [SentenceItem]) -> [CollocationPattern] {
+        guard !sentences.isEmpty else { return [] }
+        let particles: Set<String> = ["が", "を", "に", "へ", "で", "と", "から", "まで", "より", "の", "な", "も", "は"]
+        var counts: [String: (role: String, count: Int)] = [:]
+
+        for sent in sentences {
+            let segs = sent.segments
+            for (idx, seg) in segs.enumerated() {
+                let isTarget = (seg.entryId == entryId) || seg.text.contains(headword)
+                guard isTarget else { continue }
+
+                if idx > 0 {
+                    let prev = segs[idx - 1].text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let lastCh = prev.last, particles.contains(String(lastCh)) {
+                        let p = String(lastCh)
+                        let key = "〜\(p) \(headword)"
+                        let role = (p == "な" || p == "の") ? "Modifier" : "Preceding Particle"
+                        counts[key] = (role, (counts[key]?.count ?? 0) + 1)
+                    }
+                }
+                if idx + 1 < segs.count {
+                    let next = segs[idx + 1].text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let firstCh = next.first, particles.contains(String(firstCh)) {
+                        let p = String(firstCh)
+                        let key = "\(headword)\(p)〜"
+                        let role = (p == "な" || p == "に") ? "Adjectival / Adverbial" : "Following Particle"
+                        counts[key] = (role, (counts[key]?.count ?? 0) + 1)
+                    }
+                }
+            }
+        }
+
+        return counts.map { key, val in
+            CollocationPattern(id: key, pattern: key, roleLabel: val.role, count: val.count)
+        }
+        .sorted { a, b in
+            if a.count != b.count { return a.count > b.count }
+            return a.pattern < b.pattern
+        }
+        .prefix(6)
+        .map { $0 }
+    }
+
+    private static func generateInflections(for entry: EntryDetail) -> ([InflectionForm], String?) {
+        let surface = entry.header.displayHeadword
+        let kana = entry.header.kanaHead
+        guard surface.count >= 2, kana.count >= 2 else { return ([], nil) }
+
+        let allGlosses = entry.senses
+            .flatMap { $0.enGlosses.split(separator: ";") }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+
+        let isVerb = allGlosses.contains { $0.hasPrefix("to ") }
+
+        if isVerb {
+            let sStem = String(surface.dropLast())
+            let kStem = String(kana.dropLast())
+
+            if kana == "する" || kana.hasSuffix("する") {
+                let sBase = String(surface.dropLast(2))
+                let kBase = String(kana.dropLast(2))
+                return ([
+                    InflectionForm(id: "pol", label: "Polite", surface: sBase + "します", kana: kBase + "します"),
+                    InflectionForm(id: "neg", label: "Negative", surface: sBase + "しない", kana: kBase + "しない"),
+                    InflectionForm(id: "past", label: "Past", surface: sBase + "した", kana: kBase + "した"),
+                    InflectionForm(id: "te", label: "Te-form", surface: sBase + "して", kana: kBase + "して"),
+                    InflectionForm(id: "pot", label: "Potential", surface: sBase + "できる", kana: kBase + "できる"),
+                    InflectionForm(id: "pas", label: "Passive", surface: sBase + "される", kana: kBase + "される")
+                ], "Suru Verb Inflections")
+            }
+
+            if kana.hasSuffix("る") {
+                let preLast = kana.dropLast().last
+                let ichidanVowels: Set<Character> = [
+                    "い", "き", "ぎ", "し", "じ", "ち", "に", "ひ", "び", "ぴ", "み", "り",
+                    "え", "け", "げ", "せ", "ぜ", "て", "で", "ね", "へ", "べ", "ぺ", "め", "れ"
+                ]
+                if let v = preLast, ichidanVowels.contains(v) {
+                    return ([
+                        InflectionForm(id: "pol", label: "Polite", surface: sStem + "ます", kana: kStem + "ます"),
+                        InflectionForm(id: "neg", label: "Negative", surface: sStem + "ない", kana: kStem + "ない"),
+                        InflectionForm(id: "past", label: "Past", surface: sStem + "た", kana: kStem + "た"),
+                        InflectionForm(id: "te", label: "Te-form", surface: sStem + "て", kana: kStem + "て"),
+                        InflectionForm(id: "pot", label: "Potential", surface: sStem + "られる", kana: kStem + "られる"),
+                        InflectionForm(id: "pas", label: "Passive", surface: sStem + "られる", kana: kStem + "られる")
+                    ], "Ichidan Verb Inflections")
+                }
+            }
+
+            // Godan Verb table
+            if let last = kana.last {
+                struct GodanRow {
+                    let a: String; let i: String; let e: String; let te: String; let ta: String
+                }
+                let table: [Character: GodanRow] = [
+                    "う": GodanRow(a: "わ", i: "い", e: "え", te: "って", ta: "った"),
+                    "く": GodanRow(a: "か", i: "き", e: "け", te: "いて", ta: "いた"),
+                    "ぐ": GodanRow(a: "が", i: "ぎ", e: "げ", te: "いで", ta: "いだ"),
+                    "す": GodanRow(a: "さ", i: "し", e: "せ", te: "して", ta: "した"),
+                    "つ": GodanRow(a: "た", i: "ち", e: "て", te: "って", ta: "った"),
+                    "ぬ": GodanRow(a: "な", i: "に", e: "ね", te: "んで", ta: "んだ"),
+                    "ぶ": GodanRow(a: "ば", i: "び", e: "べ", te: "んで", ta: "んだ"),
+                    "む": GodanRow(a: "ま", i: "み", e: "め", te: "んで", ta: "んだ"),
+                    "る": GodanRow(a: "ら", i: "り", e: "れ", te: "って", ta: "った")
+                ]
+                if let row = table[last] {
+                    let isIku = (kana == "いく" || kana == "ゆく")
+                    let teEnd = isIku ? "って" : row.te
+                    let taEnd = isIku ? "った" : row.ta
+                    return ([
+                        InflectionForm(id: "pol", label: "Polite", surface: sStem + row.i + "ます", kana: kStem + row.i + "ます"),
+                        InflectionForm(id: "neg", label: "Negative", surface: sStem + row.a + "ない", kana: kStem + row.a + "ない"),
+                        InflectionForm(id: "past", label: "Past", surface: sStem + taEnd, kana: kStem + taEnd),
+                        InflectionForm(id: "te", label: "Te-form", surface: sStem + teEnd, kana: kStem + teEnd),
+                        InflectionForm(id: "pot", label: "Potential", surface: sStem + row.e + "る", kana: kStem + row.e + "る"),
+                        InflectionForm(id: "pas", label: "Passive", surface: sStem + row.a + "れる", kana: kStem + row.a + "れる")
+                    ], "Godan Verb Inflections")
+                }
+            }
+        }
+
+        // i-Adjective check (e.g. 大きい, 新しい, 高い)
+        if kana.hasSuffix("い") && surface.hasSuffix("い") && !isVerb && kana.count >= 3 {
+            let sStem = String(surface.dropLast())
+            let kStem = String(kana.dropLast())
+            return ([
+                InflectionForm(id: "adv", label: "Adverbial", surface: sStem + "く", kana: kStem + "く"),
+                InflectionForm(id: "neg", label: "Negative", surface: sStem + "くない", kana: kStem + "くない"),
+                InflectionForm(id: "past", label: "Past", surface: sStem + "かった", kana: kStem + "かった"),
+                InflectionForm(id: "te", label: "Te-form", surface: sStem + "くて", kana: kStem + "くて")
+            ], "i-Adjective Inflections")
+        }
+
+        return ([], nil)
+    }
 
     // MARK: - Fast In-Memory Kanji Catalog (Lazy-Built from Engine)
 
@@ -645,7 +1299,6 @@ final class DaiJishowEngine: ObservableObject {
             }
         }
 
-        // Apply chosen sort order
         filtered.sort { a, b in
             switch kanjiLookupSort {
             case .popularity:
@@ -661,7 +1314,7 @@ final class DaiJishowEngine: ObservableObject {
                 return a.strokes < b.strokes
 
             case .jlpt:
-                let ja = (1...5).contains(a.jlpt) ? (6 - a.jlpt) : 99 // N5 (1) -> N1 (5)
+                let ja = (1...5).contains(a.jlpt) ? (6 - a.jlpt) : 99
                 let jb = (1...5).contains(b.jlpt) ? (6 - b.jlpt) : 99
                 if ja != jb { return ja < jb }
                 if a.freqRank != b.freqRank { return a.freqRank < b.freqRank }
@@ -729,6 +1382,10 @@ final class DaiJishowEngine: ObservableObject {
     }
 
     func invalidateFisheyeSnapshots() {
+        wordInsightsCache.removeAll()
+        if let entry = activeEntry {
+            _ = ensureWordInsights(for: entry)
+        }
         for item in history where item.kind == .fisheye || item.kind == .kanjiDetail {
             historySnapshots.removeValue(forKey: item.id)
         }
@@ -988,7 +1645,7 @@ final class DaiJishowEngine: ObservableObject {
             let newCells = variant.unicodeScalars.enumerated().map { idx, sc in
                 RubyCell(id: idx, surface: String(sc), furigana: "", kanjiCodepoint: isKanjiScalar(sc.value) ? sc.value : 0)
             }
-            self.activeEntry = EntryDetail(
+            let updated = EntryDetail(
                 header: promotedHeader,
                 pairedKanji: cur.pairedKanji,
                 pairedKana: cur.pairedKana,
@@ -996,6 +1653,8 @@ final class DaiJishowEngine: ObservableObject {
                 senses: cur.senses,
                 sentences: cur.sentences
             )
+            self.activeEntry = updated
+            _ = ensureWordInsights(for: updated)
             recordNavigation(NavBreadcrumb(kind: .wordEntry, targetId: cur.header.id, label: variant, subtitle: cur.header.primaryGloss))
         }
     }
@@ -1102,6 +1761,10 @@ final class DaiJishowEngine: ObservableObject {
 
         let detail = parseEntryDetail(raw)
         self.activeEntry = detail
+        if !detail.hasJapaneseGlosses && glossLanguageMode != .english {
+            self.glossLanguageMode = .english
+        }
+        _ = ensureWordInsights(for: detail)
         self.activeScreen = .wordEntry
 
         for scalar in detail.header.displayHeadword.unicodeScalars where isKanjiScalar(scalar.value) {
@@ -1263,28 +1926,33 @@ final class DaiJishowEngine: ObservableObject {
                     h, codepoint, edgeMode, includeNames, false, 0, 0, 1.85,
                     60, &leftOv, &rightOv, &edgePtr
                 )
+                var edgeEntryIds: [UInt32] = []
                 if let ptr = edgePtr, edgeCount > 0 {
                     for i in 0..<edgeCount {
                         let eid = ptr[i].top_entry_id
-                        if eid == 0 || standaloneIds.contains(eid) || candidateById[eid] != nil { continue }
-                        var detailRaw = dj_entry_detail_t()
-                        if dj_dict_get_entry_detail(h, eid, &detailRaw) {
-                            let hdr = detailRaw.header
-                            let kHead = String(cString: hdr.kanji_head)
-                            if kHead.contains(glyph) {
-                                candidateById[eid] = WordHit(
-                                    id: hdr.entry_id,
-                                    kanjiHead: kHead,
-                                    kanaHead: String(cString: hdr.kana_head),
-                                    altForms: String(cString: hdr.alt_forms),
-                                    primaryGloss: String(cString: hdr.primary_gloss),
-                                    posMask: hdr.pos_mask,
-                                    pitchAccent: hdr.pitch_accent,
-                                    freqRank: hdr.freq_rank,
-                                    pairEntryId: hdr.pair_entry_id,
-                                    isName: hdr.is_name
-                                )
-                            }
+                        if eid > 0 && !standaloneIds.contains(eid) && candidateById[eid] == nil {
+                            edgeEntryIds.append(eid)
+                        }
+                    }
+                }
+                for eid in edgeEntryIds {
+                    var detailRaw = dj_entry_detail_t()
+                    if dj_dict_get_entry_detail(h, eid, &detailRaw) {
+                        let hdr = detailRaw.header
+                        let kHead = String(cString: hdr.kanji_head)
+                        if kHead.contains(glyph) {
+                            candidateById[eid] = WordHit(
+                                id: hdr.entry_id,
+                                kanjiHead: kHead,
+                                kanaHead: String(cString: hdr.kana_head),
+                                altForms: String(cString: hdr.alt_forms),
+                                primaryGloss: String(cString: hdr.primary_gloss),
+                                posMask: hdr.pos_mask,
+                                pitchAccent: hdr.pitch_accent,
+                                freqRank: hdr.freq_rank,
+                                pairEntryId: hdr.pair_entry_id,
+                                isName: hdr.is_name
+                            )
                         }
                     }
                 }
@@ -1413,7 +2081,6 @@ final class DaiJishowEngine: ObservableObject {
         let tStrokes = Int(targetStrokes)
         let tol = Int(tolerance)
 
-        // Allow browsing by stroke count alone if no radical is selected yet
         if selectedIds.isEmpty {
             if tStrokes > 0, let catalog = cachedKanjiCatalog {
                 let matches = catalog
@@ -1435,7 +2102,6 @@ final class DaiJishowEngine: ObservableObject {
             return
         }
 
-        // Pass 0 for targetStrokes to C core so we can apply exact/±1 filtering reliably in Swift
         var rawPtr: UnsafePointer<UInt32>?
         let count = selectedIds.withUnsafeBufferPointer { buf in
             dj_kanji_search_radicals(h, buf.baseAddress, buf.count, 0, 0, &rawPtr)
@@ -1465,7 +2131,6 @@ final class DaiJishowEngine: ObservableObject {
             }
         }
 
-        // Sort matched kanji by stroke count (when unconstrained) and prevalence
         cps.sort { a, b in
             let ma = cachedKanjiByCodepoint?[a]
             let mb = cachedKanjiByCodepoint?[b]

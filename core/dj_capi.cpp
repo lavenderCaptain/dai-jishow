@@ -1,3 +1,22 @@
+/**
+ * @file dj_capi.cpp
+ * @brief C11 ABI implementation: engine lifecycle + owned → ABI marshalling.
+ *
+ * Every public function follows the same pattern:
+ *
+ *   1. Validate the handle and arguments (a `NULL` handle/pointer is a no-op
+ *      that returns `0` / `false`).
+ *   2. Call the C++ core (`dj_storage` / `dj_graph`) and fill an `Owned*`
+ *      container — this is the *single source of truth* for the result.
+ *   3. Flatten the owned container into a flat `dj_*_t` ABI struct whose
+ *      string/array pointers point into the owned storage (the "arena").
+ *   4. Publish the ABI pointer via the `out_*` parameter and return the count.
+ *
+ * Because each call rebuilds its own arena, the ABI pointer returned by a
+ * call remains valid until the *next* call that writes to the same arena
+ * (see the memory-ownership contract in `dj_capi.h`). No host-side `free()`
+ * is ever needed.
+ */
 #include "dj_internal.hpp"
 #include <algorithm>
 
@@ -5,12 +24,17 @@ extern "C" {
 
 dj_engine_t* dj_engine_create(const char* db_path) {
     if (!db_path) return nullptr;
+    // Read-only + no mutex: the corpus is immutable and the host serializes
+    // access per handle, so we skip SQLite's locking overhead entirely.
     sqlite3* db = nullptr;
     int flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX;
     if (sqlite3_open_v2(db_path, &db, flags, nullptr) != SQLITE_OK) {
         if (db) sqlite3_close(db);
         return nullptr;
     }
+    // Memory-map up to 256 MiB of the file so the OS faults in only the exact
+    // 4 KiB B-tree pages a query touches, and give SQLite a 64 MiB page cache
+    // (-65536 KiB) to hold hot pages across calls.
     sqlite3_exec(db, "PRAGMA mmap_size = 268435456;", nullptr, nullptr, nullptr);
     sqlite3_exec(db, "PRAGMA cache_size = -65536;", nullptr, nullptr, nullptr);
 
@@ -22,6 +46,8 @@ dj_engine_t* dj_engine_create(const char* db_path) {
 void dj_engine_destroy(dj_engine_t* engine) {
     if (!engine) return;
     if (engine->db) sqlite3_close(engine->db);
+    // The owned/abi containers are plain standard-library types and free
+    // themselves as part of the destructor.
     delete engine;
 }
 
@@ -36,7 +62,11 @@ size_t dj_dict_search(
     if (out_hits) *out_hits = nullptr;
     if (!engine || !engine->db || !utf8_query) return 0;
 
+    // 1. Fetch the owned result set (the single source of truth).
     engine->owned_hits = dj::db_search_words(engine->db, utf8_query, mode, include_names, limit);
+
+    // 2. Flatten into the ABI view; each `const char*` points into the owned
+    //    `std::string` storage, so the hits stay alive until the next search.
     engine->abi_hits.clear();
     engine->abi_hits.reserve(engine->owned_hits.size());
 
@@ -55,6 +85,7 @@ size_t dj_dict_search(
         engine->abi_hits.push_back(abi);
     }
 
+    // 3. Publish the dense array.
     if (out_hits && !engine->abi_hits.empty()) {
         *out_hits = engine->abi_hits.data();
     }
@@ -67,9 +98,13 @@ bool dj_dict_get_entry_detail(
     dj_entry_detail_t* out_detail) {
 
     if (!engine || !engine->db || !out_detail) return false;
+
+    // Fetch the owned entry (header + paired + ruby + senses + sentences).
     if (!dj::db_get_entry_detail(engine->db, entry_id, engine->owned_entry)) return false;
 
     const auto& src = engine->owned_entry;
+
+    // Header is a value type, so copy it field-for-field.
     out_detail->header.entry_id      = src.header.entry_id;
     out_detail->header.kanji_head    = src.header.kanji_head.c_str();
     out_detail->header.kana_head     = src.header.kana_head.c_str();
@@ -83,6 +118,7 @@ bool dj_dict_get_entry_detail(
     out_detail->paired_kanji         = src.paired_kanji.c_str();
     out_detail->paired_kana          = src.paired_kana.c_str();
 
+    // Ruby cells: flatten the owned vector into a dense ABI array.
     engine->abi_ruby_cells.clear();
     engine->abi_ruby_cells.reserve(src.ruby_cells.size());
     for (const auto& rc : src.ruby_cells) {
@@ -95,6 +131,7 @@ bool dj_dict_get_entry_detail(
     out_detail->ruby_cells      = engine->abi_ruby_cells.empty() ? nullptr : engine->abi_ruby_cells.data();
     out_detail->ruby_cell_count = engine->abi_ruby_cells.size();
 
+    // Senses: flatten the owned vector into a dense ABI array.
     engine->abi_senses.clear();
     engine->abi_senses.reserve(src.senses.size());
     for (const auto& s : src.senses) {
@@ -108,6 +145,9 @@ bool dj_dict_get_entry_detail(
     out_detail->senses      = engine->abi_senses.empty() ? nullptr : engine->abi_senses.data();
     out_detail->sense_count = engine->abi_senses.size();
 
+    // Sentences + tokens: flatten the *nested* token arrays into one dense
+    // ABI token buffer, then point each sentence at its slice via an offset.
+    // This keeps the ABI view contiguous and cache-friendly for the host.
     engine->abi_sent_tokens.clear();
     size_t total_tokens = 0;
     for (const auto& st : src.sentences) total_tokens += st.tokens.size();
@@ -145,9 +185,12 @@ bool dj_kanji_get_detail(
     dj_kanji_detail_t* out_detail) {
 
     if (!engine || !engine->db || !out_detail) return false;
+
+    // Fetch the owned kanji detail (metadata + decoded stroke polylines).
     if (!dj::db_get_kanji_detail(engine->db, codepoint, engine->owned_kanji)) return false;
 
     const auto& src = engine->owned_kanji;
+    // Scalar metadata is copied by value; strings point into the owned storage.
     out_detail->codepoint          = src.codepoint;
     out_detail->utf8_glyph         = src.utf8_glyph;
     out_detail->strokes            = src.strokes;
@@ -163,6 +206,8 @@ bool dj_kanji_get_detail(
     out_detail->meanings           = src.meanings.c_str();
     out_detail->component_radicals = src.component_radicals.c_str();
 
+    // Stroke polylines: each ABI polyline points directly at the owned
+    // `std::vector<dj_point_t>` (a plain value type, safe to expose as-is).
     engine->abi_polylines.clear();
     engine->abi_polylines.reserve(src.strokes_points.size());
     for (const auto& poly : src.strokes_points) {
@@ -187,6 +232,8 @@ size_t dj_kanji_search_radicals(
     if (out_codepoints) *out_codepoints = nullptr;
     if (!engine || !engine->db) return 0;
 
+    // Fetch the owned codepoint list, then expose it directly (it is already
+    // a plain value type, so no per-element flattening is needed).
     engine->abi_radical_cps = dj::db_search_radicals(
         engine->db, radical_ids, radical_count, target_strokes, stroke_tolerance);
 
@@ -215,6 +262,8 @@ size_t dj_graph_solve_fisheye(
     if (out_right_overflow) *out_right_overflow = 0;
     if (!engine || !engine->db) return 0;
 
+    // Solve the graph (the layout is computed in C++ so every platform
+    // renders identical geometry). The overflow counters come out by reference.
     size_t left_ov = 0, right_ov = 0;
     engine->owned_fisheye = dj::solve_fisheye_graph(
         engine->db, center_codepoint, mode, include_names, has_focus,
@@ -223,6 +272,7 @@ size_t dj_graph_solve_fisheye(
     if (out_left_overflow) *out_left_overflow = left_ov;
     if (out_right_overflow) *out_right_overflow = right_ov;
 
+    // Flatten the owned nodes into the dense ABI view.
     engine->abi_fisheye.clear();
     engine->abi_fisheye.reserve(engine->owned_fisheye.size());
     for (const auto& n : engine->owned_fisheye) {
@@ -252,6 +302,9 @@ size_t dj_graph_solve_fisheye(
 
 void dj_state_push_recent_kanji(dj_engine_t* engine, uint32_t codepoint) {
     if (!engine || codepoint == 0) return;
+
+    // Insert at the front, dropping any existing copy of the same kanji so the
+    // ring holds at most 5 distinct kanji plus the new one (6 slots total).
     size_t write = 0;
     std::array<uint32_t, 6> next{};
     next[write++] = codepoint;
@@ -266,6 +319,7 @@ void dj_state_push_recent_kanji(dj_engine_t* engine, uint32_t codepoint) {
 
 size_t dj_state_get_recent_kanji(dj_engine_t* engine, uint32_t out_six[6]) {
     if (!engine || !out_six) return 0;
+    // Copy the valid prefix of the ring (most-recent first).
     for (size_t i = 0; i < engine->recent_kanji_count; ++i) {
         out_six[i] = engine->recent_kanji[i];
     }
