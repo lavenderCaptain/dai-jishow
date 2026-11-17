@@ -692,6 +692,58 @@ std::vector<OwnedWordHit> db_search_words(
     return results;
 }
 
+std::vector<OwnedWordHit> db_get_random_words(
+    sqlite3* db,
+    uint32_t max_freq,
+    bool include_names,
+    size_t limit) {
+
+    std::vector<OwnedWordHit> results;
+    if (!db || limit == 0) return results;
+
+    std::string sql;
+    if (max_freq > 0 && max_freq < 150000) {
+        sql =
+            "SELECT e.entry_id, COALESCE(e.kanji_head, \x27\x27) AS kanji_head, e.kana_head, COALESCE(e.alt_forms, \x27\x27), "
+            "       COALESCE((SELECT en_glosses FROM senses s WHERE s.entry_id = e.entry_id AND s.sense_idx = 0), \x27\x27), "
+            "       e.pos_mask, e.pitch_accent, e.freq_overall, COALESCE(e.pair_entry_id, 0), e.is_name "
+            "FROM entries e "
+            "WHERE (?1 = 1 OR e.is_name = 0) AND e.freq_overall <= ?2 "
+            "ORDER BY RANDOM() LIMIT ?3;";
+    } else {
+        sql =
+            "SELECT e.entry_id, COALESCE(e.kanji_head, \x27\x27) AS kanji_head, e.kana_head, COALESCE(e.alt_forms, \x27\x27), "
+            "       COALESCE((SELECT en_glosses FROM senses s WHERE s.entry_id = e.entry_id AND s.sense_idx = 0), \x27\x27), "
+            "       e.pos_mask, e.pitch_accent, e.freq_overall, COALESCE(e.pair_entry_id, 0), e.is_name "
+            "FROM entries e "
+            "WHERE (?1 = 1 OR e.is_name = 0) "
+            "ORDER BY RANDOM() LIMIT ?2;";
+    }
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        return results;
+    }
+
+    sqlite3_bind_int(stmt, 1, include_names ? 1 : 0);
+    if (max_freq > 0 && max_freq < 150000) {
+        sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(max_freq));
+        sqlite3_bind_int64(stmt, 3, static_cast<sqlite3_int64>(limit));
+    } else {
+        sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(limit));
+    }
+
+    results.reserve(limit);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        OwnedWordHit h;
+        bind_hit_from_row(stmt, h);
+        results.push_back(std::move(h));
+    }
+
+    sqlite3_finalize(stmt);
+    return results;
+}
+
 /// Load the full detail for one dictionary entry.
 ///
 /// Assembles, in order:

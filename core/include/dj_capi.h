@@ -263,6 +263,23 @@ size_t dj_dict_search(
     const dj_word_hit_t** out_hits);
 
 /**
+ * Sample random dictionary words filtered by prevalence tier.
+ *
+ * @param engine        Engine handle.
+ * @param max_freq_rank Maximum freq_overall rank (e.g. 2500 for Core, 12000 for Common, 150000 for all).
+ * @param include_names If true, also include proper names.
+ * @param limit         Number of words to sample.
+ * @param out_hits      Receives a pointer to a dense hit array (arena-owned).
+ * @return Number of words sampled.
+ */
+size_t dj_dict_get_random_words(
+    dj_engine_t*          engine,
+    uint32_t              max_freq_rank,
+    bool                  include_names,
+    size_t                limit,
+    const dj_word_hit_t** out_hits);
+
+/**
  * Load the full detail for one dictionary entry (head, ruby, senses, and up
  * to 8 example sentences with token spans).
  *

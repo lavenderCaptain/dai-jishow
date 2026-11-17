@@ -92,6 +92,42 @@ size_t dj_dict_search(
     return engine->abi_hits.size();
 }
 
+size_t dj_dict_get_random_words(
+    dj_engine_t*          engine,
+    uint32_t              max_freq_rank,
+    bool                  include_names,
+    size_t                limit,
+    const dj_word_hit_t** out_hits) {
+
+    if (out_hits) *out_hits = nullptr;
+    if (!engine || !engine->db || limit == 0) return 0;
+
+    engine->owned_hits = dj::db_get_random_words(engine->db, max_freq_rank, include_names, limit);
+
+    engine->abi_hits.clear();
+    engine->abi_hits.reserve(engine->owned_hits.size());
+
+    for (const auto& h : engine->owned_hits) {
+        dj_word_hit_t abi{};
+        abi.entry_id      = h.entry_id;
+        abi.kanji_head    = h.kanji_head.c_str();
+        abi.kana_head     = h.kana_head.c_str();
+        abi.alt_forms     = h.alt_forms.c_str();
+        abi.primary_gloss = h.primary_gloss.c_str();
+        abi.pos_mask      = h.pos_mask;
+        abi.pitch_accent  = h.pitch_accent;
+        abi.freq_rank     = h.freq_rank;
+        abi.pair_entry_id = h.pair_entry_id;
+        abi.is_name       = h.is_name;
+        engine->abi_hits.push_back(abi);
+    }
+
+    if (out_hits && !engine->abi_hits.empty()) {
+        *out_hits = engine->abi_hits.data();
+    }
+    return engine->abi_hits.size();
+}
+
 bool dj_dict_get_entry_detail(
     dj_engine_t*       engine,
     uint32_t           entry_id,

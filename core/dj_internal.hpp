@@ -135,6 +135,13 @@ std::vector<OwnedWordHit> db_search_words(
     bool include_names,
     size_t limit);
 
+/// Sample random words from the dictionary (C++ side of `dj_dict_get_random_words`).
+std::vector<OwnedWordHit> db_get_random_words(
+    sqlite3* db,
+    uint32_t max_freq,
+    bool include_names,
+    size_t limit);
+
 /// Load full entry detail (C++ side of `dj_dict_get_entry_detail`).
 bool db_get_entry_detail(sqlite3* db, uint32_t entry_id, OwnedEntryDetail& out);
 
