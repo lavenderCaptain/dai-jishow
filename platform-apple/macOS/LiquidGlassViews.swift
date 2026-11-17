@@ -608,10 +608,27 @@ private struct ZStackScreenSnapshotCard: View {
 
 // MARK: - Fisheye Kanji Graph View (Adaptive Sizing + Interactive Hover & Selection)
 
+// MARK: - Fisheye Kanji Graph View (Adaptive Sizing + Interactive Hover & Escalating Overflow Fan)
+
+private struct OverflowPlacedBubble: Identifiable {
+    let node: FisheyeNode
+    let pos: CGPoint
+    var id: String { node.id }
+}
+
+private struct OverflowFanLayout {
+    let placed: [OverflowPlacedBubble]
+    let maxRadius: CGFloat
+    let totalAvailable: Int
+}
+
 struct FisheyeGraphView: View {
     @ObservedObject var engine: DaiJishowEngine
     @State private var focusPoint: CGPoint?
-    @State private var showOverflowPopover: Bool = false
+    @State private var expandedOverflowSide: UInt8?
+    @State private var overflowStage: Int = 0
+    @State private var overflowPointerPos: CGPoint?
+    @State private var hoveredOverflowPos: CGPoint?
 
     private var activeInspectorNode: FisheyeNode? {
         engine.hoveredFisheyeNode ?? engine.selectedFisheyeNode
@@ -632,11 +649,22 @@ struct FisheyeGraphView: View {
             let nodeGlyphSize: CGFloat = nodeDiameter * 0.48
             let nodePctSize: CGFloat = max(8.5, nodeDiameter * 0.185)
 
+            let leftAnchor = CGPoint(x: 54, y: h - 50)
+            let rightAnchor = CGPoint(x: w - 54, y: h - 50)
+            let isFanOpen = (expandedOverflowSide != nil && overflowStage > 0)
+
+            let activeFan: OverflowFanLayout? = {
+                guard let side = expandedOverflowSide, overflowStage > 0 else { return nil }
+                let anchor = (side == 0) ? leftAnchor : rightAnchor
+                return computeOverflowFan(side: side, stage: overflowStage, anchor: anchor)
+            }()
+
             ZStack {
+                // Background radial connections
                 ForEach(engine.fisheyeNodes) { node in
                     let nx = cx + node.normX * (w * 0.455)
                     let ny = cy + node.normY * (h * 0.435)
-                    let isHighlighted = activeInspectorNode?.id == node.id
+                    let isHighlighted = !isFanOpen && activeInspectorNode?.id == node.id
 
                     Path { path in
                         path.move(to: CGPoint(x: cx, y: cy))
@@ -646,19 +674,24 @@ struct FisheyeGraphView: View {
                         )
                     }
                     .stroke(
-                        node.tierColor.opacity(isHighlighted ? 0.85 : 0.30 * node.opacity),
+                        node.tierColor.opacity(isFanOpen ? 0.05 : (isHighlighted ? 0.85 : 0.30 * node.opacity)),
                         lineWidth: isHighlighted ? 2.6 : 1.5
                     )
                 }
 
+                // Normal fisheye nodes
                 ForEach(engine.fisheyeNodes) { node in
                     let nx = cx + node.normX * (w * 0.455)
                     let ny = cy + node.normY * (h * 0.435)
-                    let isHighlighted = activeInspectorNode?.id == node.id
+                    let isHighlighted = !isFanOpen && activeInspectorNode?.id == node.id
 
                     Button {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                            engine.selectedFisheyeNode = node
+                        if engine.selectedFisheyeNode?.id == node.id {
+                            engine.openFisheye(codepoint: node.codepoint, recordHistory: true)
+                        } else {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                engine.selectedFisheyeNode = node
+                            }
                         }
                     } label: {
                         VStack(spacing: 1) {
@@ -692,18 +725,13 @@ struct FisheyeGraphView: View {
                         .shadow(color: node.tierColor.opacity(isHighlighted ? 0.45 : 0.16), radius: isHighlighted ? 14 : 8)
                     }
                     .buttonStyle(.plain)
-                    .onHover { hovering in
-                        if hovering {
-                            engine.hoveredFisheyeNode = node
-                        } else if engine.hoveredFisheyeNode?.id == node.id {
-                            engine.hoveredFisheyeNode = nil
-                        }
-                    }
                     .scaleEffect(node.scale * (isHighlighted ? 1.12 : 1.0))
-                    .opacity(node.opacity)
+                    .opacity(isFanOpen ? 0.12 : node.opacity)
+                    .allowsHitTesting(!isFanOpen)
                     .position(x: nx, y: ny)
                 }
 
+                // Center Kanji glyph
                 if let kanji = engine.activeKanji {
                     Button {
                         engine.openKanjiDetail(codepoint: kanji.codepoint)
@@ -738,8 +766,112 @@ struct FisheyeGraphView: View {
                     }
                     .buttonStyle(.plain)
                     .position(x: cx, y: cy)
+                    .zIndex(15)
                 }
 
+                // Subtle center dividing guide line
+                Path { p in
+                    p.move(to: CGPoint(x: cx, y: 56))
+                    p.addLine(to: CGPoint(x: cx, y: h - 56))
+                }
+                .stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 6]))
+                .foregroundStyle(Color.white.opacity(0.12))
+
+                // Faint directional hints (← PREFIX + CENTER and CENTER + SUFFIX →)
+                HStack {
+                    Text("← PREFIX + CENTER")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Color.white.opacity(0.38))
+                    Spacer()
+                    Text("CENTER + SUFFIX →")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Color.white.opacity(0.38))
+                }
+                .padding(.horizontal, 28)
+                .padding(.top, 56)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+                // Overflow Fan-out bubbles
+                if let fan = activeFan {
+                    ForEach(fan.placed) { item in
+                        let sub = item.node
+                        let dockScale: CGFloat = {
+                            guard let pt = overflowPointerPos else { return 0.94 }
+                            let dist = hypot(item.pos.x - pt.x, item.pos.y - pt.y)
+                            let radius: CGFloat = 76.0
+                            if dist < radius {
+                                let t = cos((dist / radius) * (.pi / 2.0))
+                                return 1.0 + 0.46 * t * t
+                            } else {
+                                return 0.90
+                            }
+                        }()
+
+                        let baseSize: CGFloat = engine.showFisheyePercentages ? 38.0 : 32.0
+                        let diam = baseSize * dockScale
+                        let isSelected = engine.selectedFisheyeNode?.id == sub.id
+                        let isHov = engine.hoveredFisheyeNode?.id == sub.id
+                        let active = isSelected || isHov
+
+                        Button {
+                            if isSelected {
+                                engine.openFisheye(codepoint: sub.codepoint, recordHistory: true)
+                            } else {
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                    engine.selectedFisheyeNode = sub
+                                }
+                            }
+                        } label: {
+                            VStack(spacing: 0) {
+                                Text(sub.glyph)
+                                    .font(.system(size: 15.0 * dockScale, weight: active ? .bold : .semibold))
+                                    .foregroundStyle(.primary)
+                                if engine.showFisheyePercentages {
+                                    Text(sub.shareText)
+                                        .font(.system(size: 7.5 * dockScale, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(sub.tierColor)
+                                }
+                            }
+                            .frame(width: diam, height: diam)
+                            .background {
+                                Circle()
+                                    .fill(.ultraThinMaterial)
+                                    .overlay(Circle().fill(sub.tierColor.opacity(active ? 0.36 : 0.18)))
+                                    .overlay(
+                                        Circle().strokeBorder(active ? Color.white : sub.tierColor.opacity(0.85), lineWidth: active ? 2.0 : 1.2)
+                                    )
+                            }
+                            .shadow(color: active ? sub.tierColor.opacity(0.55) : Color.black.opacity(0.35), radius: 8)
+                        }
+                        .buttonStyle(.plain)
+                        .frame(width: diam, height: diam)
+                        .contentShape(Circle())
+                        .position(item.pos)
+                        .zIndex(25.0 + Double(dockScale * 10.0))
+                        .transition(.scale(scale: 0.35).combined(with: .opacity))
+                    }
+                }
+
+                // Escalating overflow trigger buttons
+                if engine.leftOverflowCount > 0 {
+                    overflowTriggerButton(
+                        side: 0,
+                        totalOverflow: engine.leftOverflowCount,
+                        shownCount: expandedOverflowSide == 0 ? (activeFan?.placed.count ?? 0) : 0,
+                        anchor: leftAnchor
+                    )
+                }
+
+                if engine.rightOverflowCount > 0 {
+                    overflowTriggerButton(
+                        side: 1,
+                        totalOverflow: engine.rightOverflowCount,
+                        shownCount: expandedOverflowSide == 1 ? (activeFan?.placed.count ?? 0) : 0,
+                        anchor: rightAnchor
+                    )
+                }
+
+                // Overlaid controls and bottom inspector card
                 VStack {
                     HStack(spacing: 10) {
                         Picker("Graph Mode", selection: $engine.fisheyeMode) {
@@ -750,6 +882,7 @@ struct FisheyeGraphView: View {
                         .pickerStyle(.segmented)
                         .frame(maxWidth: 320)
                         .onChange(of: engine.fisheyeMode) { _, _ in
+                            collapseOverflow()
                             if let cp = engine.activeKanji?.codepoint {
                                 engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: aspectRatio)
                             }
@@ -758,6 +891,7 @@ struct FisheyeGraphView: View {
                         Menu {
                             ForEach([6, 10, 12, 16, 24], id: \.self) { count in
                                 Button("Show Top \(count) per side") {
+                                    collapseOverflow()
                                     engine.maxFisheyePerSide = count
                                     if let cp = engine.activeKanji?.codepoint {
                                         engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: aspectRatio)
@@ -802,19 +936,6 @@ struct FisheyeGraphView: View {
                     Spacer()
 
                     HStack(alignment: .bottom, spacing: 14) {
-                        if engine.leftOverflowCount > 0 {
-                            Button {
-                                showOverflowPopover.toggle()
-                            } label: {
-                                Label("+\(engine.leftOverflowCount) prefix", systemImage: "ellipsis.circle.fill")
-                                    .font(.caption.weight(.semibold))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(Capsule().fill(.ultraThinMaterial))
-                            }
-                            .buttonStyle(.plain)
-                        }
-
                         Spacer()
 
                         if let active = activeInspectorNode {
@@ -873,71 +994,227 @@ struct FisheyeGraphView: View {
                                 .padding(.vertical, 11)
                             }
                             .transition(.move(edge: .bottom).combined(with: .opacity))
+                        } else {
+                            Text("Move pointer across bubbles for 3D magnification & compound preview; click to pin or double-click to pivot.")
+                                .font(.subheadline)
+                                .foregroundStyle(Color.white.opacity(0.65))
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(Capsule().fill(.ultraThinMaterial))
                         }
 
                         Spacer()
-
-                        if engine.rightOverflowCount > 0 {
-                            Button {
-                                showOverflowPopover.toggle()
-                            } label: {
-                                Label("+\(engine.rightOverflowCount) suffix", systemImage: "ellipsis.circle.fill")
-                                    .font(.caption.weight(.semibold))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(Capsule().fill(.ultraThinMaterial))
-                            }
-                            .buttonStyle(.plain)
-                        }
                     }
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, 84)
                     .padding(.bottom, 16)
                 }
             }
             .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        focusPoint = value.location
-                        let nx = Float((value.location.x - cx) / max(1, w * 0.5))
-                        let ny = Float((value.location.y - cy) / max(1, h * 0.5))
-                        if let cp = engine.activeKanji?.codepoint {
-                            engine.solveFisheye(center: cp, hasFocus: true, focusX: nx, focusY: ny, aspectRatio: aspectRatio, animated: false)
+            .onContinuousHover { phase in
+                guard let cp = engine.activeKanji?.codepoint else { return }
+                switch phase {
+                case .active(let loc):
+                    let nearLeftTrigger = engine.leftOverflowCount > 0 && hypot(loc.x - leftAnchor.x, loc.y - leftAnchor.y) <= 36.0
+                    let nearRightTrigger = engine.rightOverflowCount > 0 && hypot(loc.x - rightAnchor.x, loc.y - rightAnchor.y) <= 36.0
+
+                    if nearLeftTrigger || nearRightTrigger {
+                        let targetSide: UInt8 = nearLeftTrigger ? 0 : 1
+                        if expandedOverflowSide != targetSide || overflowStage == 0 {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                                expandedOverflowSide = targetSide
+                                overflowStage = 1
+                            }
+                        }
+                        overflowPointerPos = loc
+                        hoveredOverflowPos = nil
+                        if engine.hoveredFisheyeNode?.isOverflowPreview == true {
+                            engine.hoveredFisheyeNode = nil
+                        }
+                        return
+                    }
+
+                    if let activeSide = expandedOverflowSide, overflowStage > 0 {
+                        let anchor = (activeSide == 0) ? leftAnchor : rightAnchor
+                        let fan = computeOverflowFan(side: activeSide, stage: overflowStage, anchor: anchor)
+                        let distFromAnchor = hypot(loc.x - anchor.x, loc.y - anchor.y)
+                        let withinHemisphere = (activeSide == 0) ? (loc.x <= cx + 48.0) : (loc.x >= cx - 48.0)
+
+                        if withinHemisphere && distFromAnchor <= fan.maxRadius + 60.0 {
+                            overflowPointerPos = loc
+                            let baseSize: CGFloat = engine.showFisheyePercentages ? 38.0 : 32.0
+                            var bestSub: FisheyeNode?
+                            var bestPos: CGPoint?
+                            var bestDist: CGFloat = .greatestFiniteMagnitude
+
+                            for item in fan.placed {
+                                let d = hypot(item.pos.x - loc.x, item.pos.y - loc.y)
+                                let dockScale: CGFloat = d < 76.0 ? (1.0 + 0.46 * pow(cos((d / 76.0) * (.pi / 2.0)), 2)) : 0.90
+                                let hitR = (baseSize * dockScale) * 0.58
+                                if d <= hitR && d < bestDist {
+                                    bestDist = d
+                                    bestSub = item.node
+                                    bestPos = item.pos
+                                }
+                            }
+
+                            hoveredOverflowPos = bestPos
+                            if engine.hoveredFisheyeNode?.id != bestSub?.id {
+                                engine.hoveredFisheyeNode = bestSub
+                            }
+                            return
+                        } else {
+                            collapseOverflow()
                         }
                     }
-                    .onEnded { _ in
-                        focusPoint = nil
-                        if let cp = engine.activeKanji?.codepoint {
+
+                    let fx = Float((loc.x - cx) / max(1.0, w * 0.5))
+                    let fy = Float((loc.y - cy) / max(1.0, h * 0.5))
+                    let nearCenter = hypot(Double(fx * aspectRatio), Double(fy)) < 0.12
+
+                    if nearCenter {
+                        engine.hoveredFisheyeNode = nil
+                        if focusPoint != nil {
+                            focusPoint = nil
                             engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: aspectRatio, animated: true)
                         }
-                    }
-            )
-            .popover(isPresented: $showOverflowPopover) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Additional Connected Kanji")
-                        .font(.headline)
-                    ForEach(engine.overflowPreviewNodes) { item in
-                        Button {
-                            showOverflowPopover = false
-                            engine.openFisheye(codepoint: item.codepoint)
-                        } label: {
-                            HStack {
-                                Text(item.glyph)
-                                    .font(.title2.bold())
-                                Text(item.compoundWord)
-                                    .font(.body)
-                                Spacer()
-                                Text(item.shareText)
-                                    .font(.caption.bold())
-                                    .foregroundStyle(item.tierColor)
+                    } else {
+                        let wasFocused = (focusPoint != nil)
+                        focusPoint = loc
+                        engine.solveFisheye(center: cp, hasFocus: true, focusX: fx, focusY: fy, aspectRatio: aspectRatio, animated: !wasFocused)
+
+                        var bestNode: FisheyeNode?
+                        var bestDist: CGFloat = .greatestFiniteMagnitude
+                        for node in engine.fisheyeNodes {
+                            let bx = cx + node.normX * (w * 0.455)
+                            let by = cy + node.normY * (h * 0.435)
+                            let d = hypot(loc.x - bx, loc.y - by)
+                            let hitRadius = (nodeDiameter * node.scale) * 0.60
+                            if d <= hitRadius && d < bestDist {
+                                bestDist = d
+                                bestNode = node
                             }
-                            .padding(.vertical, 4)
                         }
-                        .buttonStyle(.plain)
+                        if engine.hoveredFisheyeNode?.id != bestNode?.id {
+                            engine.hoveredFisheyeNode = bestNode
+                        }
                     }
+
+                case .ended:
+                    focusPoint = nil
+                    engine.hoveredFisheyeNode = nil
+                    collapseOverflow()
+                    engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: aspectRatio, animated: true)
                 }
-                .padding()
-                .frame(minWidth: 280)
+            }
+            .onChange(of: engine.activeKanji?.codepoint) { _, _ in
+                focusPoint = nil
+                collapseOverflow()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func overflowTriggerButton(side: UInt8, totalOverflow: Int, shownCount: Int, anchor: CGPoint) -> some View {
+        let isExpanded = (expandedOverflowSide == side && overflowStage > 0)
+        let remaining = max(0, totalOverflow - shownCount)
+
+        Button {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.76)) {
+                if expandedOverflowSide != side || overflowStage == 0 {
+                    expandedOverflowSide = side
+                    overflowStage = 1
+                } else if overflowStage == 1 && remaining > 0 {
+                    overflowStage = 2
+                } else if overflowStage == 2 && remaining > 0 {
+                    overflowStage = 3
+                } else {
+                    expandedOverflowSide = nil
+                    overflowStage = 0
+                }
+            }
+        } label: {
+            VStack(spacing: 1) {
+                Text(!isExpanded ? "+\(totalOverflow)" : (remaining > 0 ? "+\(remaining)" : "All \(totalOverflow)"))
+                    .font(.caption.bold())
+                    .foregroundStyle(.primary)
+                Text(!isExpanded ? "more" : (remaining > 0 ? "expand" : "shown"))
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 52, height: 52)
+            .background(Circle().fill(.ultraThinMaterial))
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        Color.cyan.opacity(0.85),
+                        style: StrokeStyle(lineWidth: 1.5, dash: isExpanded ? [] : [3, 3])
+                    )
+            )
+            .shadow(color: Color.black.opacity(0.25), radius: 8)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Circle())
+        .help(!isExpanded ? "Hover to preview; click to expand more kanji" : (remaining > 0 ? "Click again to show even more kanji" : "Click to collapse"))
+        .position(anchor)
+        .zIndex(45)
+    }
+
+    private func computeOverflowFan(side: UInt8, stage: Int, anchor: CGPoint) -> OverflowFanLayout {
+        let allItems = engine.overflowPreviewNodes.filter { $0.side == side }
+        let maxRings: Int = {
+            switch stage {
+            case 1: return 2
+            case 2: return 4
+            default: return 99
+            }
+        }()
+
+        let dir: CGFloat = (side == 0) ? 1.0 : -1.0
+        let arcSpanDeg: CGFloat = 84.0
+        let arcSpanRad: CGFloat = arcSpanDeg * .pi / 180.0
+        let minArcSpacing: CGFloat = 40.0
+
+        var rings: [[FisheyeNode]] = []
+        var cursor = 0
+        var ringIdx = 0
+        while cursor < allItems.count && ringIdx < maxRings {
+            let r = 68.0 + CGFloat(ringIdx) * 43.0
+            let cap = max(3, Int(floor((r * arcSpanRad) / minArcSpacing)))
+            let end = min(allItems.count, cursor + cap)
+            rings.append(Array(allItems[cursor..<end]))
+            cursor = end
+            ringIdx += 1
+        }
+
+        var placed: [OverflowPlacedBubble] = []
+        var outerRadius: CGFloat = 68.0
+
+        for (rIdx, ringNodes) in rings.enumerated() {
+            let r = 68.0 + CGFloat(rIdx) * 43.0
+            outerRadius = r
+            let count = ringNodes.count
+            for (i, node) in ringNodes.enumerated() {
+                let t = count <= 1 ? 0.5 : CGFloat(i) / CGFloat(count - 1)
+                let angleDeg = -86.0 + t * arcSpanDeg
+                let rad = angleDeg * .pi / 180.0
+                let pos = CGPoint(
+                    x: anchor.x + dir * cos(rad) * r,
+                    y: anchor.y + sin(rad) * r
+                )
+                placed.append(OverflowPlacedBubble(node: node, pos: pos))
+            }
+        }
+
+        return OverflowFanLayout(placed: placed, maxRadius: outerRadius, totalAvailable: allItems.count)
+    }
+
+    private func collapseOverflow() {
+        if expandedOverflowSide != nil || overflowStage != 0 {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                expandedOverflowSide = nil
+                overflowStage = 0
+                overflowPointerPos = nil
+                hoveredOverflowPos = nil
             }
         }
     }

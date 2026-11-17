@@ -1,8 +1,26 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first?.makeKeyAndOrderFront(nil)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+}
+#endif
 import DaiJishowCore
 
 @main
 struct DaiJishowMacApp: App {
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #endif
     @StateObject private var engine: DaiJishowEngine
 
     init() {
@@ -14,6 +32,7 @@ struct DaiJishowMacApp: App {
         WindowGroup {
             MainWorkspaceView(engine: engine)
                 .frame(minWidth: 1020, minHeight: 700)
+                .preferredColorScheme(.dark)
         }
         #if os(macOS)
         .windowStyle(.hiddenTitleBar)
@@ -133,6 +152,13 @@ struct MainWorkspaceView: View {
                         searchResultsDropdown
                     }
                 }
+
+                if !engine.history.isEmpty {
+                    breadcrumbViewer
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
+                        .zIndex(10)
+                }
             }
 
             if engine.isZStackOpen {
@@ -141,7 +167,16 @@ struct MainWorkspaceView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
+        .preferredColorScheme(.dark)
         #if os(macOS)
+        .onAppear {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.windows.first?.makeKeyAndOrderFront(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                isSearchFocused = true
+            }
+        }
         .onKeyPress(.escape) {
             if engine.isZStackOpen {
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
@@ -305,7 +340,7 @@ struct MainWorkspaceView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .frame(width: 215)
+            .fixedSize()
 
             Spacer(minLength: 4)
 
@@ -402,5 +437,68 @@ struct MainWorkspaceView: View {
                 .frame(maxWidth: 460)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var breadcrumbViewer: some View {
+        HStack(spacing: 8) {
+            if engine.history.count > 6 {
+                Menu {
+                    ForEach(Array(engine.history.enumerated()), id: \.element.id) { idx, crumb in
+                        Button("\(idx + 1). \(crumb.label)") {
+                            engine.jumpToHistory(index: idx)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle.fill")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(engine.history.enumerated()), id: \.element.id) { idx, crumb in
+                            if idx > 0 {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(Color.white.opacity(0.35))
+                            }
+
+                            Button {
+                                engine.jumpToHistory(index: idx)
+                            } label: {
+                                Text(crumb.label)
+                                    .font(.caption.weight(idx == engine.historyIndex ? .bold : .medium))
+                                    .foregroundStyle(idx == engine.historyIndex ? Color.accentColor : Color.white.opacity(0.85))
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        Capsule().fill(idx == engine.historyIndex ? Color.accentColor.opacity(0.22) : Color.white.opacity(0.08))
+                                    )
+                                    .overlay(
+                                        Capsule().strokeBorder(idx == engine.historyIndex ? Color.accentColor.opacity(0.65) : Color.clear, lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .fixedSize()
+                            .id(idx)
+                        }
+                    }
+                }
+                .onChange(of: engine.historyIndex) { _, newIdx in
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(newIdx, anchor: .trailing)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(.ultraThinMaterial))
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.25), radius: 8, x: 0, y: 4)
     }
 }

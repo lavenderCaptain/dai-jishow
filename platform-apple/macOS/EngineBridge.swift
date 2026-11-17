@@ -547,6 +547,7 @@ final class DaiJishowEngine: ObservableObject {
     private var cachedKanjiCatalog: [KanjiIndexItem]?
     private var cachedKanjiByCodepoint: [UInt32: KanjiIndexItem]?
     private var wordInsightsCache: [String: WordLexicalInsights] = [:]
+    private var entryDetailCache: [UInt32: EntryDetail] = [:]
 
     @Published var searchQuery: String = ""
     @Published var includeNames: Bool = false
@@ -1383,6 +1384,7 @@ final class DaiJishowEngine: ObservableObject {
 
     func invalidateFisheyeSnapshots() {
         wordInsightsCache.removeAll()
+        entryDetailCache.removeAll()
         if let entry = activeEntry {
             _ = ensureWordInsights(for: entry)
         }
@@ -1755,11 +1757,16 @@ final class DaiJishowEngine: ObservableObject {
     }
 
     func openWordEntry(entryId: UInt32, recordHistory: Bool = true) {
-        guard let h = handle else { return }
-        var raw = dj_entry_detail_t()
-        guard dj_dict_get_entry_detail(h, entryId, &raw) else { return }
-
-        let detail = parseEntryDetail(raw)
+        let detail: EntryDetail
+        if let cached = entryDetailCache[entryId] {
+            detail = cached
+        } else {
+            guard let h = handle else { return }
+            var raw = dj_entry_detail_t()
+            guard dj_dict_get_entry_detail(h, entryId, &raw) else { return }
+            detail = parseEntryDetail(raw)
+            entryDetailCache[entryId] = detail
+        }
         self.activeEntry = detail
         if !detail.hasJapaneseGlosses && glossLanguageMode != .english {
             self.glossLanguageMode = .english
@@ -2038,6 +2045,16 @@ final class DaiJishowEngine: ObservableObject {
             self.rightOverflowCount = rightOv
             self.fisheyeNodes = mainList
             self.overflowPreviewNodes = previewList
+
+            // Pre-cache entries for all visible fisheye nodes in RAM to avoid DB queries on word lookup
+            if let h = self.handle {
+                for node in mainList where node.topEntryId > 0 && self.entryDetailCache[node.topEntryId] == nil {
+                    var raw = dj_entry_detail_t()
+                    if dj_dict_get_entry_detail(h, node.topEntryId, &raw) {
+                        self.entryDetailCache[node.topEntryId] = self.parseEntryDetail(raw)
+                    }
+                }
+            }
         }
         if animated {
             withAnimation(.interactiveSpring(response: 0.22, dampingFraction: 0.80, blendDuration: 0.10)) {
