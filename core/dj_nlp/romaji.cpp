@@ -16,6 +16,9 @@
 
 namespace dj {
 
+/// Encode a single Unicode codepoint into `out` as 1–4 bytes of UTF-8, always
+/// NUL-terminating within the 8-byte buffer (so it can be used as a C string).
+/// Codepoints above U+10FFFF produce only the NUL terminator.
 void encode_utf8(uint32_t cp, char out[8]) {
     for (int i = 0; i < 8; ++i) out[i] = 0;
     if (cp <= 0x7F) {
@@ -35,6 +38,9 @@ void encode_utf8(uint32_t cp, char out[8]) {
     }
 }
 
+/// @return `true` when `s` is non-empty, pure ASCII (no bytes ≥ 0x80), and
+///         contains at least one alphabetic letter — i.e. it is plausibly a
+///         romaji input rather than kanji/kana or a pure-number query.
 bool is_ascii_romaji(const std::string& s) {
     if (s.empty()) return false;
     bool has_alpha = false;
@@ -47,6 +53,14 @@ bool is_ascii_romaji(const std::string& s) {
 
 namespace {
 
+/// The romaji → hiragana lookup table.
+///
+/// Keys are the *longest-first* mora spellings (3 letters for yōon, 2 for
+/// basic morae, 1 for the vowels). Alternate romanizations of the same kana
+/// are all present (`si`/`shi`, `tu`/`tsu`, `hu`/`fu`, `zi`/`ji`, ...), and
+/// `nn` is the explicit syllabic-n escape. Letters that never form a kana on
+/// their own (`x`, `c`, `q`, `v`) are intentionally absent and fall through
+/// to the pass-through branch in `romaji_to_kana`.
 const std::unordered_map<std::string, std::string>& kana_table() {
     static const std::unordered_map<std::string, std::string> tbl = {
         {"a","あ"},{"i","い"},{"u","う"},{"e","え"},{"o","お"},
@@ -81,10 +95,18 @@ const std::unordered_map<std::string, std::string>& kana_table() {
     return tbl;
 }
 
+/// @return `true` for the five romaji vowels (lower-case, post-normalization).
 bool is_vowel(char c) {
     return c == 'a' || c == 'i' || c == 'u' || c == 'e' || c == 'o';
 }
 
+/// Convert a UTF-8 hiragana string to katakana.
+///
+/// Hiragana U+3041–U+3096 sit in a contiguous block, and katakana is exactly
+/// the same block shifted by +0x60, so the conversion is a per-codepoint
+/// offset. Only 3-byte UTF-8 sequences starting with the `0xE3` lead byte
+/// (i.e. codepoints in the U+3000–U+3FFF CJK/kana plane) are rewritten;
+/// everything else is copied through untouched.
 std::string hiragana_to_katakana(const std::string& hira) {
     std::string out;
     out.reserve(hira.size());
@@ -110,6 +132,21 @@ std::string hiragana_to_katakana(const std::string& hira) {
 
 } // namespace
 
+/// Deterministic romaji → kana transliteration (Hepburn + Kunrei-shiki +
+/// wa-puro conventions).
+///
+/// The scanner is a single left-to-right pass with the following precedence:
+///   1. `n'` apostrophe escape → `ん` (disables the n + youon join).
+///   2. A doubled consonant (`kk`, `tt`, ...) → small *tsu* `っ`, consuming
+///      only the first letter so the second starts the next mora.
+///   3. Wa-puro `t-` geminate shorthand → `っ`.
+///   4. Greedy 3 → 2 → 1 letter table lookup (handles yōon and daku-ten).
+///   5. A bare `n` at end-of-string or before a non-vowel/non-`y` → `ん`.
+///   6. Anything else is passed through verbatim (e.g. `x`, `c`, `q`, `v`).
+///
+/// @param input     The romaji text.
+/// @param katakana  If `true`, the hiragana result is shifted to katakana.
+/// @return The kana string (UTF-8).
 std::string romaji_to_kana(const std::string& input, bool katakana) {
     std::string s;
     s.reserve(input.size());
@@ -165,9 +202,14 @@ std::string romaji_to_kana(const std::string& input, bool katakana) {
             }
         }
 
+        // 6. Pass-through: letters that never form a kana on their own
+        //    (`x`, `c`, `q`, `v`, ...) are kept verbatim so the user's
+        //    typing is never silently dropped.
         hira.push_back(s[i++]);
     }
 
+    // Convert to katakana only at the very end, so the whole pass can work
+    // in hiragana and apply the +0x60 scalar offset in one final sweep.
     return katakana ? hiragana_to_katakana(hira) : hira;
 }
 

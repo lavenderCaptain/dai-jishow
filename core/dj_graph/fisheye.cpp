@@ -6,12 +6,39 @@
 #include <unordered_map>
 #include <vector>
 
+/**
+ * @file fisheye.cpp
+ * @brief `dj_graph` — fisheye layout solver for the kanji compound graph.
+ *
+ * Given a center kanji, this module loads its neighbor kanji (two-kanji
+ * compounds, components, or four-kanji idioms) from the corpus, scores and
+ * sorts them by frequency/commonality, and lays them out as two hemispheres
+ * (left and right) on three concentric elliptical rings.
+ *
+ * Key design points:
+ *
+ *  - **Batch cache.** Candidates for a given `(db, center, mode, names)`
+ *    tuple are loaded from SQLite exactly once and cached in
+ *    `g_fisheye_cache`; subsequent hover/resize/top-N frames do zero
+ *    database work.
+ *  - **Schema-tolerant.** The `kanji_edges` column names are auto-detected
+ *    (and a precomputed-name fast path is probed) so older corpus builds
+ *    keep working.
+ *  - **Deterministic geometry.** All positions/scales/opacities are computed
+ *    here in C++ so Metal (Apple) and AGSL (Android) render identical
+ *    geometry without duplicating the math.
+ */
+
 namespace dj {
 
 namespace {
 constexpr float kPi = 3.14159265358979323846f;
+/// Cap on candidates cached per side (covers the largest UI `max_per_side`
+/// plus the "+N more" overflow fan).
 constexpr size_t kMaxCachedPerSide = 160;
 
+/// Keep a node on its own hemisphere (left/right) and clamp it so it can't
+/// overlap the center glyph or leave the viewport.
 void clamp_node_hemisphere(OwnedFisheyeNode& n, float ar) {
     // Keep clear of center glyph (radius ~50px -> ~0.12 in Y, ~0.12/ar in X)
     float min_x = std::max(0.13f, 0.24f / std::max(1.0f, ar));
@@ -23,6 +50,9 @@ void clamp_node_hemisphere(OwnedFisheyeNode& n, float ar) {
     n.norm_y = std::clamp(n.norm_y, -0.82f, 0.82f);
 }
 
+/// Local UTF-8 → codepoint decoder (kept in this module so the graph solver
+/// stays self-contained and doesn't depend on `storage.cpp`'s private
+/// helpers).
 std::vector<uint32_t> utf8_to_cps_local(const std::string& s) {
     std::vector<uint32_t> cps;
     size_t i = 0;
@@ -66,10 +96,15 @@ std::string utf8_prefix_upper_bound(const std::string& prefix) {
     return prefix + "\xF4\x8F\xBF\xBF";
 }
 
+/// @return `true` for CJK Unified Ideographs and Extension A. (The graph
+///         solver only deals with real kanji, so the 〯 iteration mark is not
+///         included here, unlike `storage.cpp`'s `is_kanji_cp`.)
 bool is_kanji_cp_local(uint32_t cp) {
     return (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF);
 }
 
+/// The detected column layout of the `kanji_edges` table. Column names vary
+/// across corpus schema versions, so they are resolved once at runtime.
 struct KanjiEdgesSchema {
     std::string side_col;
     std::string edge_type_col;
@@ -79,6 +114,13 @@ struct KanjiEdgesSchema {
     bool detected = false;
 };
 
+/// Auto-detect the `kanji_edges` schema (column names + whether precomputed
+/// proper-name edges exist) and cache the result.
+///
+/// For each logical field we try a list of candidate column names and take
+/// the first that exists; if no "side" column is found we fall back to the
+/// first unknown column. Finally we probe for precomputed name edges
+/// (`edge_kind IN (3,4)`) to pick the fast O(1) B-tree name path.
 KanjiEdgesSchema detect_kanji_edges_schema(sqlite3* db) {
     static KanjiEdgesSchema cached;
     if (cached.detected) return cached;
@@ -145,12 +187,16 @@ void ensure_name_lookup_indexes(sqlite3* db) {
     );
 }
 
+/// One cached candidate bubble: the node plus the scoring metadata used to
+/// order and size it.
 struct CachedCandidate {
     OwnedFisheyeNode node;
     double effective_score;
     float commonality_scale;
 };
 
+/// Per-`(db, center, mode, names)` batch cache of candidate bubbles for both
+/// sides, so repeated frames do zero SQLite work.
 struct FisheyeBatchCache {
     sqlite3* db = nullptr;
     uint32_t center_cp = 0;
@@ -163,8 +209,25 @@ struct FisheyeBatchCache {
     }
 };
 
+/// The single global batch cache (only one center kanji is "hot" at a time).
 FisheyeBatchCache g_fisheye_cache;
 
+/// Load + score + sort the candidate bubbles for one `(db, center, mode,
+/// names)` tuple into `g_fisheye_cache`.
+///
+/// Three sources are handled:
+///   - `DJ_EDGE_YOJIJUKUGO` — scan four-kanji idioms containing the center
+///     kanji and attribute each to the side the center sits on.
+///   - standard `kanji_edges` (compounds / components) — batch-load both
+///     sides in a single JOIN, dedupe per side, and score by edge weight +
+///     frequency + grade.
+///   - proper names (when `include_names`) — use the precomputed
+///     `edge_kind 3/4` name edges if present, otherwise an indexed fallback
+///     over the `entries` table.
+///
+/// After loading, each side is sorted by effective score (descending) and a
+/// `share_pct` (this bubble's share of the side's total score) is
+/// precomputed, so later layout frames do zero sorting.
 void populate_fisheye_batch_cache(sqlite3* db, uint32_t center_cp, dj_fisheye_mode_t mode, bool include_names) {
     g_fisheye_cache.db = db;
     g_fisheye_cache.center_cp = center_cp;
@@ -505,6 +568,20 @@ void populate_fisheye_batch_cache(sqlite3* db, uint32_t center_cp, dj_fisheye_mo
 }
 } // namespace
 
+/// Lay out the fisheye bubbles for one center kanji and return them.
+///
+/// Pipeline:
+///   1. Ensure the batch cache is populated for this `(db, center, mode,
+///      names)` tuple (a no-op if it already matches).
+///   2. For each side, take the top `max_per_side` candidates and place them
+///      on three concentric elliptical rings (5 / 9 / rest), with a small
+///      angular jitter on rings 1+ to avoid a perfectly straight line.
+///   3. If a focus point is supplied, apply the fisheye lens: bubbles near
+///      the focus grow and push out, bubbles far away shrink and fade.
+///   4. Emit any overflow candidates as `is_overflow_preview` nodes (the
+///      "+N more" fan) and report the overflow counts.
+///   5. Run a few iterations of non-overlap relaxation (in aspect-corrected
+///      space, weighted by bubble scale) and re-clamp to each hemisphere.
 std::vector<OwnedFisheyeNode> solve_fisheye_graph(
     sqlite3* db,
     uint32_t center_cp,
