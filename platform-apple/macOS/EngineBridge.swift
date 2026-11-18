@@ -24,6 +24,19 @@ struct WordHit: Identifiable, Hashable {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
     }
+
+    /// The codepoint of the first CJK ideograph in the display headword, if any.
+    /// Used to pivot a kanji-bearing word into its Kanji Fisheye (the fisheye
+    /// two-tap rule). Kana-only words return nil and fall back to the Cockpit.
+    var firstKanjiCodepoint: UInt32? {
+        for scalar in displayHeadword.unicodeScalars {
+            let v = scalar.value
+            if (0x4E00...0x9FFF).contains(v) || (0x3400...0x4DBF).contains(v) {
+                return v
+            }
+        }
+        return nil
+    }
 }
 
 struct RubyCell: Identifiable {
@@ -352,6 +365,67 @@ enum ActiveScreenKind {
     case kanjiDetail
     case radicalBuilder
     case kanjiLookup
+    case wordCosmos
+}
+
+/// Prevalence-tier ceiling for the Word Cosmos sampler. `maxFreqRank` is the
+/// ceiling passed to `dj_dict_get_random_words`; `0` means "no ceiling" (the C++
+/// fast path samples the entire lexicon).
+enum WordCosmosTier: String, CaseIterable, Identifiable {
+    case core
+    case common
+    case all
+
+    var id: String { rawValue }
+
+    var maxFreqRank: UInt32 {
+        switch self {
+        case .core: return 2500
+        case .common: return 12000
+        case .all: return 0
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .core: return "Core"
+        case .common: return "Common"
+        case .all: return "All"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .core: return "Top 2,500"
+        case .common: return "Top 12,000"
+        case .all: return "Entire lexicon"
+        }
+    }
+}
+
+/// How the ~50-word cloud is arranged. `cloud` is a randomized Poisson-disk
+/// scatter; `constellation` lays tiers out as concentric rings around the center.
+enum WordCosmosLayout: String, CaseIterable, Identifiable {
+    case cloud
+    case constellation
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .cloud: return "Cloud"
+        case .constellation: return "Constellation"
+        }
+    }
+}
+
+/// Whether the screen shows the randomized bubble cloud or a ranked prevalence
+/// list of the current sample.
+enum WordCosmosMode: String, CaseIterable, Identifiable {
+    case cosmos
+    case ranked
+
+    var id: String { rawValue }
 }
 
 enum KanjiLookupMode: String, CaseIterable, Identifiable {
@@ -580,6 +654,15 @@ final class DaiJishowEngine: ObservableObject {
     @Published var fisheyeMode: dj_fisheye_mode_t = DJ_EDGE_COMPOUNDS
     @Published var selectedFisheyeNode: FisheyeNode?
     @Published var hoveredFisheyeNode: FisheyeNode?
+
+    // MARK: - Word Cosmos (randomized prevalence bubble cloud)
+    @Published var wordCosmosWords: [WordHit] = []
+    @Published var wordCosmosSeed: UInt64 = 0
+    @Published var wordCosmosTier: WordCosmosTier = .core
+    @Published var wordCosmosLayout: WordCosmosLayout = .cloud
+    @Published var wordCosmosMode: WordCosmosMode = .cosmos
+    @Published var wordCosmosCount: Int = 50
+    @Published var wordCosmosIncludeNames: Bool = false
 
     @Published var radicalSelectedIds: [UInt8] = []
     @Published var radicalTargetStrokes: Int = 0
@@ -1375,6 +1458,9 @@ final class DaiJishowEngine: ObservableObject {
                 sortOrder: kanjiLookupSort,
                 results: kanjiLookupResults
             )
+        case .wordCosmos:
+            // The cosmos is a transient, re-sampled view; no state to snapshot.
+            break
         }
     }
 
@@ -1474,6 +1560,9 @@ final class DaiJishowEngine: ObservableObject {
                 sortOrder: kanjiLookupSort,
                 results: kanjiLookupResults
             )
+        case .wordCosmos:
+            // The cosmos is a transient, re-sampled view; no state to snapshot.
+            break
         }
     }
 
@@ -1547,6 +1636,8 @@ final class DaiJishowEngine: ObservableObject {
                 self.kanjiLookupResults = results
             }
             activeScreen = .kanjiLookup
+        case .wordCosmos:
+            openWordCosmos(recordHistory: false)
         }
     }
 
@@ -1833,6 +1924,100 @@ final class DaiJishowEngine: ObservableObject {
                 label: String(sc),
                 subtitle: activeKanji?.meanings.isEmpty == false ? (activeKanji?.meanings ?? "Compound Explorer") : "Compound Explorer"
             ))
+        }
+    }
+
+    // MARK: - Word Cosmos (Randomized Prevalence Bubble Cloud)
+
+    /// Map one raw C ABI hit into a Swift `WordHit`, copying every string out of
+    /// the engine arena before the next call invalidates it.
+    static func wordHit(from abi: dj_word_hit_t) -> WordHit {
+        WordHit(
+            id: abi.entry_id,
+            kanjiHead: String(cString: abi.kanji_head),
+            kanaHead: String(cString: abi.kana_head),
+            altForms: String(cString: abi.alt_forms),
+            primaryGloss: String(cString: abi.primary_gloss),
+            posMask: abi.pos_mask,
+            pitchAccent: abi.pitch_accent,
+            freqRank: abi.freq_rank,
+            pairEntryId: abi.pair_entry_id,
+            isName: abi.is_name
+        )
+    }
+
+    /// Draw a fresh randomized sample of words bounded by a prevalence-tier
+    /// ceiling. Replaces the current sample and rolls a new layout seed so the
+    /// cloud re-flows with a spring rather than snapping to new positions.
+    func sampleWordCosmos(
+        tier: WordCosmosTier? = nil,
+        includeNames: Bool? = nil,
+        count: Int? = nil
+    ) {
+        guard let h = handle else { return }
+        let t = tier ?? wordCosmosTier
+        let names = includeNames ?? wordCosmosIncludeNames
+        let n = max(6, min(300, count ?? wordCosmosCount))
+
+        var rawPtr: UnsafePointer<dj_word_hit_t>?
+        let count = dj_dict_get_random_words(h, t.maxFreqRank, names, n, &rawPtr)
+
+        var words: [WordHit] = []
+        if let ptr = rawPtr, count > 0 {
+            words.reserveCapacity(count)
+            for i in 0..<count {
+                words.append(Self.wordHit(from: ptr[i]))
+            }
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.wordCosmosTier = t
+            self.wordCosmosIncludeNames = names
+            self.wordCosmosCount = n
+            self.wordCosmosWords = words
+            // A new seed per sample so the layout re-flows with a spring.
+            self.wordCosmosSeed = UInt64.random(in: 0...UInt64.max)
+        }
+    }
+
+    func openWordCosmos(recordHistory: Bool = true) {
+        if wordCosmosWords.isEmpty {
+            sampleWordCosmos()
+        }
+        activeScreen = .wordCosmos
+        if recordHistory {
+            recordNavigation(NavBreadcrumb(
+                kind: .wordCosmos,
+                targetId: 0,
+                label: "Word Cosmos",
+                subtitle: "Randomized \(wordCosmosTier.label) · \(wordCosmosWords.count) words"
+            ))
+        }
+    }
+
+    /// Dice-roll: re-sample the current tier and re-flow the cloud.
+    func diceRollWordCosmos() {
+        sampleWordCosmos()
+    }
+
+    /// Switch the prevalence ceiling and draw a fresh sample for it.
+    func setWordCosmosTier(_ tier: WordCosmosTier) {
+        sampleWordCosmos(tier: tier)
+    }
+
+    /// Open the Word Cockpit for a bubble.
+    func openWordFromCosmos(_ word: WordHit) {
+        openWordEntry(entryId: word.id)
+    }
+
+    /// Pivot a kanji-bearing word into the Kanji Fisheye of its first kanji
+    /// (the fisheye two-tap rule); kana-only words fall back to the Cockpit.
+    func pivotCosmosToKanjiFisheye(_ word: WordHit) {
+        if let cp = word.firstKanjiCodepoint {
+            openFisheye(codepoint: cp, recordHistory: true)
+        } else {
+            openWordEntry(entryId: word.id)
         }
     }
 

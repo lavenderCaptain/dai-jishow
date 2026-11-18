@@ -602,6 +602,7 @@ private struct ZStackScreenSnapshotCard: View {
         case .kanjiDetail: return "character.book.closed.fill"
         case .radicalBuilder: return "puzzlepiece.extension.fill"
         case .kanjiLookup: return "list.bullet.rectangle.portrait.fill"
+        case .wordCosmos: return "sparkles"
         }
     }
 }
@@ -1217,6 +1218,643 @@ struct FisheyeGraphView: View {
                 hoveredOverflowPos = nil
             }
         }
+    }
+
+    private func legendDot(color: Color, label: String) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(label).foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - Word Cosmos View (Randomized Prevalence Bubble Cloud)
+
+/// A deterministic, seed-driven RNG (splitmix64) so the cloud re-flows to a
+/// *new* but *stable* arrangement on every dice-roll instead of jumping to a
+/// fresh random layout on each re-render.
+private struct SeededRNG: RandomNumberGenerator {
+    private var state: UInt64
+    init(seed: UInt64) {
+        state = seed == 0 ? 0x9E3779B97F4A7C15 : seed
+    }
+    mutating func next() -> UInt64 {
+        state = state &+ 0x9E3779B97F4A7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        return z ^ (z >> 31)
+    }
+    mutating func fraction() -> Double {
+        Double(next() & 0xFFFFFFFF) / Double(0xFFFFFFFF)
+    }
+}
+
+/// Halton low-discrepancy sequence — even 2D coverage with no rejection cost,
+/// used as the base of the "Cloud" Poisson-ish scatter.
+private func halton(_ index: Int, base: Int) -> Double {
+    var f = 1.0
+    var r = 0.0
+    var i = index
+    while i > 0 {
+        f /= Double(base)
+        r += f * Double(i % base)
+        i /= base
+    }
+    return r
+}
+
+/// Mirrors the cockpit's WordTelemetry tier → ratio → color mapping, but derived
+/// straight from a raw `WordHit` (freqRank / isName) so the cosmos can size and
+/// tint bubbles without loading a full entry detail.
+private enum CosmosTierInfo {
+    static func of(_ word: WordHit) -> (ratio: Double, color: Color, label: String, rankStr: String) {
+        let rank = word.freqRank
+        if word.isName {
+            return (0.35, Color.purple, "Proper Name", rank < 999_999 ? "#\(rank)" : "Name")
+        } else if rank <= 500 {
+            return (1.0, Color(red: 0.22, green: 0.74, blue: 0.97), "Core Top 500", "#\(rank)")
+        } else if rank <= 2500 {
+            return (0.84, Color(red: 0.22, green: 0.74, blue: 0.97), "Core Top 2,500", "#\(rank)")
+        } else if rank <= 10_000 {
+            return (0.66, Color(red: 0.20, green: 0.83, blue: 0.60), "Jōyō Common", "#\(rank)")
+        } else if rank <= 35_000 {
+            return (0.45, Color(red: 0.98, green: 0.75, blue: 0.14), "Standard", "#\(rank)")
+        } else if rank < 999_999 {
+            return (0.26, Color(red: 0.65, green: 0.55, blue: 0.98), "Literary", "#\(rank)")
+        } else {
+            return (0.16, Color.white.opacity(0.55), "Unranked", "—")
+        }
+    }
+}
+
+/// One placed bubble: a sampled word with its deterministic position + tier.
+private struct CosmosBubble: Identifiable {
+    let word: WordHit
+    var id: UInt32 { word.id }
+    let pos: CGPoint
+    let ratio: Double
+    let color: Color
+    let tierLabel: String
+    let rankStr: String
+    let hasKanji: Bool
+    let diameter: CGFloat
+}
+
+/// Lay the current sample out for a given layout + seed + canvas.
+/// `cloud` = Halton-jittered scatter; `constellation` = concentric rings by tier.
+private func cosmosLayout(
+    words: [WordHit],
+    seed: UInt64,
+    layout: WordCosmosLayout,
+    w: CGFloat,
+    h: CGFloat
+) -> [CosmosBubble] {
+    guard w > 0, h > 0, !words.isEmpty else { return [] }
+
+    let topMargin: CGFloat = 78      // clears the top control bar
+    let bottomMargin: CGFloat = 96   // clears the bottom inspector ribbon
+    let sideMargin: CGFloat = 56
+    let minDim = min(w, h)
+
+    // Shrink bubble footprint as the sample grows so a 300-word roll stays legible.
+    let countFactor = pow(50.0 / Double(max(1, words.count)), 0.35)
+    let base = minDim * 0.135 * CGFloat(countFactor)
+
+    var rng = SeededRNG(seed: seed)
+    var bubbles: [CosmosBubble] = []
+    bubbles.reserveCapacity(words.count)
+
+    if layout == .constellation {
+        let cx = w * 0.5
+        let cy = topMargin + (h - topMargin - bottomMargin) * 0.5
+        let maxR = minDim * 0.40
+
+        // Group words into the six tier rings (ring 0 = innermost = most common).
+        var rings: [[WordHit]] = Array(repeating: [], count: 6)
+        for word in words {
+            let info = CosmosTierInfo.of(word)
+            let t = max(0.0, min(1.0, (info.ratio - 0.16) / (1.0 - 0.16))) // 1 = inner
+            let ring = Int((1.0 - t) * 5.999)
+            rings[max(0, min(5, ring))].append(word)
+        }
+
+        for (ring, group) in rings.enumerated() where !group.isEmpty {
+            var ordered = group
+            ordered.shuffle(using: &rng)
+            let r = maxR * (CGFloat(ring) / 5.0 + 0.14)
+            let n = ordered.count
+            for (i, word) in ordered.enumerated() {
+                let info = CosmosTierInfo.of(word)
+                let angle = (2 * .pi * CGFloat(i) / CGFloat(n)) + rng.fraction() * 0.35
+                let jitter = 1.0 + (rng.fraction() - 0.5) * 0.12
+                let pos = CGPoint(x: cx + cos(angle) * r * CGFloat(jitter),
+                                  y: cy + sin(angle) * r * CGFloat(jitter))
+                bubbles.append(CosmosBubble(
+                    word: word,
+                    pos: pos,
+                    ratio: info.ratio,
+                    color: info.color,
+                    tierLabel: info.label,
+                    rankStr: info.rankStr,
+                    hasKanji: word.firstKanjiCodepoint != nil,
+                    diameter: max(22, base * CGFloat(info.ratio))
+                ))
+            }
+        }
+    } else {
+        let innerW = max(1, w - sideMargin * 2)
+        let innerH = max(1, h - topMargin - bottomMargin)
+        for (i, word) in words.enumerated() {
+            let info = CosmosTierInfo.of(word)
+            let hx = halton(i + 1, base: 2)
+            let hy = halton(i + 1, base: 3)
+            let jx = (rng.fraction() - 0.5) * 0.16
+            let jy = (rng.fraction() - 0.5) * 0.16
+            let x = sideMargin + innerW * min(1.0, max(0.0, hx + jx))
+            let y = topMargin + innerH * min(1.0, max(0.0, hy + jy))
+            bubbles.append(CosmosBubble(
+                word: word,
+                pos: CGPoint(x: x, y: y),
+                ratio: info.ratio,
+                color: info.color,
+                tierLabel: info.label,
+                rankStr: info.rankStr,
+                hasKanji: word.firstKanjiCodepoint != nil,
+                diameter: max(22, base * CGFloat(info.ratio))
+            ))
+        }
+    }
+
+    return bubbles
+}
+
+struct WordCosmosView: View {
+    @ObservedObject var engine: DaiJishowEngine
+
+    @State private var pointerPos: CGPoint?
+    @State private var hoveredWord: WordHit?
+
+    private var activeWord: WordHit? { hoveredWord }
+
+    var body: some View {
+        ZStack {
+            if engine.wordCosmosMode == .ranked {
+                rankedListView
+            } else {
+                cosmosCloudView
+            }
+        }
+        .overlay(alignment: .top) {
+            controlBar
+        }
+        .overlay(alignment: .bottom) {
+            if engine.wordCosmosMode == .cosmos {
+                inspectorRibbon
+            }
+        }
+    }
+
+    // MARK: - Cosmos / Constellation cloud
+
+    @ViewBuilder
+    private var cosmosCloudView: some View {
+        GeometryReader { geo in
+            let bubbles = cosmosLayout(
+                words: engine.wordCosmosWords,
+                seed: engine.wordCosmosSeed,
+                layout: engine.wordCosmosLayout,
+                w: geo.size.width,
+                h: geo.size.height
+            )
+
+            ZStack {
+                if engine.wordCosmosLayout == .constellation {
+                    constellationGuides(w: geo.size.width, h: geo.size.height)
+                }
+
+                if bubbles.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(bubbles) { b in
+                        bubble(for: b)
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let loc):
+                    pointerPos = loc
+                    var best: CosmosBubble?
+                    var bestDist: CGFloat = .greatestFiniteMagnitude
+                    for b in bubbles {
+                        let d = hypot(b.pos.x - loc.x, b.pos.y - loc.y)
+                        let hitR = b.diameter * 0.62
+                        if d <= hitR && d < bestDist {
+                            bestDist = d
+                            best = b
+                        }
+                    }
+                    if hoveredWord?.id != best?.word.id {
+                        hoveredWord = best?.word
+                    }
+                case .ended:
+                    pointerPos = nil
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        hoveredWord = nil
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func bubble(for b: CosmosBubble) -> some View {
+        let isActive = (hoveredWord?.id == b.id)
+        let diameter = b.diameter
+
+        // Fisheye lens: magnify bubbles near the pointer with a cosine bell
+        // (same family as the overflow-dock magnification).
+        let lensScale: CGFloat = {
+            guard let p = pointerPos else { return 1.0 }
+            let d = hypot(b.pos.x - p.x, b.pos.y - p.y)
+            let reach = diameter + 96
+            if d < reach {
+                let t = cos((d / reach) * (.pi / 2.0))
+                return 1.0 + 0.55 * t * t
+            }
+            return 1.0
+        }()
+        let scaled = diameter * lensScale
+        let fontSize = max(9, scaled * 0.34)
+        let showKana = b.hasKanji && !b.word.kanaHead.isEmpty
+            && engine.recallMode != .hideKana && scaled >= 30
+
+        VStack(spacing: 1) {
+            Text(b.word.displayHeadword)
+                .font(.system(size: fontSize, weight: .bold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            if showKana {
+                Text(b.word.kanaHead)
+                    .font(.system(size: max(6, fontSize * 0.34), weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
+        }
+        .frame(width: scaled, height: scaled)
+        .background {
+            Circle()
+                .fill(.ultraThinMaterial)
+                .overlay(Circle().fill(b.color.opacity(isActive ? 0.34 : 0.18)))
+                .overlay(
+                    Circle().strokeBorder(
+                        isActive ? Color.white : b.color.opacity(0.82),
+                        lineWidth: isActive ? 2.4 : 1.4
+                    )
+                )
+        }
+        .shadow(color: b.color.opacity(isActive ? 0.5 : 0.14), radius: isActive ? 12 : 6)
+        .contentShape(Circle())
+        .scaleEffect(lensScale, anchor: .center)
+        // Single tap → Word Cockpit; double tap → pivot into Kanji Fisheye.
+        .onTapGesture {
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                engine.openWordFromCosmos(b.word)
+            }
+        }
+        .onTapGesture(count: 2) {
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                engine.pivotCosmosToKanjiFisheye(b.word)
+            }
+        }
+        .position(b.pos)
+        .zIndex(isActive ? 30 : 10 + Double(b.ratio))
+        .transition(.scale(scale: 0.3).combined(with: .opacity))
+    }
+
+    @ViewBuilder
+    private func constellationGuides(w: CGFloat, h: CGFloat) -> some View {
+        let cx = w * 0.5
+        let cy = 78 + (h - 78 - 96) * 0.5
+        let maxR = min(w, h) * 0.40
+        ZStack {
+            ForEach(0...5, id: \.self) { ring in
+                Circle()
+                    .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                    .frame(
+                        width: maxR * 2 * (CGFloat(ring) / 5.0 + 0.14),
+                        height: maxR * 2 * (CGFloat(ring) / 5.0 + 0.14)
+                    )
+                    .position(x: cx, y: cy)
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 44, weight: .thin))
+                .foregroundStyle(.secondary)
+            Text("The cosmos is empty")
+                .font(.title2.weight(.semibold))
+            Text("Roll the dice to summon a randomized cloud of words")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    engine.diceRollWordCosmos()
+                }
+            } label: {
+                Label("Roll the Dice", systemImage: "dice")
+                    .font(.headline)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(Color.accentColor))
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(30)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+    }
+
+    // MARK: - Ranked "words by prevalence" list
+
+    @ViewBuilder
+    private var rankedListView: some View {
+        let sorted = engine.wordCosmosWords.sorted { $0.freqRank < $1.freqRank }
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(sorted.enumerated()), id: \.element.id) { index, word in
+                    rankedRow(word: word, rank: index + 1)
+                }
+            }
+            .padding(16)
+        }
+        .padding(.top, 64)   // clear the control bar
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private func rankedRow(word: WordHit, rank: Int) -> some View {
+        let info = CosmosTierInfo.of(word)
+        HStack(spacing: 12) {
+            Text("#\(rank)")
+                .font(.caption.monospaced().weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .trailing)
+
+            Text(word.displayHeadword)
+                .font(.title3.weight(.bold))
+                .frame(minWidth: 90, alignment: .leading)
+
+            if engine.recallMode != .hideKana {
+                Text(word.kanaHead)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.accentColor)
+                    .frame(minWidth: 96, alignment: .leading)
+            }
+
+            if engine.recallMode != .hideGloss {
+                Text(word.primaryGloss)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Text("\(info.label) · \(info.rankStr)")
+                .font(.caption2.weight(.bold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(info.color.opacity(0.2)))
+                .foregroundStyle(info.color)
+
+            Button {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                    engine.openWordFromCosmos(word)
+                }
+            } label: {
+                Label("Open", systemImage: "book.fill")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.accentColor))
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+
+            if word.firstKanjiCodepoint != nil {
+                Button {
+                    withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                        engine.pivotCosmosToKanjiFisheye(word)
+                    }
+                } label: {
+                    Image(systemName: "scope")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.white.opacity(0.14)))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill((hoveredWord?.id == word.id) ? Color.white.opacity(0.06) : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                engine.openWordFromCosmos(word)
+            }
+        }
+        .onHover { inside in
+            if inside { hoveredWord = word }
+        }
+    }
+
+    // MARK: - Top control bar
+
+    private var controlBar: some View {
+        HStack(spacing: 10) {
+            Picker("Layout", selection: $engine.wordCosmosLayout) {
+                ForEach(WordCosmosLayout.allCases) { l in
+                    Text(l.label).tag(l)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+            .opacity(engine.wordCosmosMode == .cosmos ? 1 : 0.35)
+
+            Picker("View", selection: $engine.wordCosmosMode) {
+                ForEach(WordCosmosMode.allCases) { m in
+                    Text(m == .cosmos ? "Cosmos" : "Ranked").tag(m)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 168)
+
+            Picker("Tier", selection: $engine.wordCosmosTier) {
+                ForEach(WordCosmosTier.allCases) { t in
+                    Text(t.label).tag(t)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 196)
+            .onChange(of: engine.wordCosmosTier) { _, new in
+                engine.setWordCosmosTier(new)
+            }
+
+            Menu {
+                ForEach([50, 150, 300], id: \.self) { count in
+                    Button("Sample \(count) words") {
+                        engine.sampleWordCosmos(count: count)
+                    }
+                }
+            } label: {
+                Label("\(engine.wordCosmosCount) words", systemImage: "number")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(.ultraThinMaterial))
+            }
+            .menuStyle(.borderlessButton)
+
+            Button {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    engine.diceRollWordCosmos()
+                }
+            } label: {
+                Label("Roll", systemImage: "dice")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.accentColor))
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .help("Re-roll a fresh randomized sample")
+
+            Toggle(isOn: $engine.wordCosmosIncludeNames) {
+                Text("Names").font(.caption.weight(.semibold))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .fixedSize()
+            .onChange(of: engine.wordCosmosIncludeNames) { _, _ in
+                engine.sampleWordCosmos(includeNames: engine.wordCosmosIncludeNames)
+            }
+
+            Spacer()
+
+            HStack(spacing: 10) {
+                legendDot(color: Color(red: 0.22, green: 0.74, blue: 0.97), label: "Core")
+                legendDot(color: Color(red: 0.20, green: 0.83, blue: 0.60), label: "Jōyō")
+                legendDot(color: Color(red: 0.98, green: 0.75, blue: 0.14), label: "Std")
+                legendDot(color: Color(red: 0.65, green: 0.55, blue: 0.98), label: "Lit")
+            }
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(.ultraThinMaterial))
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(Capsule().fill(.ultraThinMaterial).opacity(0.45))
+    }
+
+    // MARK: - Bottom inspector ribbon
+
+    @ViewBuilder
+    private var inspectorRibbon: some View {
+        HStack(alignment: .bottom, spacing: 14) {
+            Spacer()
+
+            if let word = activeWord {
+                let info = CosmosTierInfo.of(word)
+                LiquidGlassCard(cornerRadius: 18) {
+                    HStack(spacing: 16) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 8) {
+                                Text(word.displayHeadword)
+                                    .font(.title3.weight(.bold))
+                                if engine.recallMode != .hideKana && !word.kanaHead.isEmpty {
+                                    Text("(\(word.kanaHead))")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("\(info.label) • \(info.rankStr)")
+                                    .font(.caption2.weight(.bold))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(info.color.opacity(0.22)))
+                                    .foregroundStyle(info.color)
+                            }
+                            if engine.recallMode != .hideGloss {
+                                Text(word.primaryGloss.isEmpty ? "Tap to open the Word Cockpit" : word.primaryGloss)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+
+                        Button {
+                            withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                                engine.openWordFromCosmos(word)
+                            }
+                        } label: {
+                            Label("Word Cockpit", systemImage: "book.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(Capsule().fill(Color.accentColor))
+                                .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+
+                        if word.firstKanjiCodepoint != nil {
+                            Button {
+                                withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                                    engine.pivotCosmosToKanjiFisheye(word)
+                                }
+                            } label: {
+                                Label("Kanji Fisheye", systemImage: "scope")
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(Capsule().fill(Color.white.opacity(0.14)))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                Text("Hover a bubble to preview · click to open the Word Cockpit · double-click a kanji word to pivot into its Kanji Fisheye")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.white.opacity(0.65))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(.ultraThinMaterial))
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 84)
+        .padding(.bottom, 16)
     }
 
     private func legendDot(color: Color, label: String) -> some View {

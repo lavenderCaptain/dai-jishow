@@ -68,6 +68,13 @@ struct DaiJishowMacApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
 
+                Button("Open Word Cosmos") {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                        engine.openWordCosmos()
+                    }
+                }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+
                 Divider()
 
                 Button("Navigate Back") {
@@ -145,6 +152,8 @@ struct MainWorkspaceView: View {
                             RadicalBuilderView(engine: engine)
                         case .kanjiLookup:
                             KanjiLookupView(engine: engine)
+                        case .wordCosmos:
+                            WordCosmosView(engine: engine)
                         }
                     }
 
@@ -319,6 +328,18 @@ struct MainWorkspaceView: View {
                     .background(Capsule().fill(engine.activeScreen == .radicalBuilder ? Color.accentColor : Color.white.opacity(0.10)))
             }
             .buttonStyle(.plain)
+
+            Button {
+                engine.openWordCosmos()
+            } label: {
+                Label("Word Cosmos", systemImage: "sparkles")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(Capsule().fill(engine.activeScreen == .wordCosmos ? Color.accentColor : Color.white.opacity(0.10)))
+            }
+            .buttonStyle(.plain)
+            .help("Open the Word Cosmos — a randomized prevalence bubble cloud (⌘⇧W)")
 
             Toggle("Names", isOn: $engine.includeNames)
                 .toggleStyle(.switch)
