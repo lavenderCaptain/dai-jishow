@@ -277,6 +277,7 @@ struct MainWorkspaceView: View {
                         .frame(width: 28, height: 28)
                 }
                 .disabled(!engine.canGoBack)
+                .help("Go back to the previous lookup")
 
                 Button { engine.goForward() } label: {
                     Image(systemName: "chevron.right")
@@ -284,6 +285,7 @@ struct MainWorkspaceView: View {
                         .frame(width: 28, height: 28)
                 }
                 .disabled(!engine.canGoForward)
+                .help("Go forward in your lookup history")
 
                 Button {
                     withAnimation(.spring(response: 0.30, dampingFraction: 0.85)) {
@@ -300,8 +302,12 @@ struct MainWorkspaceView: View {
                         if !engine.history.isEmpty {
                             Text("\(engine.history.count)")
                                 .font(.caption2.monospacedDigit().weight(.bold))
+                                .frame(minWidth: 18, alignment: .center)
                         }
                     }
+                    // Reserve room for a 2-digit count so the badge doesn't squash
+                    // when the history ring fills past 9 entries.
+                    .frame(minWidth: 46, alignment: .center)
                     .padding(.horizontal, 6)
                     .frame(height: 28)
                 }
@@ -335,6 +341,7 @@ struct MainWorkspaceView: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .help("Clear the search")
                 }
             }
             .padding(.horizontal, 14)
@@ -345,6 +352,7 @@ struct MainWorkspaceView: View {
                     .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
             }
             .frame(maxWidth: 400)
+            .help("Search by kanji, kana, romaji, or English — results appear live; press Enter to open the top hit.")
 
             Button {
                 engine.openKanjiLookup()
@@ -356,6 +364,7 @@ struct MainWorkspaceView: View {
                     .background(Capsule().fill(engine.activeScreen == .kanjiLookup ? Color.accentColor : Color.white.opacity(0.10)))
             }
             .buttonStyle(.plain)
+            .help("Open the Kanji Index — browse kanji by stroke count, radical, or reading")
 
             Button {
                 engine.openRadicalBuilder()
@@ -367,6 +376,7 @@ struct MainWorkspaceView: View {
                     .background(Capsule().fill(engine.activeScreen == .radicalBuilder ? Color.accentColor : Color.white.opacity(0.10)))
             }
             .buttonStyle(.plain)
+            .help("Open the Radical Builder — assemble kanji from their component radicals")
 
             Button {
                 engine.openWordCosmos()
@@ -384,6 +394,7 @@ struct MainWorkspaceView: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .fixedSize()
+                .help("Include proper names (人名) in search results and related-word lists")
                 .onChange(of: engine.includeNames) { _, _ in
                     engine.performSearch()
                     engine.invalidateFisheyeSnapshots()
@@ -401,6 +412,7 @@ struct MainWorkspaceView: View {
             }
             .pickerStyle(.segmented)
             .fixedSize()
+            .help("Recall Mode — Full shows everything, Hide Kana hides readings, Hide Defn. hides the English (for self-quizzing)")
 
             Spacer(minLength: 4)
 
@@ -415,6 +427,7 @@ struct MainWorkspaceView: View {
                             .background(Circle().fill(Color.white.opacity(0.10)))
                     }
                     .buttonStyle(.plain)
+                    .help("Recently viewed kanji — open \(String(UnicodeScalar(cp)!))")
                 }
             }
         }

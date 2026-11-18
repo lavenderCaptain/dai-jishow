@@ -11,10 +11,15 @@
 #   Contents/Info.plist              bundle metadata + icon reference
 #
 # Usage:
-#   ./tools/build_app_bundle.sh            # debug build, DB copied in
+#   ./tools/build_app_bundle.sh            # debug build, DB copied in, + DMG
 #   ./tools/build_app_bundle.sh --release  # release build (slower)
 #   ./tools/build_app_bundle.sh --no-db    # skip bundling the ~221 MB corpus
 #   ./tools/build_app_bundle.sh --symlink-db  # link the DB instead of copying
+#   ./tools/build_app_bundle.sh --no-dmg   # skip the drag-to-Applications .dmg
+#
+# The DMG (build/DaiJishow-<version>.dmg) is the standard "drag the app into the
+# Applications folder" installer: it contains the .app plus a symlink to
+# /Applications, so you drag-and-drop to install.
 #
 set -euo pipefail
 
@@ -33,11 +38,13 @@ APP_DIR="$BUILD_DIR/$APP_NAME.app"
 CONFIG="debug"
 BUNDLE_DB=1
 LINK_DB=0
+MAKE_DMG=1
 for arg in "$@"; do
   case "$arg" in
     --release)      CONFIG="release" ;;
     --no-db)        BUNDLE_DB=0 ;;
     --symlink-db)   BUNDLE_DB=1; LINK_DB=1 ;;
+    --no-dmg)       MAKE_DMG=0 ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown flag: $arg" >&2; exit 1 ;;
@@ -120,6 +127,40 @@ if codesign --force --deep --sign - "$APP_DIR" 2>/dev/null; then
   echo "    signed"
 else
   echo "    (codesign unavailable or failed — app still runs locally)"
+fi
+
+# --- DMG (drag-to-Applications installer) --------------------------------
+# The standard "drag the app into Applications" package: the .app plus a
+# symlink to /Applications. Open the .dmg, drag DaiJishow onto the
+# Applications icon, done.
+if [[ "$MAKE_DMG" -eq 1 ]]; then
+  echo "==> creating DMG (drag-to-Applications)"
+  STAGE_PARENT="$(mktemp -d -t daijishow-dmg-XXXXXX)"
+  DMG_DIR="$STAGE_PARENT/stage"
+  mkdir -p "$DMG_DIR"
+  cp -R "$APP_DIR" "$DMG_DIR/"
+  ln -s /Applications "$DMG_DIR/Applications"
+
+  # Deterministic layout: drop any stray Finder state.
+  find "$DMG_DIR" -name .DS_Store -delete 2>/dev/null || true
+
+  DMG_NAME="DaiJishow-${SHORT_VERSION}.dmg"
+  DMG_OUT="$BUILD_DIR/$DMG_NAME"
+  rm -f "$DMG_OUT"
+
+  if hdiutil create \
+      -volname "DaiJishow" \
+      -srcfolder "$DMG_DIR" \
+      -ov -format UDZO \
+      -imagekey zlib-level=9 \
+      "$DMG_OUT" >/dev/null; then
+    echo "    + $DMG_NAME ($(du -h "$DMG_OUT" | cut -f1))"
+    echo "    open \"$DMG_OUT\"   # then drag DaiJishow onto the Applications icon"
+  else
+    echo "    ! DMG creation failed (hdiutil unavailable or disk full)"
+  fi
+
+  rm -rf "$STAGE_PARENT"
 fi
 
 echo "==> done: $APP_DIR"

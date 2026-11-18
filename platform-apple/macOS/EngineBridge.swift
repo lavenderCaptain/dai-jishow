@@ -525,6 +525,27 @@ enum RecallMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// How the kanji detail screen's "Vocabulary & Compounds" list is filtered and
+/// ordered. Persisted per user.
+enum KanjiRelatedDisplayMode: String, CaseIterable, Identifiable {
+    case prevalence = "Prevalence"
+    case startsWith = "Starts"
+    case endsWith = "Ends"
+
+    var id: String { rawValue }
+
+    var help: String {
+        switch self {
+        case .prevalence:
+            return "Every word containing this kanji, most common first"
+        case .startsWith:
+            return "Only headwords that begin with this kanji, most common first"
+        case .endsWith:
+            return "Only headwords that end with this kanji, most common first"
+        }
+    }
+}
+
 // MARK: - Kana, Mora & Romaji Normalization Helpers
 
 enum KanaNormalizer {
@@ -669,6 +690,7 @@ enum KanaNormalizer {
 @MainActor
 final class DaiJishowEngine: ObservableObject {
     private static let cockpitDefaultsKey = "daijishow.wordCockpitExpanded"
+    private static let kanjiRelatedModeKey = "daijishow.kanjiRelatedMode"
 
     private var handle: OpaquePointer?
     private var searchDebounceTask: Task<Void, Never>?
@@ -692,6 +714,15 @@ final class DaiJishowEngine: ObservableObject {
         }
     }
     @Published var glossLanguageMode: GlossLanguageMode = .english
+
+    /// How the kanji detail screen orders/filters its "Vocabulary & Compounds"
+    /// list. Persisted like the cockpit toggle.
+    @Published var kanjiRelatedMode: KanjiRelatedDisplayMode = .prevalence {
+        didSet {
+            UserDefaults.standard.set(kanjiRelatedMode.rawValue, forKey: Self.kanjiRelatedModeKey)
+        }
+    }
+
     @Published var activeWordInsights: WordLexicalInsights?
 
     @Published var activeScreen: ActiveScreenKind = .fisheye
@@ -746,6 +777,10 @@ final class DaiJishowEngine: ObservableObject {
     init(dbPath: String) {
         let savedCockpit = UserDefaults.standard.object(forKey: Self.cockpitDefaultsKey) as? Bool
         self.isWordCockpitExpanded = savedCockpit ?? true
+        if let savedMode = UserDefaults.standard.string(forKey: Self.kanjiRelatedModeKey),
+           let mode = KanjiRelatedDisplayMode(rawValue: savedMode) {
+            self.kanjiRelatedMode = mode
+        }
         self.handle = dj_engine_create(dbPath)
         if self.handle != nil {
             pushRecentKanji(0x5927) // 大

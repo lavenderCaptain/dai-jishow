@@ -2,6 +2,15 @@
 
 Dai-Jishow abandons conventional nested menus, sidebars, and modal dialogs in favor of a spatial **Focus + Context** paradigm rendered with translucent **Liquid Glass** materials.
 
+> **Status snapshot.** The macOS desktop shell ships today. The **Z-Stack
+> navigation deck**, single-window liquid-glass surface, **Reader/Cockpit**
+> word entry, **Kanji detail** with a "Vocabulary & Compounds" display-mode
+> switch, the **Fisheye** explorer, **Word Cosmos**, **Recall** modes,
+> **hover tooltips** on every control, **text selection + copy**, and an
+> **About / Preferences** window are all **built**. The 3D "Time Machine" zoom,
+> the **Radial Bloom** selection menu (§3), and the multi-device matrix (§5) are
+> **designed, not yet built**. See §6 for the current macOS layout.
+
 ---
 
 ## 1. Visual Language: Liquid Glass
@@ -66,3 +75,52 @@ Whenever the user clicks or taps a Japanese word or kanji (in a definition, an e
 | **Fisheye Node Count** | 30–40 neighbors (15–20 per side) | 20–24 neighbors (10–12 per side) | **6 neighbors (3 Left + 3 Right)** |
 | **Camera / Lens** | Continuity Camera, Screen-Region OCR, File/Clipboard | Live 60/120 Hz AR camera + Split-Screen Reader | Voice dictation, Scribble/Handwriting, Synced Cards |
 | **Active Recall** | Keyboard shortcuts (`1/2/3`) for `Full / Hide Kana / Hide Gloss` | Top glass toggle pills | Tap-to-reveal reading/gloss on card |
+
+---
+
+## 6. Current macOS Implementation (what ships today)
+
+A single, tab-free glass window (`1320 × 880`, one `Window` scene — no double
+vision, no tab bar). Layout:
+
+### 6.1 Top Bar
+* **Navigation cluster:** Back / Forward chevrons (disabled at the ends) and a
+  **Z-Stack history** button whose badge shows the ring count — the badge reserves
+  two-digit width so it never squashes past 9 entries.
+* **Omni-search field:** kanji / kana / romaji / English, with a live results
+  dropdown and a clear button.
+* **Kanji Index**, **Radicals** (builder), **Word Cosmos** buttons.
+* **Names** toggle (include proper names), a segmented **Recall** picker
+  (*Full / Hide Kana / Hide Gloss*), and **recent-kanji** chips.
+* **Every control carries a hover tooltip** explaining what it is / does.
+
+### 6.2 Word Entry (Reader / Cockpit)
+* **Hero card:** ruby headword, **pitch-accent contour**, **telemetry pills**
+  (frequency tier, JLPT, grade, stroke count), a **corpus-frequency meter**, and
+  "also written as" variant chips — each with a tooltip.
+* **Reader / Cockpit** toggle and a **Gloss Language** toggle (EN / JA / Both),
+  both persisted in `UserDefaults`.
+* **Cockpit dashboard:** Kanji DNA strip, POS-tagged **Definitions**, a
+  **自他 pair** banner, **Homonyms** (同音異義語), **Word Family** (prefix/suffix
+  compounds), **Corpus Collocations**, **Example Sentences**, and a **conjugation
+  matrix**.
+* **Pills that would clip off-screen** (Homonyms, Compounds, Collocations) now
+  **wrap to multiple rows** and show the **top 10** with a **"Show more / Show
+  Less"** button — no horizontal scroll, nothing cut off.
+
+### 6.3 Kanji Detail
+* Glyph with **animated KanjiVG stroke vectors**, on/kun readings, full metadata,
+  and a **"Vocabulary & Compounds Containing …"** list with a **display-mode
+  switch**: **Prevalence** (most-common-first, the default) / **Starts with** /
+  **Ends with** — persisted per user. A counter reads "X of Y words" and an
+  empty-state message appears when a filtered view has no matches.
+
+### 6.4 Navigation, Feedback & Packaging
+* **Z-Stack deck** (⌘\\) scrubs the lookup trail; **Word Cosmos** (⌘⇧W) is a
+  randomized prevalence bubble cloud; ⌘⇧C toggles Cockpit.
+* **Text selection + copy** is enabled on entries, kanji detail, and the search
+  dropdown, with context menus and a **⌘⌥C "Copy Entry"** command (native ⌘C for
+  selections).
+* **About** (version + source/license credits) and **Preferences** windows.
+* The app is packaged as a signed **`.app`** and a **drag-to-Applications DMG**
+  (`tools/build_app_bundle.sh`) containing the app + an `/Applications` symlink.

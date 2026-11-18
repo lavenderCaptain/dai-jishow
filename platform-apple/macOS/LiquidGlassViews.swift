@@ -1874,6 +1874,12 @@ struct WordEntryView: View {
 
     @State private var showAllSentences: Bool = false
 
+    // Top-10 expansion toggles for the cockpit pill lists (compounds + homonyms).
+    // Reset when the active entry changes so each word starts collapsed.
+    @State private var showAllPrefixCompounds: Bool = false
+    @State private var showAllSuffixCompounds: Bool = false
+    @State private var showAllHomonyms: Bool = false
+
     private var insights: WordLexicalInsights {
         if let active = engine.activeWordInsights, active.entryId == entry.header.id {
             return active
@@ -1920,10 +1926,16 @@ struct WordEntryView: View {
         }
         .onAppear {
             showAllSentences = false
+            showAllPrefixCompounds = false
+            showAllSuffixCompounds = false
+            showAllHomonyms = false
             _ = engine.ensureWordInsights(for: entry)
         }
         .onChange(of: entry.header.id) { _, _ in
             showAllSentences = false
+            showAllPrefixCompounds = false
+            showAllSuffixCompounds = false
+            showAllHomonyms = false
             _ = engine.ensureWordInsights(for: entry)
         }
     }
@@ -1955,6 +1967,7 @@ struct WordEntryView: View {
                             }
                             .pickerStyle(.segmented)
                             .frame(width: 196)
+                            .help("Reader shows just the definitions; Cockpit reveals the full analysis dashboard (homonyms, compounds, collocations, conjugations, …).")
 
                             if entry.hasJapaneseGlosses {
                                 Picker("Gloss Language", selection: $engine.glossLanguageMode) {
@@ -1964,6 +1977,7 @@ struct WordEntryView: View {
                                 }
                                 .pickerStyle(.segmented)
                                 .frame(width: 144)
+                                .help("Show the definition in English, Japanese, or both.")
                             }
                         }
 
@@ -1973,14 +1987,18 @@ struct WordEntryView: View {
                                 text: "\(insights.telemetry.frequencyTier) (\(insights.telemetry.frequencyRankText))",
                                 tint: insights.telemetry.tierColor
                             )
+                            .help("Corpus frequency tier — how often this word appears, from the most common words down to rare ones.")
                             if let jlpt = insights.telemetry.jlptLabel {
                                 telemetryPill(text: jlpt, tint: .cyan)
+                                    .help("JLPT level — the Japanese-Language Proficiency Test tier this word is associated with.")
                             }
                             if let grade = insights.telemetry.gradeLabel {
                                 telemetryPill(text: grade, tint: .green)
+                                    .help("Grade — the Japanese school year in which this kanji is typically taught.")
                             }
                             if insights.telemetry.totalStrokes > 0 {
                                 telemetryPill(text: "\(insights.telemetry.totalStrokes)画", tint: .orange)
+                                    .help("Total strokes — the number of strokes in the word's kanji (画 means 'stroke').")
                             }
                         }
                     }
@@ -1991,6 +2009,7 @@ struct WordEntryView: View {
                     HStack(alignment: .center, spacing: 16) {
                         if let contour = pitchContour {
                             PitchAccentContourView(contour: contour)
+                                .help("Pitch-accent contour — the rise/fall of the spoken syllables; the bracketed number is the accent nucleus position.")
                         }
 
                         Spacer(minLength: 8)
@@ -2011,6 +2030,7 @@ struct WordEntryView: View {
                             }
                             .frame(width: 112, height: 6)
                         }
+                        .help("Corpus frequency meter — how common this word is in the corpus, from rare (short bar) to very common (full bar).")
                     }
                 }
 
@@ -2020,6 +2040,7 @@ struct WordEntryView: View {
                         Text("Also written:")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
+                            .help("Alternative spellings of this word (表記ゆれ). Click one to open that variant.")
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 6) {
                                 ForEach(entry.header.variantList, id: \.self) { variant in
@@ -2034,6 +2055,7 @@ struct WordEntryView: View {
                                             .overlay(Capsule().strokeBorder(Color.white.opacity(0.15), lineWidth: 1))
                                     }
                                     .buttonStyle(.plain)
+                                    .help("Open the variant form \(variant)")
                                 }
                             }
                         }
@@ -2100,6 +2122,7 @@ struct WordEntryView: View {
                     Label("Kanji DNA", systemImage: "square.grid.2x2.fill")
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(.secondary)
+                        .help("The individual kanji that make up this word, with their meanings, stroke counts, and JLPT level. Click one to open its detail page.")
                     Spacer()
                     Text("Tap any kanji to inspect stroke vectors & graph")
                         .font(.caption2)
@@ -2173,6 +2196,7 @@ struct WordEntryView: View {
                                 )
                             }
                             .buttonStyle(.plain)
+                            .help("Open \(k.glyph) — \(k.meanings.split(separator: ";").first.map(String.init) ?? "kanji")")
                         }
                     }
                 }
@@ -2214,6 +2238,7 @@ struct WordEntryView: View {
                     Label("Definitions", systemImage: "book.pages.fill")
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(.secondary)
+                        .help("The dictionary senses of this word, in order of frequency. Each numbered item is a distinct meaning.")
                     Spacer()
                     Text("\(entry.senses.count) \(entry.senses.count == 1 ? "sense" : "senses")")
                         .font(.caption.monospacedDigit())
@@ -2293,6 +2318,7 @@ struct WordEntryView: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
                         .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+                        .help("A self/other verb pair (自他動詞): this verb and its counterpart that flips between the subject acting on itself vs. on something else. Click to open the pair.")
 
                     Text("Paired Verb:")
                         .font(.subheadline)
@@ -2326,55 +2352,75 @@ struct WordEntryView: View {
     // MARK: - Homonyms Section (同音異義語)
 
     private var homonymsSection: some View {
-        LiquidGlassCard(cornerRadius: 20) {
+        let limit = 10
+        let items = insights.homonyms
+        let visible = showAllHomonyms ? items : Array(items.prefix(limit))
+        let hasMore = items.count > limit
+        return LiquidGlassCard(cornerRadius: 20) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label("Homonyms • 同音異義語 (\(entry.header.kanaHead))", systemImage: "waveform.and.magnifyingglass")
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(.secondary)
+                        .help("Other words that share the same reading (\(entry.header.kanaHead)) but differ in meaning. Click a pill to open that word.")
                     Spacer()
-                    Text("\(insights.homonyms.count) entries")
+                    Text("\(items.count) entries")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(insights.homonyms) { hit in
-                            Button {
-                                engine.openWordEntry(entryId: hit.id)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack(spacing: 6) {
-                                        Text(hit.displayHeadword)
-                                            .font(.headline.weight(.bold))
-                                        if hit.pitchAccent != 255 {
-                                            Text("[\(hit.pitchAccent)]")
-                                                .font(.caption2.monospacedDigit().weight(.semibold))
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    if engine.recallMode != .hideGloss {
-                                        Text(hit.primaryGloss)
-                                            .font(.caption)
+                WrappingHStack(alignment: .top, horizontalSpacing: 10, verticalSpacing: 10) {
+                    ForEach(visible) { hit in
+                        Button {
+                            engine.openWordEntry(entryId: hit.id)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Text(hit.displayHeadword)
+                                        .font(.headline.weight(.bold))
+                                    if hit.pitchAccent != 255 {
+                                        Text("[\(hit.pitchAccent)]")
+                                            .font(.caption2.monospacedDigit().weight(.semibold))
                                             .foregroundStyle(.secondary)
-                                            .lineLimit(2)
                                     }
                                 }
-                                .frame(width: 176, alignment: .leading)
-                                .padding(12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.white.opacity(0.06))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                                .strokeBorder(Color.white.opacity(0.11), lineWidth: 1)
-                                        )
-                                )
+                                if engine.recallMode != .hideGloss {
+                                    Text(hit.primaryGloss)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
                             }
-                            .buttonStyle(.plain)
+                            .frame(width: 176, alignment: .leading)
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.white.opacity(0.06))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .strokeBorder(Color.white.opacity(0.11), lineWidth: 1)
+                                    )
+                            )
                         }
+                        .buttonStyle(.plain)
+                        .help("\(hit.displayHeadword)\n\(hit.primaryGloss)\n\(hit.pitchAccent != 255 ? "Pitch accent [\(hit.pitchAccent)]" : "Same reading as \(entry.header.kanaHead)")")
                     }
+                }
+
+                if hasMore {
+                    Button {
+                        showAllHomonyms.toggle()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(showAllHomonyms ? "Show Less" : "Show more (\(items.count - limit) more)")
+                            Image(systemName: showAllHomonyms ? "chevron.up" : "chevron.down")
+                        }
+                        .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .help(showAllHomonyms ? "Collapse back to the top \(limit) homonyms" : "Show all \(items.count) homonyms")
+                    .padding(.top, 2)
                 }
             }
             .padding(18)
@@ -2389,56 +2435,86 @@ struct WordEntryView: View {
                 Label("Word Family • Compounds", systemImage: "point.3.connected.trianglepath.dotted")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.secondary)
+                    .help("Other words built from this headword: compounds that start with it (prefixes) and compounds that end with it (suffixes). Click a pill to open that word.")
 
                 if !insights.prefixCompounds.isEmpty {
-                    compoundGroupRow(title: "Starts with \(entry.header.displayHeadword)〜", items: insights.prefixCompounds)
+                    compoundGroupRow(title: "Starts with \(entry.header.displayHeadword)〜", items: insights.prefixCompounds, isExpanded: $showAllPrefixCompounds)
                 }
 
                 if !insights.suffixCompounds.isEmpty {
-                    compoundGroupRow(title: "Ends with 〜\(entry.header.displayHeadword)", items: insights.suffixCompounds)
+                    compoundGroupRow(title: "Ends with 〜\(entry.header.displayHeadword)", items: insights.suffixCompounds, isExpanded: $showAllSuffixCompounds)
                 }
             }
             .padding(18)
         }
     }
 
-    private func compoundGroupRow(title: String, items: [WordHit]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(items) { hit in
-                        Button {
-                            engine.openWordEntry(entryId: hit.id)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(hit.displayHeadword)
-                                    .font(.headline.weight(.bold))
-                                if engine.recallMode != .hideKana {
-                                    Text(hit.kanaHead)
-                                        .font(.caption)
-                                        .foregroundStyle(Color.accentColor)
-                                }
-                                if engine.recallMode != .hideGloss {
-                                    Text(hit.primaryGloss)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                            }
-                            .frame(width: 164, alignment: .leading)
-                            .padding(10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.white.opacity(0.055))
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
+    private func compoundGroupRow(title: String, items: [WordHit], isExpanded: Binding<Bool>) -> some View {
+        let limit = 10
+        let visible = isExpanded.wrappedValue ? items : Array(items.prefix(limit))
+        let hasMore = items.count > limit
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .help(title)
+                Spacer()
+                if hasMore {
+                    Text(isExpanded.wrappedValue ? "\(items.count) total" : "showing \(visible.count) of \(items.count)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
                 }
+            }
+
+            WrappingHStack(alignment: .top, horizontalSpacing: 10, verticalSpacing: 10) {
+                ForEach(visible) { hit in
+                    Button {
+                        engine.openWordEntry(entryId: hit.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(hit.displayHeadword)
+                                .font(.headline.weight(.bold))
+                            if engine.recallMode != .hideKana {
+                                Text(hit.kanaHead)
+                                    .font(.caption)
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                            if engine.recallMode != .hideGloss {
+                                Text(hit.primaryGloss)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .frame(width: 164, alignment: .leading)
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.white.opacity(0.055))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(hit.displayHeadword) — \(hit.kanaHead)\n\(hit.primaryGloss)\nOpen full entry")
+                }
+            }
+
+            if hasMore {
+                Button {
+                    isExpanded.wrappedValue.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(isExpanded.wrappedValue ? "Show Less" : "Show more (\(items.count - limit) more)")
+                        Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
+                    }
+                    .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .help(isExpanded.wrappedValue
+                      ? "Collapse back to the top \(limit) compounds"
+                      : "Show all \(items.count) compounds in this group")
+                .padding(.top, 2)
             }
         }
     }
@@ -2453,21 +2529,21 @@ struct WordEntryView: View {
                         Label("Corpus Collocations", systemImage: "link")
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(.secondary)
+                            .help("Real-world word neighbours from the corpus: patterns that co-occur with this word, most frequent first.")
 
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(insights.collocations) { col in
-                                    HStack(spacing: 6) {
-                                        Text(col.pattern)
-                                            .font(.subheadline.weight(.bold))
-                                        Text("×\(col.count)")
-                                            .font(.caption2.monospacedDigit().weight(.bold))
-                                            .foregroundStyle(Color.accentColor)
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                        WrappingHStack(alignment: .center, horizontalSpacing: 8, verticalSpacing: 8) {
+                            ForEach(insights.collocations) { col in
+                                HStack(spacing: 6) {
+                                    Text(col.pattern)
+                                        .font(.subheadline.weight(.bold))
+                                    Text("×\(col.count)")
+                                        .font(.caption2.monospacedDigit().weight(.bold))
+                                        .foregroundStyle(Color.accentColor)
                                 }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(Color.white.opacity(0.08)))
+                                .help("\(col.pattern) — appears \(col.count)×")
                             }
                         }
                     }
@@ -2490,6 +2566,7 @@ struct WordEntryView: View {
                     Label("Example Sentences", systemImage: "text.quote")
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(.secondary)
+                        .help("Real example sentences that use this word. Click any underlined word to open it.")
 
                     if let src = insights.fallbackSourceWord {
                         Text("via \(src)")
@@ -2498,6 +2575,7 @@ struct WordEntryView: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(Capsule().fill(Color.orange.opacity(0.18)))
+                            .help("This word has no example of its own, so a close relative is used as a stand-in to show usage.")
                     }
 
                     Spacer()
@@ -2513,6 +2591,7 @@ struct WordEntryView: View {
                                 .foregroundStyle(Color.accentColor)
                         }
                         .buttonStyle(.plain)
+                        .help(showAllSentences ? "Collapse back to the first 4 example sentences" : "Reveal every example sentence")
                     }
                 }
 
@@ -2548,6 +2627,7 @@ struct WordEntryView: View {
                 Label(title, systemImage: "tablecells")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.secondary)
+                    .help("Conjugation matrix — every grammatical form this word takes, by tense, mood, and polarity.")
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 155), spacing: 10)], spacing: 10) {
                     ForEach(forms) { form in
@@ -2569,6 +2649,7 @@ struct WordEntryView: View {
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .fill(Color.white.opacity(0.055))
                         )
+                        .help("\(form.label): \(form.surface)\(form.kana != form.surface ? " (\(form.kana))" : "")")
                     }
                 }
             }
@@ -2768,6 +2849,22 @@ struct KanjiDetailView: View {
     @ObservedObject var engine: DaiJishowEngine
     let kanji: KanjiDetail
     @State private var animatedStrokeCount: Int = 999
+
+    /// The "Vocabulary & Compounds Containing" list, filtered/ordered by the
+    /// user's chosen display mode. `relatedWords` already holds every word
+    /// containing the glyph (prevalence-sorted), so this is pure client-side
+    /// filtering.
+    private var displayRelatedWords: [WordHit] {
+        let glyph = kanji.glyph
+        switch engine.kanjiRelatedMode {
+        case .prevalence:
+            return kanji.relatedWords
+        case .startsWith:
+            return kanji.relatedWords.filter { $0.displayHeadword.hasPrefix(glyph) }
+        case .endsWith:
+            return kanji.relatedWords.filter { $0.displayHeadword.hasSuffix(glyph) }
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -2977,59 +3074,82 @@ struct KanjiDetailView: View {
                 if !kanji.relatedWords.isEmpty {
                     LiquidGlassCard(cornerRadius: 20) {
                         VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Vocabulary & Compounds Containing \(kanji.glyph)")
-                                    .font(.headline)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text("\(kanji.relatedWords.count) words")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Vocabulary & Compounds Containing \(kanji.glyph)")
+                                        .font(.headline)
+                                        .foregroundStyle(.secondary)
+                                        .help("Every dictionary word that contains this kanji, sorted by how often it appears in the corpus. Switch the view to only show words that start with, or end with, the kanji.")
+                                    Spacer()
+                                    Text("\(displayRelatedWords.count) of \(kanji.relatedWords.count) words")
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Picker("Display mode", selection: $engine.kanjiRelatedMode) {
+                                    ForEach(KanjiRelatedDisplayMode.allCases) { mode in
+                                        Text(mode.id).tag(mode)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .fixedSize()
+                                .help(engine.kanjiRelatedMode.help)
                             }
 
-                            ForEach(kanji.relatedWords) { word in
-                                Button {
-                                    engine.openWordEntry(entryId: word.id)
-                                } label: {
-                                    HStack(alignment: .firstTextBaseline, spacing: 12) {
-                                        Text(word.displayHeadword)
-                                            .font(.headline.weight(.bold))
-                                            .frame(minWidth: 96, alignment: .leading)
-
-                                        if engine.recallMode != .hideKana {
-                                            Text(word.kanaHead)
-                                                .font(.subheadline)
-                                                .foregroundStyle(Color.accentColor)
-                                                .frame(minWidth: 110, alignment: .leading)
-                                        }
-
-                                        if engine.recallMode != .hideGloss {
-                                            Text(word.primaryGloss)
-                                                .font(.subheadline)
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(2)
-                                        }
-
-                                        Spacer()
-
-                                        if word.isName {
-                                            Text("Name")
-                                                .font(.caption2.weight(.semibold))
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(Capsule().fill(Color.purple.opacity(0.22)))
-                                                .foregroundStyle(.purple)
-                                        }
-
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .padding(.vertical, 6)
-                                    .padding(.horizontal, 10)
-                                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.05)))
+                            if displayRelatedWords.isEmpty {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "magnifyingglass")
+                                        .foregroundStyle(.secondary)
+                                    Text("No words \(engine.kanjiRelatedMode == .startsWith ? "start with" : "end with") \(kanji.glyph) in this view.")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
                                 }
-                                .buttonStyle(.plain)
+                            } else {
+                                ForEach(displayRelatedWords) { word in
+                                    Button {
+                                        engine.openWordEntry(entryId: word.id)
+                                    } label: {
+                                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                            Text(word.displayHeadword)
+                                                .font(.headline.weight(.bold))
+                                                .frame(minWidth: 96, alignment: .leading)
+
+                                            if engine.recallMode != .hideKana {
+                                                Text(word.kanaHead)
+                                                    .font(.subheadline)
+                                                    .foregroundStyle(Color.accentColor)
+                                                    .frame(minWidth: 110, alignment: .leading)
+                                            }
+
+                                            if engine.recallMode != .hideGloss {
+                                                Text(word.primaryGloss)
+                                                    .font(.subheadline)
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(2)
+                                            }
+
+                                            Spacer()
+
+                                            if word.isName {
+                                                Text("Name")
+                                                    .font(.caption2.weight(.semibold))
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 2)
+                                                    .background(Capsule().fill(Color.purple.opacity(0.22)))
+                                                    .foregroundStyle(.purple)
+                                            }
+
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .padding(.vertical, 6)
+                                        .padding(.horizontal, 10)
+                                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.05)))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("\(word.displayHeadword) — \(word.kanaHead)\n\(word.primaryGloss)")
+                                }
                             }
                         }
                         .padding(20)

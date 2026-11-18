@@ -2,6 +2,21 @@
 
 `tools/corpus-builder` compiles open linguistic datasets into a single normalized, read-only SQLite database (`daijishow.db`) shared identically across all platforms.
 
+> **Status snapshot.** The tables below are the **designed** schema; the
+> **current `daijishow.db`** ships a subset. As of the current build:
+> `entries` (~963k), `senses` (~998k), `kanji` (13,108), `kanji_edges`
+> (~384k), `kanji_radicals` (~33k), `idioms` (4,177), `sentences` (80,000) and
+> `sentence_index` (~193k) are populated. `collocations`, `keigo_ladders`, and
+> `idiom_triggers` exist in the schema but are **empty (0 rows)** in the current
+> ETL — the macOS UI guards them, so those sections simply render nothing until
+> the ETL fills them. Designed-but-not-yet-ingested sources (Wiktionary monolingual
+> *Kokugo* glosses, BCCWJ/Jiten split frequency ranks, NINJAL collocations) are
+> listed below as targets.
+>
+> **Licenses:** JMdict / JMnedict are **CC BY 4.0**; KANJIDIC2 is **CC BY-SA
+> 4.0**; KanjiVG and the Kanjium pitch accents are **Open Source**; Tatoeba
+> sentences are **CC BY 2.0**. The About window credits all of these.
+
 ---
 
 ## 1. Master Linguistic Source Stack
