@@ -5,6 +5,15 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+
+        // Adopt the app's own icon (bundled AppIcon.icns) so the Dock and the
+        // window controls show the Dai-Jishow mark instead of the generic
+        // executable icon. No-op when running the bare dev binary (no bundle).
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL) {
+            NSApp.applicationIconImage = icon
+        }
+
         NSApp.activate(ignoringOtherApps: true)
         NSApp.windows.first?.makeKeyAndOrderFront(nil)
     }
@@ -29,15 +38,31 @@ struct DaiJishowMacApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        // A single, non-tabbing window. `Window` (not `WindowGroup`) stops ⌘N
+        // from spawning mirror windows ("double vision") and removes the native
+        // tab bar — the engine is a single shared instance, so one window is
+        // all this app needs.
+        Window("Dai-Jishow", id: "main") {
             MainWorkspaceView(engine: engine)
                 .frame(minWidth: 1020, minHeight: 700)
                 .preferredColorScheme(.dark)
+                .sheet(isPresented: $engine.showAbout) {
+                    AboutView(engine: engine)
+                }
         }
         #if os(macOS)
         .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1320, height: 880)
         #endif
         .commands {
+            // Standard Mac "About" chrome — replace the empty default panel with
+            // our credits / source-license sheet.
+            CommandGroup(replacing: .appInfo) {
+                Button("About Dai-Jishow") {
+                    engine.showAbout = true
+                }
+            }
+
             CommandGroup(after: .toolbar) {
                 Button("Open Navigation Deck (Z-Stack)") {
                     withAnimation(.spring(response: 0.30, dampingFraction: 0.85)) {
@@ -88,7 +113,24 @@ struct DaiJishowMacApp: App {
                 }
                 .keyboardShortcut("]", modifiers: [.command])
                 .disabled(!engine.canGoForward)
+
+                Divider()
+
+                // ⌘⇧C is the Cockpit toggle, so "Copy Entry" takes ⌘⌥C instead.
+                // Native ⌘C still copies any text the user has selected.
+                Button("Copy Entry") {
+                    engine.copyActiveEntry()
+                }
+                .keyboardShortcut("c", modifiers: [.command, .option])
+                .disabled(engine.activeEntry == nil && engine.activeKanji == nil)
             }
+        }
+
+        // Preferences (⌘,). Shares the single engine instance, so edits apply
+        // live across the whole app.
+        Settings {
+            SettingsView(engine: engine)
+                .preferredColorScheme(.dark)
         }
     }
 
@@ -179,9 +221,6 @@ struct MainWorkspaceView: View {
         .preferredColorScheme(.dark)
         #if os(macOS)
         .onAppear {
-            NSApp.setActivationPolicy(.regular)
-            NSApp.activate(ignoringOtherApps: true)
-            NSApp.windows.first?.makeKeyAndOrderFront(nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                 isSearchFocused = true
             }
@@ -430,6 +469,11 @@ struct MainWorkspaceView: View {
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button("Copy") {
+                                        engine.copyText("\(hit.displayHeadword)  \(hit.kanaHead)  \(hit.primaryGloss)")
+                                    }
+                                }
                             }
                         }
                         .padding(8)

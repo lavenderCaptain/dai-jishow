@@ -1597,6 +1597,7 @@ struct WordCosmosView: View {
                 }
             }
             .padding(16)
+            .textSelection(.enabled)
         }
         .padding(.top, 64)   // clear the control bar
         .padding(.horizontal, 16)
@@ -1902,6 +1903,20 @@ struct WordEntryView: View {
             .padding(24)
             .frame(maxWidth: 1080)
             .frame(maxWidth: .infinity)
+            .textSelection(.enabled)
+            .contextMenu {
+                Button {
+                    engine.copyText(entry.copyText)
+                } label: {
+                    Label("Copy Entry", systemImage: "doc.on.doc")
+                }
+                Divider()
+                Button {
+                    engine.copyText(entry.header.displayHeadword)
+                } label: {
+                    Label("Copy Headword", systemImage: "text.cursor")
+                }
+            }
         }
         .onAppear {
             showAllSentences = false
@@ -3036,6 +3051,20 @@ struct KanjiDetailView: View {
                 }
             }
             .padding(28)
+            .textSelection(.enabled)
+            .contextMenu {
+                Button {
+                    engine.copyText(kanji.copyText)
+                } label: {
+                    Label("Copy Kanji", systemImage: "doc.on.doc")
+                }
+                Divider()
+                Button {
+                    engine.copyText(kanji.glyph)
+                } label: {
+                    Label("Copy Glyph", systemImage: "text.cursor")
+                }
+            }
         }
         .onAppear {
             animatedStrokeCount = kanji.strokePolylines.count

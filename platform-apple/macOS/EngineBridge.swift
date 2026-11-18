@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
 import DaiJishowCore
+#if os(macOS)
+import AppKit
+#endif
 
 struct WordHit: Identifiable, Hashable {
     let id: UInt32
@@ -77,6 +80,32 @@ struct EntryDetail {
 
     var hasJapaneseGlosses: Bool {
         senses.contains { !$0.jaGlosses.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// Plain-text rendering for the clipboard / "Copy Entry": headword with
+    /// kana and variant forms, followed by one line per sense (EN / JA).
+    var copyText: String {
+        var lines: [String] = []
+        var head = header.displayHeadword
+        if !header.kanaHead.isEmpty {
+            head += " (\(header.kanaHead))"
+        }
+        let variants = header.variantList
+        if !variants.isEmpty {
+            head += "  [\(variants.joined(separator: ", "))]"
+        }
+        lines.append(head)
+        for sense in senses {
+            var parts: [String] = []
+            let en = sense.enGlosses.trimmingCharacters(in: .whitespacesAndNewlines)
+            let ja = sense.jaGlosses.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !en.isEmpty { parts.append(en) }
+            if !ja.isEmpty { parts.append(ja) }
+            if !parts.isEmpty {
+                lines.append("• " + parts.joined(separator: " / "))
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -310,6 +339,32 @@ struct KanjiDetail {
             return "This glyph appears in vocabulary headwords (such as variant spellings or proper names) but has no standalone lexical entry in KANJIDIC2 or stroke diagram in KanjiVG."
         }
         return nil
+    }
+
+    /// Plain-text rendering for the clipboard / "Copy": glyph, Unicode codepoint,
+    /// metadata, readings, and meanings — matching what the Kanji Fisheye shows.
+    var copyText: String {
+        var lines: [String] = []
+        var meta: [String] = []
+        if strokes > 0 { meta.append("\(strokes) strokes") }
+        switch grade {
+        case 1...6: meta.append("G\(grade)")
+        case 8: meta.append("Jōyō")
+        case 9, 10: meta.append("Jinmei")
+        default: break
+        }
+        if jlpt > 0 { meta.append("N\(jlpt)") }
+        if freqRank > 0 { meta.append("freq #\(freqRank)") }
+        var head = glyph + "  " + unicodeHex
+        if !meta.isEmpty { head += "  (" + meta.joined(separator: ", ") + ")" }
+        lines.append(head)
+        if !onReadings.isEmpty { lines.append("On:  " + onReadings.joined(separator: " / ")) }
+        if !kunReadings.isEmpty { lines.append("Kun: " + kunReadings.joined(separator: " / ")) }
+        for meaning in meanings.split(whereSeparator: { $0 == ";" || $0 == "\n" }) {
+            let trimmed = meaning.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { lines.append("• " + trimmed) }
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -628,6 +683,9 @@ final class DaiJishowEngine: ObservableObject {
     @Published var recallMode: RecallMode = .full
     @Published var searchResults: [WordHit] = []
 
+    /// Drives the About / Credits sheet (standard Mac "About" chrome).
+    @Published var showAbout: Bool = false
+
     @Published var isWordCockpitExpanded: Bool {
         didSet {
             UserDefaults.standard.set(isWordCockpitExpanded, forKey: Self.cockpitDefaultsKey)
@@ -704,6 +762,33 @@ final class DaiJishowEngine: ObservableObject {
     var isReady: Bool { handle != nil }
     var canGoBack: Bool { historyIndex > 0 }
     var canGoForward: Bool { historyIndex + 1 < history.count }
+
+    // MARK: - Clipboard (copy / paste to the system pasteboard)
+
+    /// Copies `text` to the system clipboard. No-op on non-macOS targets.
+    func copyText(_ text: String) {
+        #if os(macOS)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        #endif
+    }
+
+    /// Copies the primary content of the active screen to the clipboard: the
+    /// active word entry if one is open, otherwise the active kanji. Returns
+    /// what was copied (nil if there is nothing on screen to copy).
+    @discardableResult
+    func copyActiveEntry() -> String? {
+        if let entry = activeEntry {
+            copyText(entry.copyText)
+            return entry.copyText
+        }
+        if let kanji = activeKanji {
+            copyText(kanji.copyText)
+            return kanji.copyText
+        }
+        return nil
+    }
 
     // MARK: - Word Cockpit Lexical Insights Builder (<1ms from Indexed Data)
 
