@@ -935,6 +935,34 @@ final class DaiJishowEngine: ObservableObject {
         return Color(hue: hue, saturation: saturation, brightness: brightness)
     }
 
+    /// Canonical JLPT level definitions (N5 easiest → N1 hardest), kept in one
+    /// place so the colour legend, the ranked-row JLPT chip, and the search
+    /// filter chips all explain *what a level means* — not merely which words
+    /// match a given level.
+    static func jlptLevelDescription(_ level: Int) -> String {
+        switch level {
+        case 5: return "Basic phrases, hiragana, katakana, simple kanji, and short, slow conversations."
+        case 4: return "Basic everyday Japanese — simple daily topics and slowly spoken conversations."
+        case 3: return "A bridge between basic and advanced Japanese, used in everyday situations."
+        case 2: return "Everyday Japanese across broader settings — clear articles and natural-speed speech."
+        case 1: return "Complex, abstract texts (editorials, critiques) and natural-speed speech across varied settings."
+        default: return "Kana-only — no JLPT level (the word has no head kanji)."
+        }
+    }
+
+    /// Short difficulty chips for a word's *derived* level, mirroring
+    /// `derivedGradeJlpt`: the JLPT is the hardest (smallest) head-kanji level,
+    /// the grade the highest. Both are nil for kana-only words, which have no
+    /// head kanji to derive a level or grade from. The catalog is loaded on
+    /// demand (cheap after the first call).
+    func derivedDifficultyChips(for word: WordHit) -> (jlptLevel: Int?, gradeLevel: Int?) {
+        ensureKanjiCatalogLoaded()
+        let d = derivedGradeJlpt(for: word)
+        let jlptLevel = (1...5).contains(d.hardestJlpt) ? d.hardestJlpt : nil
+        let gradeLevel = (1...10).contains(d.highestGrade) ? d.highestGrade : nil
+        return (jlptLevel, gradeLevel)
+    }
+
     /// A short label for the difficulty a difficulty-coloured bubble encodes, for
     /// the inspector ribbon / legend. Prevalence falls back to the tier label.
     func cosmosDifficultyLabel(for word: WordHit) -> String {

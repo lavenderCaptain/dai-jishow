@@ -1666,6 +1666,9 @@ struct WordCosmosView: View {
     @ViewBuilder
     private func rankedRow(word: WordHit, rank: Int) -> some View {
         let info = CosmosTierInfo.of(word)
+        // Derived JLPT / grade for this word (nil when it has no head kanji).
+        // Computed once per row; the catalog is loaded lazily on first use.
+        let chips = engine.derivedDifficultyChips(for: word)
         HStack(spacing: 12) {
             Text("#\(rank)")
                 .font(.caption.monospaced().weight(.bold))
@@ -1692,12 +1695,41 @@ struct WordCosmosView: View {
 
             Spacer()
 
-            Text("\(info.label) · \(info.rankStr)")
-                .font(.caption2.weight(.bold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(info.color.opacity(0.2)))
-                .foregroundStyle(info.color)
+            // Right-side difficulty chips: the corpus frequency tier (always),
+            // plus the derived JLPT level and grade when the word has a head
+            // kanji to derive them from. Each chip carries a tooltip, so the
+            // JLPT/grade colours stay self-documenting even in a dense list.
+            HStack(spacing: 6) {
+                Text("\(info.label) · \(info.rankStr)")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(info.color.opacity(0.2)))
+                    .foregroundStyle(info.color)
+                    .help("\(info.label) — corpus frequency rank \(info.rankStr).")
+
+                if let n = chips.jlptLevel {
+                    let jlptColor = DaiJishowEngine.cosmosJlptRamp(n)
+                    Text("N\(n)")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(jlptColor.opacity(0.22)))
+                        .foregroundStyle(jlptColor)
+                        .help("JLPT N\(n) — \(DaiJishowEngine.jlptLevelDescription(n)) (the word's hardest head kanji.)")
+                }
+
+                if let g = chips.gradeLevel {
+                    let gradeColor = DaiJishowEngine.cosmosGradeRamp(g)
+                    Text("G\(g)")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(gradeColor.opacity(0.22)))
+                        .foregroundStyle(gradeColor)
+                        .help("Grade \(g) — the school year the word's hardest head kanji is typically taught.")
+                }
+            }
 
             Button {
                 withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
@@ -1898,33 +1930,33 @@ struct WordCosmosView: View {
         case .jlpt:
             HStack(spacing: 10) {
                 legendDot(color: DaiJishowEngine.cosmosJlptRamp(5), label: "N5",
-                          help: "JLPT N5 — easiest band; the word's hardest head kanji is N5-level.")
+                          help: "JLPT N5 — \(DaiJishowEngine.jlptLevelDescription(5))")
                 legendDot(color: DaiJishowEngine.cosmosJlptRamp(4), label: "N4",
-                          help: "JLPT N4 — the word's hardest head kanji is N4-level.")
+                          help: "JLPT N4 — \(DaiJishowEngine.jlptLevelDescription(4))")
                 legendDot(color: DaiJishowEngine.cosmosJlptRamp(3), label: "N3",
-                          help: "JLPT N3 — the word's hardest head kanji is N3-level.")
+                          help: "JLPT N3 — \(DaiJishowEngine.jlptLevelDescription(3))")
                 legendDot(color: DaiJishowEngine.cosmosJlptRamp(2), label: "N2",
-                          help: "JLPT N2 — the word's hardest head kanji is N2-level.")
+                          help: "JLPT N2 — \(DaiJishowEngine.jlptLevelDescription(2))")
                 legendDot(color: DaiJishowEngine.cosmosJlptRamp(1), label: "N1",
-                          help: "JLPT N1 — hardest band; the word's hardest head kanji is N1-level.")
+                          help: "JLPT N1 — \(DaiJishowEngine.jlptLevelDescription(1))")
                 legendDot(color: Color(white: 0.62), label: "Kana",
                           help: "Kana-only words (no head kanji) carry a neutral dot — they have no JLPT band.")
             }
-            .help("Bubble colours by JLPT level (green→red, N5→N1) from each word's hardest head kanji. Hover any dot for its meaning — the labels hide when the window is narrow.")
+            .help("Bubble colours by JLPT level (green→red, N5→N1) from each word's hardest head kanji. Hover any dot for what that level covers — the labels hide when the window is narrow.")
         case .grade:
             HStack(spacing: 9) {
                 legendDot(color: DaiJishowEngine.cosmosGradeRamp(1), label: "G1",
-                          help: "Grade 1 — most difficult band; the word's hardest head kanji is grade 1.")
+                          help: "Grade 1 — the earliest band; the word's hardest head kanji is taught in 1st grade of elementary school (小学 1年生), i.e. the most basic kanji.")
                 legendDot(color: DaiJishowEngine.cosmosGradeRamp(4), label: "G4",
-                          help: "Grade 4 — mid band by head-kanji study grade.")
+                          help: "Grade 4 — a mid band by the school year the head kanji is first taught.")
                 legendDot(color: DaiJishowEngine.cosmosGradeRamp(7), label: "G7",
-                          help: "Grade 7 — easier band by head-kanji study grade.")
+                          help: "Grade 7 — a later band; in KANJIDIC2 grade 7 marks high-school (高校) kanji.")
                 legendDot(color: DaiJishowEngine.cosmosGradeRamp(10), label: "G10",
-                          help: "Grade 10 — easiest band; the word's hardest head kanji is grade 10.")
+                          help: "Grade 10 — the latest band; the word's hardest head kanji is taught well into school (grades 8–10 are Jōyō/Jinmeiyō/variant, not a single year).")
                 legendDot(color: Color(white: 0.55), label: "Kana",
                           help: "Kana-only words (no head kanji) carry a neutral dot — they have no grade.")
             }
-            .help("Bubble colours by head-kanji study grade (light→deep slate, G1→G10). Hover any dot for its meaning — the labels hide when the window is narrow.")
+            .help("Bubble colours by head-kanji study grade (light→deep slate, G1→G10): earlier grades (G1, light) are the most basic kanji, later grades (G10, deep) the most advanced. Hover any dot for its meaning — the labels hide when the window is narrow.")
         }
     }
 

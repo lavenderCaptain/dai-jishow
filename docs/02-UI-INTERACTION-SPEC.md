@@ -157,7 +157,14 @@ vision, no tab bar). Layout:
 
 ### 6.4 Navigation, Feedback & Packaging
 * **Z-Stack deck** (⌘\\) scrubs the lookup trail; **Word Cloud** (⌘⇧W) is a
-  randomized prevalence bubble cloud whose bubbles can be **tinted by difficulty** — a **Color** control (the control bar) switches between **Prevalence** (the frequency tiers), **JLPT** (a green→red N5…N1 ramp from the word's hardest head-kanji level), and **Grade** (a light→deep slate ramp from its highest head-kanji grade; kana-only words get a neutral dot); ⌘⇧C toggles the **Detailed** view.
+  randomized prevalence bubble cloud whose bubbles can be **tinted by difficulty** — a **Color** control (the control bar) switches between **Prevalence** (the frequency tiers), **JLPT** (a green→red N5…N1 ramp from the word's hardest head-kanji level), and **Grade** (a light→deep slate ramp from its highest head-kanji grade; kana-only words get a neutral dot); ⌘⇧C toggles the **Detailed** view. In the **ranked** layout each row carries the frequency-tier chip *plus* a **JLPT** chip and a **grade** chip (when the word has a head kanji to derive them from), each self-documenting via tooltip.
+* **JLPT / grade guidance:** the JLPT legend, the ranked-row JLPT chip, and the
+  JLPT search-filter chips all draw from one canonical source
+  (`jlptLevelDescription(_:)` — N5 basic kana/short conversations → N1 abstract
+  editorials/critiques), so every surface agrees on *what a level means*, not
+  just which words match. The grade ramp runs **G1 (earliest, most basic) → G10
+  (latest, most advanced)** — grades 7–10 mark high-school / Jōyō / Jinmeiyō /
+  variant kanji rather than a single school year.
 * **Window behaviour** (the title bar is hidden, so the usual affordances are
   re-installed by a transparent top-bar handle — `WindowZoomHandle` /
   `WindowFrameCoordinator`): **drag** the window from its empty top bar;
