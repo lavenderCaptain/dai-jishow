@@ -92,6 +92,7 @@ struct RubyWordView: View {
 struct ZStackHistoryOverlay: View {
     @ObservedObject var engine: DaiJishowEngine
     @State private var dragDelta: CGFloat = 0
+    @FocusState private var deckFocused: Bool
 
     private let baseCardWidth: CGFloat = 860
     private let baseCardHeight: CGFloat = 540
@@ -275,6 +276,43 @@ struct ZStackHistoryOverlay: View {
                     .padding(.bottom, 22)
                 }
             }
+        }
+        // The deck must own keyboard focus to receive ← / → / Enter / Esc. When it
+        // is not the first responder, key events are dropped (or stolen by the
+        // omni-search field editor behind it), so nothing works. Grab focus on appear.
+        .focusable()
+        .focused($deckFocused)
+        .onAppear {
+            deckFocused = true
+            // Belt-and-suspenders: the window may not be key on first appear, so
+            // retry a beat later to reliably make the deck first responder.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                deckFocused = true
+            }
+        }
+        .onKeyPress(.escape) {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                engine.isZStackOpen = false
+            }
+            return .handled
+        }
+        .onKeyPress(.leftArrow) {
+            withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
+                engine.stepZStack(by: -1)
+            }
+            return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
+                engine.stepZStack(by: 1)
+            }
+            return .handled
+        }
+        .onKeyPress(.return) {
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.85)) {
+                engine.jumpToHistory(index: engine.zStackFocusedIndex)
+            }
+            return .handled
         }
     }
 }
@@ -553,7 +591,7 @@ private struct ZStackScreenSnapshotCard: View {
         case .kanjiLookup(let mode, let strokeCount, let sortOrder, let results):
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 12) {
-                    Text("Wordtank Kanji Index")
+                    Text("Kanji Index")
                         .font(.title2.weight(.bold))
                     Text("• \(mode.rawValue) • \(sortOrder.rawValue)")
                         .font(.headline)
@@ -907,6 +945,7 @@ struct FisheyeGraphView: View {
                                 .background(Capsule().fill(.ultraThinMaterial))
                         }
                         .menuStyle(.borderlessButton)
+                        .help("Top-N per side — how many neighbor kanji to show on each side of the center kanji. More = fuller graph; fewer = calmer view.")
 
                         Button {
                             engine.showFisheyePercentages.toggle()
@@ -918,13 +957,17 @@ struct FisheyeGraphView: View {
                                 .background(Capsule().fill(engine.showFisheyePercentages ? Color.accentColor.opacity(0.25) : Color.white.opacity(0.08)))
                         }
                         .buttonStyle(.plain)
-
-                        Spacer()
+                        .help("Toggle % Share — show each node's share of the center kanji's compound frequency in addiotn to its commonality tier color.")
 
                         HStack(spacing: 12) {
-                            legendDot(color: Color(red: 0.22, green: 0.74, blue: 0.97), label: "Core")
-                            legendDot(color: Color(red: 0.20, green: 0.83, blue: 0.60), label: "Jōyō")
-                            legendDot(color: Color(red: 0.98, green: 0.75, blue: 0.14), label: "Literary")
+                            legendDot(color: Color(red: 0.22, green: 0.74, blue: 0.97), label: "Core",
+                                      help: "Core kanji — overall frequency rank ≤ 2,500. The most common characters, enlarged most in the fisheye view.")
+                            legendDot(color: Color(red: 0.20, green: 0.83, blue: 0.60), label: "Jōyō",
+                                      help: "Jōyō kanji — overall frequency rank ≤ 12,000. Common modern-use characters.")
+                            legendDot(color: Color(red: 0.98, green: 0.75, blue: 0.14), label: "Literary",
+                                      help: "Literary kanji — overall frequency rank > 12,000. Rarer, more literary or classical characters.")
+                            legendDot(color: Color(red: 0.65, green: 0.55, blue: 0.98), label: "Kyūjitai",
+                                      help: "Kyūjitai / non-Jōyō — ungraded (legacy old-form) characters. Drawn at reduced emphasis.")
                         }
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 12)
@@ -1220,11 +1263,12 @@ struct FisheyeGraphView: View {
         }
     }
 
-    private func legendDot(color: Color, label: String) -> some View {
+    private func legendDot(color: Color, label: String, help: String? = nil) -> some View {
         HStack(spacing: 4) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(label).foregroundStyle(.secondary)
         }
+        .help(help ?? "")
     }
 }
 
@@ -1519,7 +1563,6 @@ struct WordCosmosView: View {
         }
         .shadow(color: b.color.opacity(isActive ? 0.5 : 0.14), radius: isActive ? 12 : 6)
         .contentShape(Circle())
-        .scaleEffect(lensScale, anchor: .center)
         // Single tap → Word Cockpit; double tap → pivot into Kanji Fisheye.
         .onTapGesture {
             withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
@@ -1559,7 +1602,7 @@ struct WordCosmosView: View {
             Image(systemName: "sparkles")
                 .font(.system(size: 44, weight: .thin))
                 .foregroundStyle(.secondary)
-            Text("The cosmos is empty")
+            Text("The cloud is empty")
                 .font(.title2.weight(.semibold))
             Text("Roll the dice to summon a randomized cloud of words")
                 .font(.subheadline)
@@ -1700,7 +1743,7 @@ struct WordCosmosView: View {
 
             Picker("View", selection: $engine.wordCosmosMode) {
                 ForEach(WordCosmosMode.allCases) { m in
-                    Text(m == .cosmos ? "Cosmos" : "Ranked").tag(m)
+                    Text(m == .cosmos ? "Cloud" : "Ranked").tag(m)
                 }
             }
             .pickerStyle(.segmented)
@@ -1760,6 +1803,7 @@ struct WordCosmosView: View {
             Spacer()
 
             HStack(spacing: 10) {
+                legendDot(color: Color.purple, label: "Names")
                 legendDot(color: Color(red: 0.22, green: 0.74, blue: 0.97), label: "Core")
                 legendDot(color: Color(red: 0.20, green: 0.83, blue: 0.60), label: "Jōyō")
                 legendDot(color: Color(red: 0.98, green: 0.75, blue: 0.14), label: "Std")
@@ -1803,7 +1847,7 @@ struct WordCosmosView: View {
                                     .foregroundStyle(info.color)
                             }
                             if engine.recallMode != .hideGloss {
-                                Text(word.primaryGloss.isEmpty ? "Tap to open the Word Cockpit" : word.primaryGloss)
+                                Text(word.primaryGloss.isEmpty ? "Tap to open the Detailed view" : word.primaryGloss)
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -1815,7 +1859,7 @@ struct WordCosmosView: View {
                                 engine.openWordFromCosmos(word)
                             }
                         } label: {
-                            Label("Word Cockpit", systemImage: "book.fill")
+                            Label("Detailed", systemImage: "book.fill")
                                 .font(.subheadline.weight(.semibold))
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 7)
@@ -1844,7 +1888,7 @@ struct WordCosmosView: View {
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
-                Text("Hover a bubble to preview · click to open the Word Cockpit · double-click a kanji word to pivot into its Kanji Fisheye")
+                Text("Hover a bubble to preview · click to open the Detailed view · double-click a kanji word to pivot into its Kanji Fisheye")
                     .font(.subheadline)
                     .foregroundStyle(Color.white.opacity(0.65))
                     .padding(.horizontal, 16)
@@ -1894,6 +1938,35 @@ struct WordEntryView: View {
 
     private var activeSentences: [SentenceItem] {
         entry.sentences.isEmpty ? insights.fallbackSentences : entry.sentences
+    }
+
+    /// The headline meaning — the most-common sense's gloss — shown at the top of
+    /// the hero card beside the headword. Respects the gloss-language picker
+    /// (EN / 国語 / Both) and is hidden in Hide-Gloss recall mode so the
+    /// self-quiz stays honest. The full sense list stays in the Definitions pill.
+    private var primaryTranslation: String? {
+        guard engine.recallMode != .hideGloss else { return nil }
+        let mode = engine.glossLanguageMode
+        let showEn = (mode == .english || mode == .both || !entry.hasJapaneseGlosses)
+        let showJa = (mode == .japanese || mode == .both)
+        var parts: [String] = []
+        if let first = entry.senses.first {
+            if showEn {
+                let en = first.enGlosses.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !en.isEmpty { parts.append(en) }
+            }
+            if showJa {
+                let ja = first.jaGlosses.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !ja.isEmpty { parts.append(ja) }
+            }
+        }
+        if parts.isEmpty {
+            // No glosses on the leading sense in this language — fall back to the
+            // index's compact primary gloss so the headline is never blank.
+            let fallback = entry.header.primaryGloss.trimmingCharacters(in: .whitespacesAndNewlines)
+            return fallback.isEmpty ? nil : fallback
+        }
+        return parts.joined(separator: " · ")
     }
 
     var body: some View {
@@ -1946,28 +2019,41 @@ struct WordEntryView: View {
         LiquidGlassCard(cornerRadius: 22) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 16) {
-                    RubyWordView(
-                        cells: entry.rubyCells,
-                        hideKana: engine.recallMode == .hideKana,
-                        fontSize: 48
-                    ) { cp in
-                        engine.openKanjiDetail(codepoint: cp)
+                    // Kanji + its headline meaning, level with each other.
+                    HStack(alignment: .center, spacing: 16) {
+                        RubyWordView(
+                            cells: entry.rubyCells,
+                            hideKana: engine.recallMode == .hideKana,
+                            fontSize: 48
+                        ) { cp in
+                            engine.openKanjiDetail(codepoint: cp)
+                        }
+
+                        if let primary = primaryTranslation {
+                            Text(primary)
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: 460, alignment: .leading)
+                                .help("Primary meaning — the most common sense. See every sense in the Definitions card below.")
+                        }
                     }
 
                     Spacer(minLength: 12)
 
                     VStack(alignment: .trailing, spacing: 8) {
                         HStack(spacing: 8) {
-                            // Reader vs. Cockpit Toggle (Persisted in UserDefaults)
+                            // Reader vs. Detailed Toggle (Persisted in UserDefaults)
                             Picker("View Mode", selection: $engine.isWordCockpitExpanded) {
                                 Label("Reader", systemImage: "doc.plaintext")
                                     .tag(false)
-                                Label("Cockpit", systemImage: "rectangle.3.group.fill")
+                                Label("Detailed", systemImage: "rectangle.3.group.fill")
                                     .tag(true)
                             }
                             .pickerStyle(.segmented)
                             .frame(width: 196)
-                            .help("Reader shows just the definitions; Cockpit reveals the full analysis dashboard (homonyms, compounds, collocations, conjugations, …).")
+                            .help("Reader shows just the definitions; Detailed reveals the full analysis dashboard (homonyms, compounds, collocations, conjugations, …).")
 
                             if entry.hasJapaneseGlosses {
                                 Picker("Gloss Language", selection: $engine.glossLanguageMode) {
@@ -2129,75 +2215,73 @@ struct WordEntryView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(insights.kanjiDNA) { k in
-                            Button {
-                                engine.openKanjiDetail(codepoint: k.codepoint)
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Text(k.glyph)
-                                        .font(.system(size: 36, weight: .bold))
-                                        .frame(width: 54, height: 54)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                                .fill(Color.white.opacity(0.08))
-                                        )
+                WrappingHStack(alignment: .top, horizontalSpacing: 12, verticalSpacing: 12) {
+                    ForEach(insights.kanjiDNA) { k in
+                        Button {
+                            engine.openKanjiDetail(codepoint: k.codepoint)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text(k.glyph)
+                                    .font(.system(size: 36, weight: .bold))
+                                    .frame(width: 54, height: 54)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(Color.white.opacity(0.08))
+                                    )
 
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        HStack(spacing: 6) {
-                                            Text(k.meanings.split(separator: ";").first.map(String.init) ?? "Kanji")
-                                                .font(.subheadline.weight(.bold))
-                                                .lineLimit(1)
-                                            if k.strokes > 0 {
-                                                Text("\(k.strokes)画")
-                                                    .font(.caption2.weight(.semibold))
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                            if !k.jlptLabel.isEmpty {
-                                                Text(k.jlptLabel)
-                                                    .font(.caption2.weight(.bold))
-                                                    .foregroundStyle(.cyan)
-                                            }
-                                            if k.isJukujikun {
-                                                Text("熟字訓")
-                                                    .font(.caption2.weight(.bold))
-                                                    .padding(.horizontal, 6)
-                                                    .padding(.vertical, 1)
-                                                    .background(Capsule().fill(Color.orange.opacity(0.22)))
-                                                    .foregroundStyle(.orange)
-                                            }
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 6) {
+                                        Text(k.meanings.split(separator: ";").first.map(String.init) ?? "Kanji")
+                                            .font(.subheadline.weight(.bold))
+                                            .lineLimit(1)
+                                        if k.strokes > 0 {
+                                            Text("\(k.strokes)画")
+                                                .font(.caption2.weight(.semibold))
+                                                .foregroundStyle(.secondary)
                                         }
-
-                                        if !k.onReadings.isEmpty {
-                                            readingTokenRow(
-                                                label: "音",
-                                                tokens: k.onReadings.prefix(4).map { $0 },
-                                                matchedNormalized: k.matchedReadingNormalized
-                                            )
+                                        if !k.jlptLabel.isEmpty {
+                                            Text(k.jlptLabel)
+                                                .font(.caption2.weight(.bold))
+                                                .foregroundStyle(.cyan)
                                         }
-                                        if !k.kunReadings.isEmpty {
-                                            readingTokenRow(
-                                                label: "訓",
-                                                tokens: k.kunReadings.prefix(4).map { $0 },
-                                                matchedNormalized: k.matchedReadingNormalized
-                                            )
+                                        if k.isJukujikun {
+                                            Text("熟字訓")
+                                                .font(.caption2.weight(.bold))
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 1)
+                                                .background(Capsule().fill(Color.orange.opacity(0.22)))
+                                                .foregroundStyle(.orange)
                                         }
                                     }
-                                }
-                                .padding(12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .fill(Color.white.opacity(0.05))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+
+                                    if !k.onReadings.isEmpty {
+                                        readingTokenRow(
+                                            label: "音",
+                                            tokens: k.onReadings.prefix(4).map { $0 },
+                                            matchedNormalized: k.matchedReadingNormalized
                                         )
-                                )
+                                    }
+                                    if !k.kunReadings.isEmpty {
+                                        readingTokenRow(
+                                            label: "訓",
+                                            tokens: k.kunReadings.prefix(4).map { $0 },
+                                            matchedNormalized: k.matchedReadingNormalized
+                                        )
+                                    }
+                                }
                             }
-                            .buttonStyle(.plain)
-                            .help("Open \(k.glyph) — \(k.meanings.split(separator: ";").first.map(String.init) ?? "kanji")")
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(Color.white.opacity(0.05))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                                    )
+                            )
                         }
+                        .buttonStyle(.plain)
+                        .help("Open \(k.glyph) — \(k.meanings.split(separator: ";").first.map(String.init) ?? "kanji")")
                     }
                 }
             }
@@ -3347,19 +3431,27 @@ struct RadicalBuilderView: View {
                         }
 
                         if engine.radicalTargetStrokes > 0 {
-                            Picker("Tolerance", selection: $engine.radicalStrokeTolerance) {
-                                Text("Exact").tag(Int8(0))
-                                Text("±1").tag(Int8(1))
-                                Text("±2").tag(Int8(2))
-                            }
-                            .pickerStyle(.segmented)
-                            .frame(width: 130)
-                            .onChange(of: engine.radicalStrokeTolerance) { _, newTol in
-                                engine.searchRadicals(
-                                    selectedIds: engine.radicalSelectedIds,
-                                    targetStrokes: Int16(engine.radicalTargetStrokes),
-                                    tolerance: newTol
-                                )
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Tolerance")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize()
+                                Picker("", selection: $engine.radicalStrokeTolerance) {
+                                    Text("Exact").tag(Int8(0))
+                                    Text("±1").tag(Int8(1))
+                                    Text("±2").tag(Int8(2))
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                                .fixedSize(horizontal: true, vertical: false)
+                                .frame(minWidth: 120, alignment: .center)
+                                .onChange(of: engine.radicalStrokeTolerance) { _, newTol in
+                                    engine.searchRadicals(
+                                        selectedIds: engine.radicalSelectedIds,
+                                        targetStrokes: Int16(engine.radicalTargetStrokes),
+                                        tolerance: newTol
+                                    )
+                                }
                             }
                         }
                     }
@@ -3562,7 +3654,7 @@ struct RadicalBuilderView: View {
     }
 }
 
-// MARK: - Wordtank Multi-Mode Kanji Lookup View
+// MARK: - Multi-Mode Kanji Lookup View
 
 struct KanjiLookupView: View {
     @ObservedObject var engine: DaiJishowEngine

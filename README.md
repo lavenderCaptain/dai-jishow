@@ -18,8 +18,8 @@ one glass surface that reframes as you drill in.
 - **Word entry** — headword + ruby, a **Tokyo pitch-accent contour**, telemetry
   pills (corpus frequency tier, JLPT, grade, stroke count), a corpus-frequency
   meter, and "also written as" variant chips.
-- **Reader / Cockpit modes** — *Reader* shows just the definitions; *Cockpit*
-  reveals the full analysis dashboard: **Kanji DNA** strip, **Definitions**
+- **Reader / Detailed modes** — *Reader* shows just the definitions; *Detailed*
+  reveals the full analysis dashboard: a wrapping **Kanji DNA** strip, **Definitions**
   (POS-tagged senses), a **自他 pair** banner, **Homonyms** (同音異義語),
   **Word Family** (prefix/suffix compounds), **Corpus Collocations**,
   **Example Sentences**, and a **conjugation matrix** for verbs/adjectives.
@@ -29,8 +29,10 @@ one glass surface that reframes as you drill in.
   a display-mode switch: **Prevalence** (most-common-first) / **Starts** /
   **Ends**.
 - **Dokusha Spatial Fisheye** — prefix neighbors on the left, suffix neighbors on
-  the right, weighted by compound frequency/PMI; **Word Cosmos** is a randomized
-  prevalence bubble cloud over the same graph.
+  the right, weighted by compound frequency/PMI, with a **tier legend** (Core /
+  Jōyō / Literary / Kyūjitai); the **Word Cloud** is a randomized prevalence
+  bubble cloud over the same graph, with its own **tier legend** (Names / Core /
+  Jōyō / Std / Lit).
 - **Z-Stack navigation** — every lookup pushes a glass frame forward; the history
   deck (⌘\\) scrubs the trail.
 - **Recall modes** — *Full / Hide Kana / Hide Gloss* for self-quizzing.
@@ -52,7 +54,7 @@ idiom triggers) exist in the schema but are not yet populated by the ETL.
 ## Design Philosophy
 
 1. **Zero Framework Bloat:** Inspired by classic dedicated electronic dictionaries
-   (Canon WordTank) and Palm OS utilities (Dokusha v1.5), the core engine,
+   and Palm OS utilities (Dokusha v1.5), the core engine,
    morphological path, graph solver, and state machine live in pure **C++20**
    exposed via a flat **C11 ABI (`dj_capi.h`)**. No Electron, no web views, and
    a tiny active footprint via read-only memory-mapped SQLite (`mmap`).

@@ -105,7 +105,7 @@ struct AboutView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(appName)
                         .font(.largeTitle.weight(.bold))
-                    Text("日本語辞書 · a Japanese dictionary & study cockpit")
+                    Text("日本語辞書 · a Japanese dictionary & study dashboard")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Text(appVersion)
@@ -117,7 +117,7 @@ struct AboutView: View {
 
             Divider()
 
-            Text("Dai-Jishow fuses an offline Japanese lexicon — headwords, kanji, pitch accent, and real-world example sentences — into a single fisheye-driven study cockpit. The corpus below is built entirely from open linguistic datasets; their licenses are honoured in full.")
+            Text("Dai-Jishow fuses an offline Japanese lexicon — headwords, kanji, pitch accent, and real-world example sentences — into a single fisheye-driven study dashboard. The corpus below is built entirely from open linguistic datasets; their licenses are honoured in full.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -252,7 +252,7 @@ struct SettingsView: View {
                 .help("Toggle kana and/or glosses for self-quiz recall.")
 
                 Toggle("Include proper names in search", isOn: $engine.includeNames)
-                Toggle("Expand Word Cockpit (full dashboard)", isOn: $engine.isWordCockpitExpanded)
+                Toggle("Expand Detailed View (full dashboard)", isOn: $engine.isWordCockpitExpanded)
             }
 
             Section("Kanji Fisheye") {

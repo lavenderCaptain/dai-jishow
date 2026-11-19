@@ -75,7 +75,7 @@ struct DaiJishowMacApp: App {
                 }
                 .keyboardShortcut("\\", modifiers: [.command])
 
-                Button("Toggle Word Cockpit / Reader Mode") {
+                Button("Toggle Detailed / Reader Mode") {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         engine.isWordCockpitExpanded.toggle()
                     }
@@ -83,7 +83,7 @@ struct DaiJishowMacApp: App {
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(engine.activeScreen != .wordEntry)
 
-                Button("Open Kanji Index (Wordtank)") {
+                Button("Open Kanji Index") {
                     engine.openKanjiLookup()
                 }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
@@ -93,7 +93,7 @@ struct DaiJishowMacApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
 
-                Button("Open Word Cosmos") {
+                Button("Open Word Cloud") {
                     withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
                         engine.openWordCosmos()
                     }
@@ -142,8 +142,7 @@ struct DaiJishowMacApp: App {
             "daijishow.db",
             "build/daijishow.db",
             "../data/daijishow.db",
-            "../../data/daijishow.db",
-            "/Users/andrew/Code/DaiJiShow/data/daijishow.db"
+            "../../data/daijishow.db"
         ]
         for path in candidates where FileManager.default.fileExists(atPath: path) {
             return path
@@ -224,6 +223,13 @@ struct MainWorkspaceView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                 isSearchFocused = true
             }
+        }
+        // The omni-search field's field editor swallows the Escape key while it
+        // holds focus, so the Navigation Deck's ⌘\ / arrow handlers never see it.
+        // Release search focus while the deck is open (so Esc / ← / → / Enter reach
+        // the deck below), and return focus to the search field when it closes.
+        .onChange(of: engine.isZStackOpen) { _, isOpen in
+            isSearchFocused = !isOpen
         }
         .onKeyPress(.escape) {
             if engine.isZStackOpen {
@@ -381,14 +387,14 @@ struct MainWorkspaceView: View {
             Button {
                 engine.openWordCosmos()
             } label: {
-                Label("Word Cosmos", systemImage: "sparkles")
+                Label("Word Cloud", systemImage: "sparkles")
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .background(Capsule().fill(engine.activeScreen == .wordCosmos ? Color.accentColor : Color.white.opacity(0.10)))
             }
             .buttonStyle(.plain)
-            .help("Open the Word Cosmos — a randomized prevalence bubble cloud (⌘⇧W)")
+            .help("Open the Word Cloud — a randomized prevalence bubble cloud (⌘⇧W)")
 
             Toggle("Names", isOn: $engine.includeNames)
                 .toggleStyle(.switch)
@@ -439,59 +445,23 @@ struct MainWorkspaceView: View {
         VStack {
             HStack {
                 LiquidGlassCard(cornerRadius: 18, highlightOpacity: 0.35) {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(engine.searchResults) { hit in
-                                Button {
-                                    engine.openWordEntry(entryId: hit.id)
-                                    engine.searchResults = []
-                                    isSearchFocused = false
-                                } label: {
-                                    HStack(spacing: 12) {
-                                        Text(hit.displayHeadword)
-                                            .font(.title3.weight(.bold))
-                                            .frame(minWidth: 74, alignment: .leading)
-
-                                        if engine.recallMode != .hideKana {
-                                            Text(hit.kanaHead)
-                                                .font(.subheadline)
-                                                .foregroundStyle(Color.accentColor)
-                                                .frame(minWidth: 86, alignment: .leading)
-                                        }
-
-                                        if engine.recallMode != .hideGloss {
-                                            Text(hit.primaryGloss)
-                                                .font(.subheadline)
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(1)
-                                        }
-
-                                        Spacer()
-
-                                        if hit.isName {
-                                            Text("Name")
-                                                .font(.caption2.weight(.semibold))
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(Capsule().fill(Color.purple.opacity(0.25)))
-                                                .foregroundStyle(.purple)
-                                        }
-                                    }
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 9)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .contextMenu {
-                                    Button("Copy") {
-                                        engine.copyText("\(hit.displayHeadword)  \(hit.kanaHead)  \(hit.primaryGloss)")
+                    VStack(spacing: 0) {
+                        filterChipRow
+                        Divider().opacity(0.4)
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 2) {
+                                if engine.filteredSearchResults.isEmpty {
+                                    noFilterMatchRow
+                                } else {
+                                    ForEach(engine.filteredSearchResults) { hit in
+                                        searchResultRow(for: hit)
                                     }
                                 }
                             }
+                            .padding(8)
                         }
-                        .padding(8)
+                        .frame(maxWidth: 640, maxHeight: 420)
                     }
-                    .frame(maxWidth: 640, maxHeight: 420)
                 }
                 .padding(.leading, 118)
                 Spacer()
@@ -499,6 +469,127 @@ struct MainWorkspaceView: View {
             Spacer()
         }
         .padding(.top, 4)
+    }
+
+    // MARK: - Search result row + quick-filter chips
+
+    private func searchResultRow(for hit: WordHit) -> some View {
+        Button {
+            engine.openWordEntry(entryId: hit.id)
+            engine.searchResults = []
+            isSearchFocused = false
+        } label: {
+            HStack(spacing: 12) {
+                Text(hit.displayHeadword)
+                    .font(.title3.weight(.bold))
+                    .frame(minWidth: 74, alignment: .leading)
+
+                if engine.recallMode != .hideKana {
+                    Text(hit.kanaHead)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.accentColor)
+                        .frame(minWidth: 86, alignment: .leading)
+                }
+
+                if engine.recallMode != .hideGloss {
+                    Text(hit.primaryGloss)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                if hit.isName {
+                    Text("Name")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.purple.opacity(0.25)))
+                        .foregroundStyle(.purple)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Copy") {
+                engine.copyText("\(hit.displayHeadword)  \(hit.kanaHead)  \(hit.primaryGloss)")
+            }
+        }
+    }
+
+    private var filterChipRow: some View {
+        WrappingHStack(alignment: .top, horizontalSpacing: 6, verticalSpacing: 6) {
+            ForEach(SearchFilter.allCases) { filter in
+                let active = engine.searchFilters.contains(filter)
+                let tint = filter.tint
+                Button {
+                    engine.toggleSearchFilter(filter)
+                } label: {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(tint)
+                            .frame(width: 7, height: 7)
+                        Text(filter.rawValue)
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule().fill(active ? tint : tint.opacity(0.13))
+                    )
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(tint.opacity(active ? 0.55 : 0.28), lineWidth: 1)
+                    )
+                    .foregroundStyle(active ? .white : tint)
+                    .help(searchFilterTooltip(for: filter))
+                }
+                .buttonStyle(.plain)
+            }
+            if !engine.searchFilters.isEmpty {
+                Button {
+                    engine.searchFilters = []
+                } label: {
+                    Label("Clear", systemImage: "xmark.circle")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private var noFilterMatchRow: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+            Text("No results match these filters.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text("Try removing a chip, or clear filters.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+    }
+
+    private func searchFilterTooltip(for filter: SearchFilter) -> String {
+        switch filter {
+        case .common:     return "Common only — overall frequency rank ≤ 12,000 (Jōyō-grade words)."
+        case .nouns:      return "Nouns."
+        case .verbs:      return "Verbs — ichidan, godan, and other verb forms."
+        case .adjectives: return "Adjectives — i- (keiyoushi) and na- (keiyogo / adjectival nouns)."
+        case .adverbs:    return "Adverbs."
+        case .particles:  return "Particles."
+        }
     }
 
     private var databaseMissingBanner: some View {

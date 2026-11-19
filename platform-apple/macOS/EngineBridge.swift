@@ -40,6 +40,60 @@ struct WordHit: Identifiable, Hashable {
         }
         return nil
     }
+
+    /// Whether this hit satisfies a single quick filter (see `SearchFilter`).
+    func matches(_ filter: SearchFilter) -> Bool {
+        switch filter {
+        case .common:
+            // "Common" = an overall frequency rank within the Jōyō band. A rank of
+            // 0 means "no frequency data", which is *not* common.
+            return freqRank > 0 && freqRank <= SearchFilter.commonFreqThreshold
+        default:
+            return (posMask & filter.posBits) != 0
+        }
+    }
+}
+
+/// Quick filters for the omni-search results dropdown. Applied client-side to the
+/// in-memory `searchResults` so a large result set can be narrowed instantly,
+/// without re-querying the lexicon. POS bits mirror the corpus builder's
+/// `POS_BITS` table (tools/corpus-builder/build_corpus.py).
+enum SearchFilter: String, CaseIterable, Identifiable, Hashable {
+    case common = "Common"
+    case nouns = "Nouns"
+    case verbs = "Verbs"
+    case adjectives = "Adjectives"
+    case adverbs = "Adverbs"
+    case particles = "Particles"
+
+    var id: String { rawValue }
+
+    /// POS bitmask this filter matches (0 ⇒ not a POS filter, e.g. `.common`).
+    var posBits: UInt64 {
+        switch self {
+        case .nouns:      return 1 << 0          // n
+        case .verbs:      return (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) // v1 v5 vs vt vi
+        case .adjectives: return (1 << 6) | (1 << 7)   // adj-i (keiyoushi) + adj-na (keiyogo)
+        case .adverbs:    return 1 << 8          // adv
+        case .particles:  return 1 << 10         // prt
+        case .common:     return 0
+        }
+    }
+
+    /// Jōyō frequency threshold: a "common" word has an overall rank ≤ 12,000.
+    static let commonFreqThreshold: UInt32 = 12_000
+
+    /// Distinct tint per filter, so the chip row reads as a colour-coded legend.
+    var tint: Color {
+        switch self {
+        case .common:     return Color(red: 0.20, green: 0.78, blue: 0.62) // teal — "core/common"
+        case .nouns:      return Color(red: 0.30, green: 0.58, blue: 0.95) // blue
+        case .verbs:      return Color(red: 0.97, green: 0.55, blue: 0.18) // orange — action
+        case .adjectives: return Color(red: 0.72, green: 0.45, blue: 0.95) // purple
+        case .adverbs:    return Color(red: 0.45, green: 0.78, blue: 0.35) // green
+        case .particles:  return Color(red: 0.42, green: 0.52, blue: 0.85) // indigo/slate
+        }
+    }
 }
 
 struct RubyCell: Identifiable {
@@ -704,6 +758,27 @@ final class DaiJishowEngine: ObservableObject {
     @Published var includeNames: Bool = false
     @Published var recallMode: RecallMode = .full
     @Published var searchResults: [WordHit] = []
+    /// Active quick filters for the search results dropdown (Common / Nouns / …).
+    /// Sticky across searches: the same filters apply to the next query too.
+    @Published var searchFilters: Set<SearchFilter> = []
+
+    /// `searchResults` narrowed by the active quick filters. An empty filter set
+    /// returns the full list unchanged, so the dropdown is a no-op when no chip is
+    /// selected.
+    var filteredSearchResults: [WordHit] {
+        guard !searchFilters.isEmpty else { return searchResults }
+        return searchResults.filter { hit in
+            searchFilters.allSatisfy { hit.matches($0) }
+        }
+    }
+
+    func toggleSearchFilter(_ filter: SearchFilter) {
+        if searchFilters.contains(filter) {
+            searchFilters.remove(filter)
+        } else {
+            searchFilters.insert(filter)
+        }
+    }
 
     /// Drives the About / Credits sheet (standard Mac "About" chrome).
     @Published var showAbout: Bool = false
@@ -953,7 +1028,7 @@ final class DaiJishowEngine: ObservableObject {
         if let h = handle, !kana.isEmpty {
             var exactPtr: UnsafePointer<dj_word_hit_t>?
             let exactCount = kana.withCString { cStr in
-                dj_dict_search(h, cStr, DJ_SEARCH_EXACT, includeNames, 24, &exactPtr)
+                dj_dict_search(h, cStr, DJ_SEARCH_EXACT, includeNames, 48, &exactPtr)
             }
             if let ptr = exactPtr, exactCount > 0 {
                 for i in 0..<exactCount {
@@ -980,8 +1055,8 @@ final class DaiJishowEngine: ObservableObject {
                 if a.freqRank != b.freqRank { return a.freqRank < b.freqRank }
                 return a.id < b.id
             }
-            if homonyms.count > 12 {
-                homonyms = Array(homonyms.prefix(12))
+            if homonyms.count > 24 {
+                homonyms = Array(homonyms.prefix(24))
             }
         }
 
@@ -993,7 +1068,7 @@ final class DaiJishowEngine: ObservableObject {
 
             var autoPtr: UnsafePointer<dj_word_hit_t>?
             let autoCount = headword.withCString { cStr in
-                dj_dict_search(h, cStr, DJ_SEARCH_AUTO, includeNames, 90, &autoPtr)
+                dj_dict_search(h, cStr, DJ_SEARCH_AUTO, includeNames, 180, &autoPtr)
             }
             if let ptr = autoPtr, autoCount > 0 {
                 for i in 0..<autoCount {
@@ -1036,7 +1111,7 @@ final class DaiJishowEngine: ObservableObject {
                         }
                     }
                 }
-                for eid in topIds.prefix(16) {
+                for eid in topIds.prefix(32) {
                     var det = dj_entry_detail_t()
                     if dj_dict_get_entry_detail(h, eid, &det) {
                         let hdr = det.header
@@ -1065,8 +1140,8 @@ final class DaiJishowEngine: ObservableObject {
                 return a.displayHeadword.count < b.displayHeadword.count
             }
 
-            prefixList = Array(allFamily.filter { $0.displayHeadword.hasPrefix(headword) }.prefix(8))
-            suffixList = Array(allFamily.filter { $0.displayHeadword.hasSuffix(headword) && !$0.displayHeadword.hasPrefix(headword) }.prefix(8))
+            prefixList = Array(allFamily.filter { $0.displayHeadword.hasPrefix(headword) }.prefix(16))
+            suffixList = Array(allFamily.filter { $0.displayHeadword.hasSuffix(headword) && !$0.displayHeadword.hasPrefix(headword) }.prefix(16))
         }
 
         // 5. Fallback Sentences (if direct entry has 0 sentences) & Corpus Collocations
@@ -1409,7 +1484,7 @@ final class DaiJishowEngine: ObservableObject {
         return ""
     }
 
-    // MARK: - Wordtank Kanji Lookup Execution
+    // MARK: - Kanji Lookup Execution
 
     func openKanjiLookup() {
         ensureKanjiCatalogLoaded()
@@ -1419,7 +1494,7 @@ final class DaiJishowEngine: ObservableObject {
             kind: .kanjiLookup,
             targetId: 0,
             label: "Kanji Index",
-            subtitle: "Wordtank Multi-Mode Lookup"
+            subtitle: "Multi-Mode Kanji Lookup"
         ))
     }
 
@@ -2110,7 +2185,7 @@ final class DaiJishowEngine: ObservableObject {
             recordNavigation(NavBreadcrumb(
                 kind: .wordCosmos,
                 targetId: 0,
-                label: "Word Cosmos",
+                label: "Word Cloud",
                 subtitle: "Randomized \(wordCosmosTier.label) · \(wordCosmosWords.count) words"
             ))
         }
@@ -2279,7 +2354,7 @@ final class DaiJishowEngine: ObservableObject {
                     }
                     return a.id < b.id
                 }
-                .prefix(60)
+                .prefix(120)
                 .map { $0 }
         }
 

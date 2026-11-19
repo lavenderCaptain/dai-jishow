@@ -3,9 +3,9 @@
 Dai-Jishow abandons conventional nested menus, sidebars, and modal dialogs in favor of a spatial **Focus + Context** paradigm rendered with translucent **Liquid Glass** materials.
 
 > **Status snapshot.** The macOS desktop shell ships today. The **Z-Stack
-> navigation deck**, single-window liquid-glass surface, **Reader/Cockpit**
+> navigation deck**, single-window liquid-glass surface, **Reader/Detailed**
 > word entry, **Kanji detail** with a "Vocabulary & Compounds" display-mode
-> switch, the **Fisheye** explorer, **Word Cosmos**, **Recall** modes,
+> switch, the **Fisheye** explorer, **Word Cloud**, **Recall** modes,
 > **hover tooltips** on every control, **text selection + copy**, and an
 > **About / Preferences** window are all **built**. The 3D "Time Machine" zoom,
 > the **Radial Bloom** selection menu (§3), and the multi-device matrix (§5) are
@@ -64,6 +64,15 @@ Whenever the user clicks or taps a Japanese word or kanji (in a definition, an e
   * **1st Tap:** Highlights the edge and previews the resulting compound (`word`, `kana`, `English gloss`) in the bottom glass ribbon.
   * **2nd Tap (same node):** Re-centers the explorer on that kanji and pushes a new Explorer frame onto the 3D Z-Stack.
 * **Orbit Mode Switcher:** Toggle orbiting nodes between **2-Kanji Compounds**, **Yojijukugo (四字熟語)**, and **Look-Alike Confusables (類似漢字)**.
+* **Tier Legend:** A **Core / Jōyō / Literary / Kyūjitai** color key (matching the
+  node `tierColor` tiers) sits in the explorer's top bar so the prevalence
+  coloring is always decoded at a glance. Each dot carries a **hover tooltip**
+  explaining its tier's frequency threshold (Core ≤ 2,500 · Jōyō ≤ 12,000 ·
+  Literary > 12,000 · Kyūjitai = ungraded / non-Jōyō).
+* **Toggle Tooltips:** The **% Share** toggle and the **Top-N /side** menu also
+  carry hover tooltips — the former explains that it swaps a node's prevalence
+  color for its share of the center kanji's compound frequency; the latter
+  explains how many neighbors to show per side of the center kanji.
 
 ---
 
@@ -88,25 +97,38 @@ vision, no tab bar). Layout:
   **Z-Stack history** button whose badge shows the ring count — the badge reserves
   two-digit width so it never squashes past 9 entries.
 * **Omni-search field:** kanji / kana / romaji / English, with a live results
-  dropdown and a clear button.
-* **Kanji Index**, **Radicals** (builder), **Word Cosmos** buttons.
+  dropdown and a clear button. The dropdown's large result sets (e.g. `DJ_SEARCH_AUTO`
+  up to 40 hits) can be narrowed **instantly, without re-querying**, via a sticky row
+  of **quick-filter chips** — *Common* (overall frequency rank ≤ 12,000 / Jōyō band),
+  *Nouns*, *Verbs* (ichidan/godan/other verb forms), *Adjectives* (i- and na-),
+  *Adverbs*, *Particles* — plus a **Clear** control. Each chip carries its own **tint** (a colour-coded legend:
+  teal/blue/orange/purple/green/indigo), shown as a leading dot with a tinted
+  outline when inactive and a filled tint when active; chips stay active across
+  searches, and an empty-state message appears when the filters match nothing.
+* **Kanji Index**, **Radicals** (builder), **Word Cloud** buttons.
 * **Names** toggle (include proper names), a segmented **Recall** picker
   (*Full / Hide Kana / Hide Gloss*), and **recent-kanji** chips.
 * **Every control carries a hover tooltip** explaining what it is / does.
 
-### 6.2 Word Entry (Reader / Cockpit)
-* **Hero card:** ruby headword, **pitch-accent contour**, **telemetry pills**
+### 6.2 Word Entry (Reader / Detailed)
+* **Hero card:** ruby headword with the **primary meaning** (the most-common
+  sense's gloss, in the chosen language) shown **beside the kanji, level with it**,
+  then the **pitch-accent contour**, **telemetry pills**
   (frequency tier, JLPT, grade, stroke count), a **corpus-frequency meter**, and
   "also written as" variant chips — each with a tooltip.
-* **Reader / Cockpit** toggle and a **Gloss Language** toggle (EN / JA / Both),
+* **Reader / Detailed** toggle and a **Gloss Language** toggle (EN / JA / Both),
   both persisted in `UserDefaults`.
-* **Cockpit dashboard:** Kanji DNA strip, POS-tagged **Definitions**, a
-  **自他 pair** banner, **Homonyms** (同音異義語), **Word Family** (prefix/suffix
-  compounds), **Corpus Collocations**, **Example Sentences**, and a **conjugation
-  matrix**.
-* **Pills that would clip off-screen** (Homonyms, Compounds, Collocations) now
-  **wrap to multiple rows** and show the **top 10** with a **"Show more / Show
-  Less"** button — no horizontal scroll, nothing cut off.
+* **Detailed dashboard:** a wrapping **Kanji DNA** strip, POS-tagged
+  **Definitions**, a **自他 pair** banner, **Homonyms** (同音異義語), **Word
+  Family** (prefix/suffix compounds), **Corpus Collocations**, **Example
+  Sentences**, and a **conjugation matrix** for verbs / adjectives.
+* **Pills that would clip off-screen** (the Kanji DNA strip, Homonyms,
+  Compounds, Collocations) now **wrap to multiple rows** — no horizontal
+  scroll, nothing cut off — and show the **top 10** with a **"Show more / Show
+  Less"** button. The engine now surfaces a deeper pool behind that button
+  (up to **24** homonyms; up to **16** prefix + **16** suffix compounds; up to
+  **120** kanji vocabulary), so "Show more" stays meaningful past the first
+  ten.
 
 ### 6.3 Kanji Detail
 * Glyph with **animated KanjiVG stroke vectors**, on/kun readings, full metadata,
@@ -116,8 +138,8 @@ vision, no tab bar). Layout:
   empty-state message appears when a filtered view has no matches.
 
 ### 6.4 Navigation, Feedback & Packaging
-* **Z-Stack deck** (⌘\\) scrubs the lookup trail; **Word Cosmos** (⌘⇧W) is a
-  randomized prevalence bubble cloud; ⌘⇧C toggles Cockpit.
+* **Z-Stack deck** (⌘\\) scrubs the lookup trail; **Word Cloud** (⌘⇧W) is a
+  randomized prevalence bubble cloud; ⌘⇧C toggles the **Detailed** view.
 * **Text selection + copy** is enabled on entries, kanji detail, and the search
   dropdown, with context menus and a **⌘⌥C "Copy Entry"** command (native ⌘C for
   selections).

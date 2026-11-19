@@ -25,7 +25,7 @@
 | :--- | :--- | :--- |
 | **Core Bilingual Lexicon** | **JMdict** + **Jitendex** enrichments | ~210k entries, headwords, readings, POS bitmasks, dialect/register tags, antonyms/xrefs |
 | **Proper Names** | **JMnedict (ENAMDICT)** | ~740k people, places, train stations, companies, historical names (`is_name = 1`) |
-| **Monolingual Glosses** | **Wiktionary Japanese Monolingual Dump** | Native *Kokugo* definitions (all words tokenized for recursive WordTank jumps) |
+| **Monolingual Glosses** | **Wiktionary Japanese Monolingual Dump** | Native *Kokugo* definitions (all words tokenized for recursive "jump" lookups) |
 | **Kanji Metadata** | **KANJIDIC2** + **Kanjium** + **CHISE IDS** | *On/Kun* readings, strokes, grade, JLPT, Kanken, SKIP, 4-Corner, JIS, *Kyūjitai/Shinjitai*, phonetic series |
 | **Stroke Vectors & Radicals** | **KanjiVG** | Stroke-by-stroke vector paths (quantized to `uint16` binary blobs) + sub-component radical trees |
 | **Pitch Accent** | **Kanjium Pitch Accent** + **UniDic** | Tokyo pitch-accent drop positions (`Heiban`, `Atamadaka`, `Nakadaka`, `Odaka`) |

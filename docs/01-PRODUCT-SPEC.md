@@ -2,7 +2,7 @@
 
 Dai-Jishow fuses three paradigms into a single cohesive study and reference environment:
 1. **Dokusha v1.5 (Palm OS):** Compound neighborhood exploration, 7-slot multi-radical intersection, two-tap boundary refinement, and active-recall display toggles.
-2. **Canon WordTank:** Instant recursive "jump" lookups on any word or kanji on screen, compound search over recent kanji, and deep specialized reference appendices.
+2. **Dedicated-Dictionary "Jump" Lookups:** Instant recursive "jump" lookups on any word or kanji on screen, compound search over recent kanji, and deep specialized reference appendices.
 3. **Live Spatial AR Lens:** Real-time camera & screen OCR with 3D-pinned furigana, adaptive *i+1* reading hiding, and split-screen reflowed reading.
 
 > **Status snapshot (current macOS build).** The macOS desktop shell, the C++20
