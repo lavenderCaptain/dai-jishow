@@ -572,6 +572,9 @@ std::vector<OwnedWordHit> db_search_words(
 
     std::string query = raw_query;
     bool use_english_fts = false;
+    // True when we transliterated romaji -> kana and searched the kana form. Used
+    // to trigger the English fallback below if that kana search yields nothing.
+    bool tried_kana = false;
 
     if (mode == DJ_SEARCH_AUTO && is_ascii_romaji(raw_query)) {
         std::string kana = romaji_to_kana(raw_query, false);
@@ -584,9 +587,19 @@ std::vector<OwnedWordHit> db_search_words(
         }
         if (clean_kana) {
             query = kana;
+            tried_kana = true;
         } else {
             use_english_fts = true;
         }
+    }
+
+    // `DJ_SEARCH_ENGLISH` bypasses the romaji→kana step entirely and runs the
+    // English-gloss FTS index against the raw query. This is how the UI surfaces
+    // an English-gloss match for a romaji query that also names a real English
+    // word (e.g. "sake" -> 酒/鮭 in the main list, but 為 "benefit" in a
+    // separate "Also in English glosses" section).
+    if (mode == DJ_SEARCH_ENGLISH) {
+        use_english_fts = true;
     }
 
     std::string name_filter = include_names ? "" : "AND e.is_name = 0 ";
@@ -686,6 +699,49 @@ std::vector<OwnedWordHit> db_search_words(
         });
         if (results.size() > limit) {
             results.resize(limit);
+        }
+    }
+
+    // Fallback: a clean-romaji query (e.g. "bore" -> kana "ぼれ") can have no
+    // kana/prefix hits at all, yet still name a real English word. In that case
+    // the user almost certainly meant the English term, so re-run the FTS index
+    // against the ORIGINAL romaji and surface those results instead.
+    if (results.empty() && mode == DJ_SEARCH_AUTO && tried_kana) {
+        std::string name_filter2 = include_names ? "" : "AND e.is_name = 0 ";
+        std::string sql2 =
+            "SELECT e.entry_id, COALESCE(e.kanji_head, '') AS kanji_head, e.kana_head, COALESCE(e.alt_forms, ''), "
+            "       COALESCE((SELECT en_glosses FROM senses s WHERE s.entry_id = e.entry_id AND s.sense_idx = 0), ''), "
+            "       e.pos_mask, e.pitch_accent, e.freq_overall, COALESCE(e.pair_entry_id, 0), e.is_name "
+            "FROM entries_fts f "
+            "JOIN entries e ON e.entry_id = f.rowid "
+            "WHERE entries_fts MATCH ?1 " + name_filter2 +
+            "ORDER BY e.freq_overall ASC LIMIT ?2;";
+        sqlite3_stmt* stmt2 = nullptr;
+        if (sqlite3_prepare_v2(db, sql2.c_str(), -1, &stmt2, nullptr) == SQLITE_OK) {
+            std::string fts_q2 = "\"" + raw_query + "\"*";
+            size_t fts_limit = std::max<size_t>(limit * 6, 200);
+            sqlite3_bind_text(stmt2, 1, fts_q2.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int64(stmt2, 2, static_cast<sqlite3_int64>(fts_limit));
+            while (sqlite3_step(stmt2) == SQLITE_ROW) {
+                OwnedWordHit h;
+                bind_hit_from_row(stmt2, h);
+                results.push_back(std::move(h));
+            }
+            sqlite3_finalize(stmt2);
+
+            std::string q_low = to_lower_ascii(raw_query);
+            std::stable_sort(results.begin(), results.end(), [&](const OwnedWordHit& a, const OwnedWordHit& b) {
+                int ta = english_gloss_relevance_tier(a.primary_gloss, q_low);
+                int tb = english_gloss_relevance_tier(b.primary_gloss, q_low);
+                if (ta != tb) return ta < tb;
+                bool a_has_kanji = !a.kanji_head.empty();
+                bool b_has_kanji = !b.kanji_head.empty();
+                if (ta == 0 && a_has_kanji != b_has_kanji) return a_has_kanji > b_has_kanji;
+                return a.freq_rank < b.freq_rank;
+            });
+            if (results.size() > limit) {
+                results.resize(limit);
+            }
         }
     }
 

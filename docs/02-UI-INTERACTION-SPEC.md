@@ -101,11 +101,22 @@ vision, no tab bar). Layout:
   up to 40 hits) can be narrowed **instantly, without re-querying**, via a sticky row
   of **quick-filter chips** — *Common* (overall frequency rank ≤ 12,000 / Jōyō band),
   *Nouns*, *Verbs* (ichidan/godan/other verb forms), *Adjectives* (i- and na-),
-  *Adverbs*, *Particles* — plus a **Clear** control. Each chip carries its own **tint** (a colour-coded legend:
-  teal/blue/orange/purple/green/indigo), shown as a leading dot with a tinted
+  *Adverbs*, *Particles*, plus JLPT / grade chips — *N5…N1* and *Grade 1–3*, each
+  derived from a word's hardest / highest head-kanji level (kana-only words match none) — plus a **Clear** control. Each chip carries its own **tint** (a colour-coded legend:
+  teal/blue/orange/purple/green/indigo for POS, a green→red ramp for JLPT, and a
+  slate ramp for grade), shown as a leading dot with a tinted
   outline when inactive and a filled tint when active; chips stay active across
   searches, and an empty-state message appears when the filters match nothing.
-* **Kanji Index**, **Radicals** (builder), **Word Cloud** buttons.
+   **English-gloss section (always-on, unified):** for a romaji-looking query that
+   *also* names a real English word (e.g. *sake* → *さけ* alcohol/salmon, *and* the
+   English "sake / benefit"), the engine runs the English-gloss FTS index *in addition*
+   to the Japanese lookup and shows a labeled **"Also in English glosses"** section
+   in a narrower right-hand column *beside* the main results (the card widens to
+   fit; Jisho.org-style, no toggle, so it never slows a lookup).
+   It is deduped against the main list, so no entry appears twice, and is skipped for
+   kanji/kana queries. As a special case, when a clean-romaji query transliterates to
+   kana that matches nothing (e.g. *bore* → *ぼれ*), those English-gloss results
+   populate the main list directly, so the dropdown is never empty.
 * **Names** toggle (include proper names), a segmented **Recall** picker
   (*Full / Hide Kana / Hide Gloss*), and **recent-kanji** chips.
 * **Every control carries a hover tooltip** explaining what it is / does.
@@ -129,6 +140,13 @@ vision, no tab bar). Layout:
   (up to **24** homonyms; up to **16** prefix + **16** suffix compounds; up to
   **120** kanji vocabulary), so "Show more" stays meaningful past the first
   ten.
+* **Corpus Collocations** shows, for the word, the particles that sit next to
+  it in its example sentences; each chip reads `pattern ×N`, where the `×N`
+  count is how many of those example sentences use the pairing (a
+  relative-frequency signal: higher = a more typical neighbour). Both the
+  section header and every chip carry a **hover tooltip** — the chip tooltip
+  decodes the `〜`-marked slot, names the grammatical role (Modifier /
+  Preceding / Following Particle / Adjectival), and explains the `×N` count.
 
 ### 6.3 Kanji Detail
 * Glyph with **animated KanjiVG stroke vectors**, on/kun readings, full metadata,
@@ -139,7 +157,31 @@ vision, no tab bar). Layout:
 
 ### 6.4 Navigation, Feedback & Packaging
 * **Z-Stack deck** (⌘\\) scrubs the lookup trail; **Word Cloud** (⌘⇧W) is a
-  randomized prevalence bubble cloud; ⌘⇧C toggles the **Detailed** view.
+  randomized prevalence bubble cloud whose bubbles can be **tinted by difficulty** — a **Color** control (the control bar) switches between **Prevalence** (the frequency tiers), **JLPT** (a green→red N5…N1 ramp from the word's hardest head-kanji level), and **Grade** (a light→deep slate ramp from its highest head-kanji grade; kana-only words get a neutral dot); ⌘⇧C toggles the **Detailed** view.
+* **Window behaviour** (the title bar is hidden, so the usual affordances are
+  re-installed by a transparent top-bar handle — `WindowZoomHandle` /
+  `WindowFrameCoordinator`): **drag** the window from its empty top bar;
+  **double-click** the top bar to **zoom/restore** (toggle between the maximised
+  "standard" size and the previous size, via AppKit's native `zoom(_:)`); the
+  window **remembers its last size & position** (persisted to `UserDefaults`) and
+  on launch **validates** the saved frame — a corrupt or off-screen save falls
+  back to a centred **1320×880** default rather than launching crunched.
+* **Anti-crunch layout:** the Fisheye control bar (Graph Mode picker, Top-N menu,
+  % Share, colour legend) **wraps** instead of squashing when the window
+  narrows — the interactive controls stay fixed-width and legible while the
+  decorative legend drops to its own row, so the "Graph Mode" label never
+  collapses into a multi-line mess.
+* **Icon-collapse ("crunch to icon"):** the top-bar **Kanji Index / Radicals /
+  Word Cloud** buttons and the Word Cloud control bar's **Roll / Sample / Color**
+  controls **drop their text label and show the icon only** when the row is too
+  narrow to fit it, so a label never spills onto a second line. Each row measures
+  its own width (`measureWidth(into:)` in `AdaptiveControls.swift`) and gates the
+  collapse on a named threshold; a **tooltip is always attached**, so a collapsed
+  icon stays self-documenting.
+* **Legend tooltips:** the Word Cloud colour legend carries a per-dot tooltip
+  (its meaning) *and* an overall tooltip, so when the window is narrow and only
+  the dots show (no words) the legend still explains itself — the same
+  "dots-only" case the Fisheye legend already covers.
 * **Text selection + copy** is enabled on entries, kanji detail, and the search
   dropdown, with context menus and a **⌘⌥C "Copy Entry"** command (native ⌘C for
   selections).

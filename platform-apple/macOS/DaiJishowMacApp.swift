@@ -157,6 +157,15 @@ struct MainWorkspaceView: View {
     @ObservedObject var engine: DaiJishowEngine
     @FocusState private var isSearchFocused: Bool
 
+    /// Measured width of the top nav bar; drives `navCompact` so the three screen
+    /// buttons (Kanji Index / Radicals / Word Cloud) drop to icon-only when the
+    /// window is too narrow to show their labels on one line.
+    @State private var navBarWidth: CGFloat = 0
+
+    /// Below this bar width the screen buttons crunch to icons (a tooltip keeps
+    /// each one self-documenting). Tunable.
+    private var navCompact: Bool { isRowCompact(navBarWidth, threshold: 1040) }
+
     var body: some View {
         ZStack {
             LinearGradient(
@@ -360,41 +369,32 @@ struct MainWorkspaceView: View {
             .frame(maxWidth: 400)
             .help("Search by kanji, kana, romaji, or English — results appear live; press Enter to open the top hit.")
 
-            Button {
-                engine.openKanjiLookup()
-            } label: {
-                Label("Kanji Index", systemImage: "character.book.closed.fill")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Capsule().fill(engine.activeScreen == .kanjiLookup ? Color.accentColor : Color.white.opacity(0.10)))
-            }
-            .buttonStyle(.plain)
-            .help("Open the Kanji Index — browse kanji by stroke count, radical, or reading")
+            navScreenButton(
+                title: "Kanji Index",
+                systemImage: "character.book.closed.fill",
+                isActive: engine.activeScreen == .kanjiLookup,
+                compact: navCompact,
+                help: "Open the Kanji Index — browse kanji by stroke count, radical, or reading",
+                action: { engine.openKanjiLookup() }
+            )
 
-            Button {
-                engine.openRadicalBuilder()
-            } label: {
-                Label("Radicals", systemImage: "puzzlepiece.extension.fill")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Capsule().fill(engine.activeScreen == .radicalBuilder ? Color.accentColor : Color.white.opacity(0.10)))
-            }
-            .buttonStyle(.plain)
-            .help("Open the Radical Builder — assemble kanji from their component radicals")
+            navScreenButton(
+                title: "Radicals",
+                systemImage: "puzzlepiece.extension.fill",
+                isActive: engine.activeScreen == .radicalBuilder,
+                compact: navCompact,
+                help: "Open the Radical Builder — assemble kanji from their component radicals",
+                action: { engine.openRadicalBuilder() }
+            )
 
-            Button {
-                engine.openWordCosmos()
-            } label: {
-                Label("Word Cloud", systemImage: "sparkles")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Capsule().fill(engine.activeScreen == .wordCosmos ? Color.accentColor : Color.white.opacity(0.10)))
-            }
-            .buttonStyle(.plain)
-            .help("Open the Word Cloud — a randomized prevalence bubble cloud (⌘⇧W)")
+            navScreenButton(
+                title: "Word Cloud",
+                systemImage: "sparkles",
+                isActive: engine.activeScreen == .wordCosmos,
+                compact: navCompact,
+                help: "Open the Word Cloud — a randomized prevalence bubble cloud (⌘⇧W)",
+                action: { engine.openWordCosmos() }
+            )
 
             Toggle("Names", isOn: $engine.includeNames)
                 .toggleStyle(.switch)
@@ -439,6 +439,53 @@ struct MainWorkspaceView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
+        // The title bar is hidden, so this transparent handle re-installs the
+        // usual macOS affordances on the (otherwise-dead) top band: drag the
+        // window from empty space here, and double-click it to zoom/restore.
+        //
+        // `.ignoresSafeArea(.container, edges: .top)` extends the handle *up into*
+        // the hidden title bar's safe-area inset — the thin "window shade" band
+        // above the widget row. Without it the handle stops below that band, so
+        // double-clicking the very top of the window did nothing. The widgets
+        // themselves stay put (they're the foreground content, not the background).
+        .background {
+            WindowZoomHandle()
+                .ignoresSafeArea(.container, edges: .top)
+        }
+        .help("Drag the window by its empty top bar; double-click it to zoom/restore between a typical size and your last size.")
+        // Measure the bar so the screen buttons can crunch to icon-only when the
+        // window is too narrow to show their labels on a single line.
+        .measureWidth(into: $navBarWidth)
+    }
+
+    /// A top-bar screen button that keeps its full `Label` when there is room
+    /// and drops to an icon-only `Image` when `compact`, so it never spills onto
+    /// a second line. The active screen gets the accent fill; the tooltip is
+    /// always attached, keeping the icon-only state self-documenting.
+    @ViewBuilder
+    private func navScreenButton(
+        title: String,
+        systemImage: String,
+        isActive: Bool,
+        compact: Bool,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Group {
+                if compact {
+                    Image(systemName: systemImage)
+                } else {
+                    Label(title, systemImage: systemImage)
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(isActive ? Color.accentColor : Color.white.opacity(0.10)))
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private var searchResultsDropdown: some View {
@@ -448,19 +495,7 @@ struct MainWorkspaceView: View {
                     VStack(spacing: 0) {
                         filterChipRow
                         Divider().opacity(0.4)
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 2) {
-                                if engine.filteredSearchResults.isEmpty {
-                                    noFilterMatchRow
-                                } else {
-                                    ForEach(engine.filteredSearchResults) { hit in
-                                        searchResultRow(for: hit)
-                                    }
-                                }
-                            }
-                            .padding(8)
-                        }
-                        .frame(maxWidth: 640, maxHeight: 420)
+                        resultsBody
                     }
                 }
                 .padding(.leading, 118)
@@ -469,6 +504,59 @@ struct MainWorkspaceView: View {
             Spacer()
         }
         .padding(.top, 4)
+    }
+
+    /// The dropdown body. The main (Japanese) results always occupy the left;
+    /// when the query is a romaji that *also* names an English word, the "Also in
+    /// English glosses" section renders *beside* them as a narrower right-hand
+    /// column rather than stacked beneath — the card widens to fit so neither
+    /// column is cramped.
+    @ViewBuilder
+    private var resultsBody: some View {
+        if engine.englishMatches.isEmpty {
+            mainResultsColumn
+                .frame(maxWidth: 640, maxHeight: 420)
+        } else {
+            HStack(alignment: .top, spacing: 0) {
+                mainResultsColumn
+                    .frame(maxWidth: .infinity, maxHeight: 420)
+                Divider().opacity(0.5)
+                englishResultsColumn
+                    .frame(maxWidth: 300, maxHeight: 420)
+            }
+            .frame(maxWidth: 920, maxHeight: 420)
+        }
+    }
+
+    @ViewBuilder
+    private var mainResultsColumn: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 2) {
+                if engine.filteredSearchResults.isEmpty {
+                    noFilterMatchRow
+                } else {
+                    ForEach(engine.filteredSearchResults) { hit in
+                        searchResultRow(for: hit)
+                    }
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    /// The right-hand "Also in English glosses" column: a header plus the deduped
+    /// English-gloss matches for the current romaji query.
+    @ViewBuilder
+    private var englishResultsColumn: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 2) {
+                englishMatchesHeader
+                ForEach(engine.englishMatches) { hit in
+                    searchResultRow(for: hit)
+                }
+            }
+            .padding(8)
+        }
     }
 
     // MARK: - Search result row + quick-filter chips
@@ -581,6 +669,23 @@ struct MainWorkspaceView: View {
         .padding(.vertical, 28)
     }
 
+    /// Header above the "Also in English glosses" section — a small secondary
+    /// label that explains the supplementary English-gloss matches the engine
+    /// surfaced for a romaji query that also names an English word.
+    private var englishMatchesHeader: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "character.bubble")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text("Also in English glosses")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 3)
+    }
+
     private func searchFilterTooltip(for filter: SearchFilter) -> String {
         switch filter {
         case .common:     return "Common only — overall frequency rank ≤ 12,000 (Jōyō-grade words)."
@@ -589,6 +694,14 @@ struct MainWorkspaceView: View {
         case .adjectives: return "Adjectives — i- (keiyoushi) and na- (keiyogo / adjectival nouns)."
         case .adverbs:    return "Adverbs."
         case .particles:  return "Particles."
+        case .jlpt5:      return "Words whose hardest head kanji is JLPT N5 (beginner)."
+        case .jlpt4:      return "Words whose hardest head kanji is JLPT N4."
+        case .jlpt3:      return "Words whose hardest head kanji is JLPT N3."
+        case .jlpt2:      return "Words whose hardest head kanji is JLPT N2."
+        case .jlpt1:      return "Words whose hardest head kanji is JLPT N1 (advanced)."
+        case .grade1:     return "Words whose highest school-grade head kanji is Grade 1 (小学 1年生)."
+        case .grade2:     return "Words whose highest school-grade head kanji is Grade 2 (小学 2年生)."
+        case .grade3:     return "Words whose highest school-grade head kanji is Grade 3 (小学 3年生)."
         }
     }
 

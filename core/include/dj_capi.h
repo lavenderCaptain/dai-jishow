@@ -52,13 +52,18 @@ typedef struct dj_engine dj_engine_t;
  * - `DJ_SEARCH_EXACT`    — head must match the query exactly.
  * - `DJ_SEARCH_ANY`      — substring match (`LIKE`) on either head.
  * - `DJ_SEARCH_HOMONYMS` — match on the kana reading only.
+ * - `DJ_SEARCH_ENGLISH`  — force the English-gloss FTS index against the raw
+ *                          query (bypasses the romaji→kana step), so a romaji
+ *                          query that also names an English word still surfaces
+ *                          the English-gloss matches.
  */
 typedef enum {
     DJ_SEARCH_AUTO     = 0,
     DJ_SEARCH_PREFIX   = 1,
     DJ_SEARCH_EXACT    = 2,
     DJ_SEARCH_ANY      = 3,
-    DJ_SEARCH_HOMONYMS = 4
+    DJ_SEARCH_HOMONYMS = 4,
+    DJ_SEARCH_ENGLISH  = 5
 } dj_search_mode_t;
 
 /** Edge family to visualize in the fisheye kanji graph around a center kanji. */

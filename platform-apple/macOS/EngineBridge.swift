@@ -59,16 +59,28 @@ struct WordHit: Identifiable, Hashable {
 /// without re-querying the lexicon. POS bits mirror the corpus builder's
 /// `POS_BITS` table (tools/corpus-builder/build_corpus.py).
 enum SearchFilter: String, CaseIterable, Identifiable, Hashable {
+    // Part-of-speech + frequency chips (matched against a hit's POS bitmask / rank).
     case common = "Common"
     case nouns = "Nouns"
     case verbs = "Verbs"
     case adjectives = "Adjectives"
     case adverbs = "Adverbs"
     case particles = "Particles"
+    // JLPT level + grade chips. These are *derived* from a word's head kanji (see
+    // `derivedGradeJlpt`), not stored on the hit, so they need the kanji catalog.
+    case jlpt5 = "N5"
+    case jlpt4 = "N4"
+    case jlpt3 = "N3"
+    case jlpt2 = "N2"
+    case jlpt1 = "N1"
+    case grade1 = "Grade 1"
+    case grade2 = "Grade 2"
+    case grade3 = "Grade 3"
 
     var id: String { rawValue }
 
-    /// POS bitmask this filter matches (0 ⇒ not a POS filter, e.g. `.common`).
+    /// POS bitmask this filter matches (0 ⇒ not a POS filter, e.g. `.common` or a
+    /// derived JLPT/grade chip).
     var posBits: UInt64 {
         switch self {
         case .nouns:      return 1 << 0          // n
@@ -76,8 +88,36 @@ enum SearchFilter: String, CaseIterable, Identifiable, Hashable {
         case .adjectives: return (1 << 6) | (1 << 7)   // adj-i (keiyoushi) + adj-na (keiyogo)
         case .adverbs:    return 1 << 8          // adv
         case .particles:  return 1 << 10         // prt
-        case .common:     return 0
+        default:          return 0              // common + all derived filters
         }
+    }
+
+    /// The JLPT level (5…1) this chip matches, or nil if it is not a JLPT chip.
+    var jlptLevel: Int? {
+        switch self {
+        case .jlpt5: return 5
+        case .jlpt4: return 4
+        case .jlpt3: return 3
+        case .jlpt2: return 2
+        case .jlpt1: return 1
+        default:      return nil
+        }
+    }
+
+    /// The school grade (1…3) this chip matches, or nil if it is not a grade chip.
+    var gradeLevel: Int? {
+        switch self {
+        case .grade1: return 1
+        case .grade2: return 2
+        case .grade3: return 3
+        default:      return nil
+        }
+    }
+
+    /// True when the filter is derived from per-kanji telemetry (JLPT / grade)
+    /// rather than a hit's POS bits or frequency rank.
+    var isDerived: Bool {
+        jlptLevel != nil || gradeLevel != nil
     }
 
     /// Jōyō frequency threshold: a "common" word has an overall rank ≤ 12,000.
@@ -92,6 +132,16 @@ enum SearchFilter: String, CaseIterable, Identifiable, Hashable {
         case .adjectives: return Color(red: 0.72, green: 0.45, blue: 0.95) // purple
         case .adverbs:    return Color(red: 0.45, green: 0.78, blue: 0.35) // green
         case .particles:  return Color(red: 0.42, green: 0.52, blue: 0.85) // indigo/slate
+        // JLPT chips: a green→red ramp by difficulty (N5 easiest, N1 hardest).
+        case .jlpt5:      return Color(red: 0.42, green: 0.78, blue: 0.35) // green
+        case .jlpt4:      return Color(red: 0.86, green: 0.74, blue: 0.20) // yellow
+        case .jlpt3:      return Color(red: 0.96, green: 0.60, blue: 0.25) // amber
+        case .jlpt2:      return Color(red: 0.95, green: 0.45, blue: 0.28) // orange
+        case .jlpt1:      return Color(red: 0.92, green: 0.35, blue: 0.35) // red — advanced
+        // Grade chips: a cool slate ramp by difficulty (Grade 1 → 3).
+        case .grade1:     return Color(red: 0.55, green: 0.65, blue: 0.85)
+        case .grade2:     return Color(red: 0.50, green: 0.58, blue: 0.80)
+        case .grade3:     return Color(red: 0.45, green: 0.52, blue: 0.75)
         }
     }
 }
@@ -537,6 +587,27 @@ enum WordCosmosMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// How a Word Cloud bubble is *tinted*. `prevalence` (the historical colouring)
+/// shades by frequency rank; the JLPT / grade modes shade by a word's *derived*
+/// difficulty — its hardest JLPT level and its highest head-kanji grade, both
+/// derived from the head kanji (kana-only words carry no kanji, so they fall to
+/// a neutral "no level" tint rather than the hardest tier).
+enum WordCosmosColorMode: String, CaseIterable, Identifiable {
+    case prevalence
+    case jlpt
+    case grade
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .prevalence: return "Prevalence"
+        case .jlpt:       return "JLPT"
+        case .grade:      return "Grade"
+        }
+    }
+}
+
 enum KanjiLookupMode: String, CaseIterable, Identifiable {
     case strokes = "Strokes"
     case reading = "Reading"
@@ -758,6 +829,13 @@ final class DaiJishowEngine: ObservableObject {
     @Published var includeNames: Bool = false
     @Published var recallMode: RecallMode = .full
     @Published var searchResults: [WordHit] = []
+
+    /// English-gloss matches for the current romaji query, surfaced as a separate
+    /// "Also in English glosses" section beneath the main (Japanese) results.
+    /// Populated only for ASCII-romaji-looking queries, and deduped against
+    /// `searchResults` so no entry appears in both. Empty when there's no query
+    /// or no English-gloss hit.
+    @Published var englishMatches: [WordHit] = []
     /// Active quick filters for the search results dropdown (Common / Nouns / …).
     /// Sticky across searches: the same filters apply to the next query too.
     @Published var searchFilters: Set<SearchFilter> = []
@@ -765,10 +843,110 @@ final class DaiJishowEngine: ObservableObject {
     /// `searchResults` narrowed by the active quick filters. An empty filter set
     /// returns the full list unchanged, so the dropdown is a no-op when no chip is
     /// selected.
+    ///
+    /// POS + frequency chips match against a hit's bitmask/rank via `WordHit.matches`.
+    /// JLPT / grade chips are *derived* from the word's head kanji (see
+    /// `derivedGradeJlpt`); they are evaluated together, and the kanji catalog is
+    /// loaded only when at least one derived chip is active.
     var filteredSearchResults: [WordHit] {
         guard !searchFilters.isEmpty else { return searchResults }
+
+        // Fast path: no derived chips ⇒ pure hit-level matching.
+        if !searchFilters.contains(where: { $0.isDerived }) {
+            return searchResults.filter { hit in
+                searchFilters.allSatisfy { hit.matches($0) }
+            }
+        }
+
+        ensureKanjiCatalogLoaded()
+        let posFilters = searchFilters.filter { !$0.isDerived }
+        let derivedFilters = searchFilters.filter { $0.isDerived }
         return searchResults.filter { hit in
-            searchFilters.allSatisfy { hit.matches($0) }
+            // POS + frequency chips first (cheap, hit-level).
+            guard posFilters.allSatisfy({ hit.matches($0) }) else { return false }
+            // JLPT / grade chips: derive the word's level once, then compare.
+            let derived = derivedGradeJlpt(for: hit)
+            return derivedFilters.allSatisfy { filter in
+                if let jlptLevel = filter.jlptLevel {
+                    return derived.hardestJlpt == jlptLevel
+                }
+                if let gradeLevel = filter.gradeLevel {
+                    return derived.highestGrade == gradeLevel
+                }
+                return false
+            }
+        }
+    }
+
+    /// The word's derived JLPT and grade, mirroring `buildWordInsights`: the JLPT
+    /// is the *hardest* (smallest) level among its head kanji, and the grade the
+    /// *highest* grade among its head kanji. Kana-only words have no head kanji, so
+    /// they yield `(6, 0)` and never match any JLPT or grade chip.
+    private func derivedGradeJlpt(for hit: WordHit) -> (hardestJlpt: Int, highestGrade: Int) {
+        var hardestJlpt = 6
+        var highestGrade = 0
+        for scalar in hit.kanjiHead.unicodeScalars where isKanjiScalar(scalar.value) {
+            guard let meta = cachedKanjiByCodepoint?[scalar.value] else { continue }
+            if (1...10).contains(meta.grade) { highestGrade = max(highestGrade, meta.grade) }
+            if (1...5).contains(meta.jlpt) { hardestJlpt = min(hardestJlpt, meta.jlpt) }
+        }
+        return (hardestJlpt, highestGrade)
+    }
+
+    /// The colour a Word Cloud bubble takes for `word`, by the active
+    /// `wordCosmosColorMode`. `prevalence` reuses the frequency-tier palette; the
+    /// JLPT / grade modes derive the word's difficulty from its head kanji (the
+    /// catalog is loaded on demand) and map it onto a green→red / slate ramp.
+    func cosmosColor(for word: WordHit) -> Color {
+        switch wordCosmosColorMode {
+        case .prevalence:
+            return CosmosTierInfo.of(word).color
+        case .jlpt:
+            ensureKanjiCatalogLoaded()
+            return Self.cosmosJlptRamp(derivedGradeJlpt(for: word).hardestJlpt)
+        case .grade:
+            ensureKanjiCatalogLoaded()
+            return Self.cosmosGradeRamp(derivedGradeJlpt(for: word).highestGrade)
+        }
+    }
+
+    /// A green→red difficulty ramp for JLPT: green (easy, N5) → red (hard, N1).
+    /// Kana-only words (level 6) get a muted neutral so they read as "no JLPT
+    /// level" rather than as the hardest tier.
+    static func cosmosJlptRamp(_ jlpt: Int) -> Color {
+        switch jlpt {
+        case 5: return Color(red: 0.20, green: 0.80, blue: 0.45)   // N5 — green
+        case 4: return Color(red: 0.62, green: 0.85, blue: 0.24)   // N4 — lime
+        case 3: return Color(red: 0.98, green: 0.80, blue: 0.20)   // N3 — amber
+        case 2: return Color(red: 0.96, green: 0.56, blue: 0.18)   // N2 — orange
+        case 1: return Color(red: 0.92, green: 0.31, blue: 0.33)   // N1 — red
+        default: return Color(white: 0.62)                          // kana-only / unranked
+        }
+    }
+
+    /// A slate ramp for grade: light slate (early grade) deepening to
+    /// indigo-slate (late grade). Kana-only words (grade 0) get a neutral gray.
+    static func cosmosGradeRamp(_ grade: Int) -> Color {
+        guard (1...10).contains(grade) else { return Color(white: 0.55) }
+        let t = Double(grade - 1) / 9.0
+        let hue = 0.58 + 0.08 * t
+        let saturation = 0.14 + 0.34 * t
+        let brightness = 0.84 - 0.52 * t
+        return Color(hue: hue, saturation: saturation, brightness: brightness)
+    }
+
+    /// A short label for the difficulty a difficulty-coloured bubble encodes, for
+    /// the inspector ribbon / legend. Prevalence falls back to the tier label.
+    func cosmosDifficultyLabel(for word: WordHit) -> String {
+        switch wordCosmosColorMode {
+        case .prevalence:
+            return CosmosTierInfo.of(word).label
+        case .jlpt:
+            let level = derivedGradeJlpt(for: word).hardestJlpt
+            return (1...5).contains(level) ? "JLPT N\(level)" : "Kana only"
+        case .grade:
+            let grade = derivedGradeJlpt(for: word).highestGrade
+            return grade >= 1 ? "Grade \(grade)" : "Kana only"
         }
     }
 
@@ -827,6 +1005,10 @@ final class DaiJishowEngine: ObservableObject {
     @Published var wordCosmosMode: WordCosmosMode = .cosmos
     @Published var wordCosmosCount: Int = 50
     @Published var wordCosmosIncludeNames: Bool = false
+    /// How cloud bubbles are tinted (prevalence / JLPT / grade). Defaults to JLPT
+    /// so difficulty is visible at a glance; the user can switch to the
+    /// historical prevalence palette or a grade ramp.
+    @Published var wordCosmosColorMode: WordCosmosColorMode = .jlpt
 
     @Published var radicalSelectedIds: [UInt8] = []
     @Published var radicalTargetStrokes: Int = 0
@@ -1843,6 +2025,7 @@ final class DaiJishowEngine: ObservableObject {
         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             searchResults = []
+            englishMatches = []
             return
         }
 
@@ -1884,6 +2067,36 @@ final class DaiJishowEngine: ObservableObject {
             }
         }
         self.searchResults = hits
+        self.englishMatches = fetchEnglishMatches(for: trimmed, exclude: Set(hits.map { $0.id }))
+    }
+
+    /// Run the English-gloss FTS index against a romaji-looking query and return
+    /// the top matches not already present in `exclude` (the main result set).
+    /// Returns `[]` for kanji/kana queries, so the "Also in English glosses"
+    /// section stays clean and never appears for a Japanese search.
+    private func fetchEnglishMatches(for trimmed: String, exclude: Set<UInt32>) -> [WordHit] {
+        guard let h = handle else { return [] }
+        // Only ASCII-letter (romaji-looking) queries can name an English word; a
+        // floor of 2 letters keeps single-character queries from fanning out the
+        // FTS index into noise.
+        guard trimmed.count >= 2 else { return [] }
+        guard trimmed.unicodeScalars.allSatisfy({ $0.value >= 65 && $0.value <= 122 }) else { return [] }
+
+        var rawPtr: UnsafePointer<dj_word_hit_t>?
+        let count = trimmed.withCString { cStr in
+            dj_dict_search(h, cStr, DJ_SEARCH_ENGLISH, includeNames, 8, &rawPtr)
+        }
+        guard let ptr = rawPtr, count > 0 else { return [] }
+
+        var out: [WordHit] = []
+        out.reserveCapacity(count)
+        for i in 0..<count {
+            let hit = Self.wordHit(from: ptr[i])
+            if !exclude.contains(hit.id) {
+                out.append(hit)
+            }
+        }
+        return out
     }
 
     func submitSearchQuery() {

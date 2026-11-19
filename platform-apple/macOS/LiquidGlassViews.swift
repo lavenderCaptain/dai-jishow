@@ -912,14 +912,19 @@ struct FisheyeGraphView: View {
 
                 // Overlaid controls and bottom inspector card
                 VStack {
-                    HStack(spacing: 10) {
+                    // Wrap (rather than crunch) when the window narrows: the
+                    // interactive controls stay fixed-width and legible, while
+                    // the purely-decorative legend drops to its own row. This is
+                    // what keeps the "Graph Mode" label from collapsing into a
+                    // multi-line mess at small window sizes.
+                    WrappingHStack(alignment: .center, horizontalSpacing: 12, verticalSpacing: 8) {
                         Picker("Graph Mode", selection: $engine.fisheyeMode) {
                             Text("Compounds").tag(DJ_EDGE_COMPOUNDS)
                             Text("Yojijukugo").tag(DJ_EDGE_YOJIJUKUGO)
                             Text("Components").tag(DJ_EDGE_COMPONENTS)
                         }
                         .pickerStyle(.segmented)
-                        .frame(maxWidth: 320)
+                        .fixedSize()
                         .onChange(of: engine.fisheyeMode) { _, _ in
                             collapseOverflow()
                             if let cp = engine.activeKanji?.codepoint {
@@ -945,6 +950,7 @@ struct FisheyeGraphView: View {
                                 .background(Capsule().fill(.ultraThinMaterial))
                         }
                         .menuStyle(.borderlessButton)
+                        .fixedSize()
                         .help("Top-N per side — how many neighbor kanji to show on each side of the center kanji. More = fuller graph; fewer = calmer view.")
 
                         Button {
@@ -957,7 +963,8 @@ struct FisheyeGraphView: View {
                                 .background(Capsule().fill(engine.showFisheyePercentages ? Color.accentColor.opacity(0.25) : Color.white.opacity(0.08)))
                         }
                         .buttonStyle(.plain)
-                        .help("Toggle % Share — show each node's share of the center kanji's compound frequency in addiotn to its commonality tier color.")
+                        .fixedSize()
+                        .help("Toggle % Share — show each node's share of the center kanji's compound frequency in addition to its commonality tier color.")
 
                         HStack(spacing: 12) {
                             legendDot(color: Color(red: 0.22, green: 0.74, blue: 0.97), label: "Core",
@@ -1311,7 +1318,7 @@ private func halton(_ index: Int, base: Int) -> Double {
 /// Mirrors the cockpit's WordTelemetry tier → ratio → color mapping, but derived
 /// straight from a raw `WordHit` (freqRank / isName) so the cosmos can size and
 /// tint bubbles without loading a full entry detail.
-private enum CosmosTierInfo {
+enum CosmosTierInfo {
     static func of(_ word: WordHit) -> (ratio: Double, color: Color, label: String, rankStr: String) {
         let rank = word.freqRank
         if word.isName {
@@ -1351,6 +1358,7 @@ private func cosmosLayout(
     words: [WordHit],
     seed: UInt64,
     layout: WordCosmosLayout,
+    colorFor: (WordHit) -> Color,
     w: CGFloat,
     h: CGFloat
 ) -> [CosmosBubble] {
@@ -1398,7 +1406,7 @@ private func cosmosLayout(
                     word: word,
                     pos: pos,
                     ratio: info.ratio,
-                    color: info.color,
+                    color: colorFor(word),
                     tierLabel: info.label,
                     rankStr: info.rankStr,
                     hasKanji: word.firstKanjiCodepoint != nil,
@@ -1421,7 +1429,7 @@ private func cosmosLayout(
                 word: word,
                 pos: CGPoint(x: x, y: y),
                 ratio: info.ratio,
-                color: info.color,
+                color: colorFor(word),
                 tierLabel: info.label,
                 rankStr: info.rankStr,
                 hasKanji: word.firstKanjiCodepoint != nil,
@@ -1438,6 +1446,14 @@ struct WordCosmosView: View {
 
     @State private var pointerPos: CGPoint?
     @State private var hoveredWord: WordHit?
+
+    /// Measured width of the control bar; drives `cosmosCompact` so the Roll /
+    /// Sample / Color controls drop to icon-only when the window is too narrow
+    /// for their labels (the "Roll" button spilling to two lines).
+    @State private var cosmosBarWidth: CGFloat = 0
+
+    /// Below this bar width the control-bar labels crunch to icons. Tunable.
+    private var cosmosCompact: Bool { isRowCompact(cosmosBarWidth, threshold: 1180) }
 
     private var activeWord: WordHit? { hoveredWord }
 
@@ -1468,6 +1484,7 @@ struct WordCosmosView: View {
                 words: engine.wordCosmosWords,
                 seed: engine.wordCosmosSeed,
                 layout: engine.wordCosmosLayout,
+                colorFor: { engine.cosmosColor(for: $0) },
                 w: geo.size.width,
                 h: geo.size.height
             )
@@ -1767,25 +1784,43 @@ struct WordCosmosView: View {
                     }
                 }
             } label: {
-                Label("\(engine.wordCosmosCount) words", systemImage: "number")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(.ultraThinMaterial))
+                if cosmosCompact {
+                    Image(systemName: "number")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(.ultraThinMaterial))
+                } else {
+                    Label("\(engine.wordCosmosCount) words", systemImage: "number")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(.ultraThinMaterial))
+                }
             }
             .menuStyle(.borderlessButton)
+            .help("Sample size — how many words to draw into the cloud (50 / 150 / 300)")
 
             Button {
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                     engine.diceRollWordCosmos()
                 }
             } label: {
-                Label("Roll", systemImage: "dice")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(Color.accentColor))
-                    .foregroundStyle(.white)
+                if cosmosCompact {
+                    Image(systemName: "dice")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.accentColor))
+                        .foregroundStyle(.white)
+                } else {
+                    Label("Roll", systemImage: "dice")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.accentColor))
+                        .foregroundStyle(.white)
+                }
             }
             .buttonStyle(.plain)
             .help("Re-roll a fresh randomized sample")
@@ -1800,23 +1835,97 @@ struct WordCosmosView: View {
                 engine.sampleWordCosmos(includeNames: engine.wordCosmosIncludeNames)
             }
 
+            Menu {
+                ForEach(WordCosmosColorMode.allCases) { mode in
+                    Button(mode.label) {
+                        engine.wordCosmosColorMode = mode
+                    }
+                }
+            } label: {
+                if cosmosCompact {
+                    Image(systemName: "paintpalette")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(.ultraThinMaterial))
+                } else {
+                    Label("Color: \(engine.wordCosmosColorMode.label)", systemImage: "paintpalette")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(.ultraThinMaterial))
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .help("Tint bubbles by prevalence, JLPT level, or kanji grade")
+
             Spacer()
 
-            HStack(spacing: 10) {
-                legendDot(color: Color.purple, label: "Names")
-                legendDot(color: Color(red: 0.22, green: 0.74, blue: 0.97), label: "Core")
-                legendDot(color: Color(red: 0.20, green: 0.83, blue: 0.60), label: "Jōyō")
-                legendDot(color: Color(red: 0.98, green: 0.75, blue: 0.14), label: "Std")
-                legendDot(color: Color(red: 0.65, green: 0.55, blue: 0.98), label: "Lit")
-            }
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Capsule().fill(.ultraThinMaterial))
+            cosmosLegend
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(.ultraThinMaterial))
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .background(Capsule().fill(.ultraThinMaterial).opacity(0.45))
+        // Measure the bar so its controls can crunch to icon-only when the
+        // window is too narrow for their labels (keeps "Roll" on one line).
+        .measureWidth(into: $cosmosBarWidth)
+    }
+
+    /// The colour legend, matched to the active `wordCosmosColorMode`: the
+    /// frequency tiers for `prevalence`, a green→red N5…N1 ramp for JLPT, and a
+    /// light→deep slate ramp for grade. Kana-only words always show a neutral dot.
+    @ViewBuilder
+    private var cosmosLegend: some View {
+        switch engine.wordCosmosColorMode {
+        case .prevalence:
+            HStack(spacing: 10) {
+                legendDot(color: Color.purple, label: "Names",
+                          help: "Names — proper names (人名), tinted purple.")
+                legendDot(color: Color(red: 0.22, green: 0.74, blue: 0.97), label: "Core",
+                          help: "Core — overall frequency rank ≤ 2,500; the most common words.")
+                legendDot(color: Color(red: 0.20, green: 0.83, blue: 0.60), label: "Jōyō",
+                          help: "Jōyō — overall frequency rank ≤ 12,000; common modern-use words.")
+                legendDot(color: Color(red: 0.98, green: 0.75, blue: 0.14), label: "Std",
+                          help: "Standard — outside the Jōyō band but still in everyday written use.")
+                legendDot(color: Color(red: 0.65, green: 0.55, blue: 0.98), label: "Lit",
+                          help: "Literary — rare, classical, or literary-register words.")
+            }
+            .help("Bubble colours by prevalence tier. Hover any dot for its meaning — the labels hide when the window is narrow, so the dots alone carry the legend.")
+        case .jlpt:
+            HStack(spacing: 10) {
+                legendDot(color: DaiJishowEngine.cosmosJlptRamp(5), label: "N5",
+                          help: "JLPT N5 — easiest band; the word's hardest head kanji is N5-level.")
+                legendDot(color: DaiJishowEngine.cosmosJlptRamp(4), label: "N4",
+                          help: "JLPT N4 — the word's hardest head kanji is N4-level.")
+                legendDot(color: DaiJishowEngine.cosmosJlptRamp(3), label: "N3",
+                          help: "JLPT N3 — the word's hardest head kanji is N3-level.")
+                legendDot(color: DaiJishowEngine.cosmosJlptRamp(2), label: "N2",
+                          help: "JLPT N2 — the word's hardest head kanji is N2-level.")
+                legendDot(color: DaiJishowEngine.cosmosJlptRamp(1), label: "N1",
+                          help: "JLPT N1 — hardest band; the word's hardest head kanji is N1-level.")
+                legendDot(color: Color(white: 0.62), label: "Kana",
+                          help: "Kana-only words (no head kanji) carry a neutral dot — they have no JLPT band.")
+            }
+            .help("Bubble colours by JLPT level (green→red, N5→N1) from each word's hardest head kanji. Hover any dot for its meaning — the labels hide when the window is narrow.")
+        case .grade:
+            HStack(spacing: 9) {
+                legendDot(color: DaiJishowEngine.cosmosGradeRamp(1), label: "G1",
+                          help: "Grade 1 — most difficult band; the word's hardest head kanji is grade 1.")
+                legendDot(color: DaiJishowEngine.cosmosGradeRamp(4), label: "G4",
+                          help: "Grade 4 — mid band by head-kanji study grade.")
+                legendDot(color: DaiJishowEngine.cosmosGradeRamp(7), label: "G7",
+                          help: "Grade 7 — easier band by head-kanji study grade.")
+                legendDot(color: DaiJishowEngine.cosmosGradeRamp(10), label: "G10",
+                          help: "Grade 10 — easiest band; the word's hardest head kanji is grade 10.")
+                legendDot(color: Color(white: 0.55), label: "Kana",
+                          help: "Kana-only words (no head kanji) carry a neutral dot — they have no grade.")
+            }
+            .help("Bubble colours by head-kanji study grade (light→deep slate, G1→G10). Hover any dot for its meaning — the labels hide when the window is narrow.")
+        }
     }
 
     // MARK: - Bottom inspector ribbon
@@ -1828,6 +1937,12 @@ struct WordCosmosView: View {
 
             if let word = activeWord {
                 let info = CosmosTierInfo.of(word)
+                // The pill reflects the active colour mode: the frequency tier for
+                // `prevalence`, otherwise the word's derived JLPT level / grade.
+                let pillColor = engine.cosmosColor(for: word)
+                let pillText = engine.wordCosmosColorMode == .prevalence
+                    ? "\(info.label) • \(info.rankStr)"
+                    : engine.cosmosDifficultyLabel(for: word)
                 LiquidGlassCard(cornerRadius: 18) {
                     HStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 3) {
@@ -1839,12 +1954,12 @@ struct WordCosmosView: View {
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
                                 }
-                                Text("\(info.label) • \(info.rankStr)")
+                                Text(pillText)
                                     .font(.caption2.weight(.bold))
                                     .padding(.horizontal, 7)
                                     .padding(.vertical, 2)
-                                    .background(Capsule().fill(info.color.opacity(0.22)))
-                                    .foregroundStyle(info.color)
+                                    .background(Capsule().fill(pillColor.opacity(0.22)))
+                                    .foregroundStyle(pillColor)
                             }
                             if engine.recallMode != .hideGloss {
                                 Text(word.primaryGloss.isEmpty ? "Tap to open the Detailed view" : word.primaryGloss)
@@ -1902,11 +2017,12 @@ struct WordCosmosView: View {
         .padding(.bottom, 16)
     }
 
-    private func legendDot(color: Color, label: String) -> some View {
+    private func legendDot(color: Color, label: String, help: String? = nil) -> some View {
         HStack(spacing: 4) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(label).foregroundStyle(.secondary)
         }
+        .help(help ?? "")
     }
 }
 
@@ -2613,7 +2729,7 @@ struct WordEntryView: View {
                         Label("Corpus Collocations", systemImage: "link")
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(.secondary)
-                            .help("Real-world word neighbours from the corpus: patterns that co-occur with this word, most frequent first.")
+                            .help("Corpus Collocations — the particles that sit next to this word in its example sentences. Each chip names one pairing; the ×N count is how many of those example sentences use it, so higher numbers mark the word's more typical neighbours. Shown most frequent first.")
 
                         WrappingHStack(alignment: .center, horizontalSpacing: 8, verticalSpacing: 8) {
                             ForEach(insights.collocations) { col in
@@ -2627,7 +2743,7 @@ struct WordEntryView: View {
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 6)
                                 .background(Capsule().fill(Color.white.opacity(0.08)))
-                                .help("\(col.pattern) — appears \(col.count)×")
+                                .help(collocationHelp(col))
                             }
                         }
                     }
@@ -2739,6 +2855,26 @@ struct WordEntryView: View {
             }
             .padding(18)
         }
+    }
+
+    /// Hover tooltip for a single Corpus Collocation chip. Decodes the
+    /// particle-slot `pattern` (the `〜` marks the open side), names its
+    /// grammatical `roleLabel`, and explains the `×N` count as the number
+    /// of example sentences that show the pairing (a relative-frequency
+    /// signal: higher = a more typical neighbour).
+    private func collocationHelp(_ col: CollocationPattern) -> String {
+        var position: String
+        var particle: String
+        if col.pattern.hasPrefix("〜") {
+            particle = String(col.pattern.dropFirst().split(separator: " ").first ?? "…")
+            position = "just before"
+        } else {
+            particle = String(col.pattern.dropLast().last ?? "…")
+            position = "just after"
+        }
+        let inSentences = col.count == 1 ? "1 example sentence" : "\(col.count) example sentences"
+        return "『\(col.pattern)』  \(col.roleLabel) — the particle \(particle) sits \(position) the headword. "
+            + "The ×\(col.count) shows this pairing occurs in \(inSentences); higher numbers mark more typical neighbours."
     }
 
     private func telemetryPill(text: String, tint: Color) -> some View {
