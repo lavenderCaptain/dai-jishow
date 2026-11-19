@@ -165,6 +165,21 @@ vision, no tab bar). Layout:
   just which words match. The grade ramp runs **G1 (earliest, most basic) → G10
   (latest, most advanced)** — grades 7–10 mark high-school / Jōyō / Jinmeiyō /
   variant kanji rather than a single school year.
+* **Hear it — native Japanese TTS:** a speaker button beside the headword (a
+  full capsule in the hero card, plus a "Speak Headword" context-menu item) and
+  a compact icon at the top-right of every example-sentence row, each using a
+  single shared `AVSpeechSynthesizer` (ja-JP). Taps are strictly user-initiated
+  (never auto-play), and a new tap cancels the in-flight utterance so rapid
+  clicks never overlap. The voice speaks the **kana headword** and each
+  sentence's **full Japanese text** at ~0.9× the default rate, preferring a
+  premium-quality voice when one is installed. Because Japanese is a *downloadable*
+  system voice, the engine checks for an installed `ja` voice: when none is
+  present every button is **disabled with a tooltip** pointing to *System Settings
+  ▸ Speech ▸ System Voice ▸ Manage Voices* rather than silently doing nothing.
+  Note the pitch-accent diagram (`PitchAccentContourView`) is a *learning* asset —
+  `AVSpeechSynthesizer` has no per-mora pitch control, so the voice speaks its own
+  standard accent; the speaker is "hear the standard reading", not a re-render of
+  the diagram's downstep.
 * **Window behaviour** (the title bar is hidden, so the usual affordances are
   re-installed by a transparent top-bar handle — `WindowZoomHandle` /
   `WindowFrameCoordinator`): **drag** the window from its empty top bar;

@@ -2133,6 +2133,14 @@ struct WordEntryView: View {
             .textSelection(.enabled)
             .contextMenu {
                 Button {
+                    SpeechEngine.shared.speak(entry.header.kanaHead)
+                } label: {
+                    Label("Speak Headword", systemImage: "speaker.wave.2.fill")
+                }
+                .disabled(!SpeechEngine.shared.japaneseVoiceAvailable
+                          || entry.header.kanaHead.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Divider()
+                Button {
                     engine.copyText(entry.copyText)
                 } label: {
                     Label("Copy Entry", systemImage: "doc.on.doc")
@@ -2176,6 +2184,13 @@ struct WordEntryView: View {
                         ) { cp in
                             engine.openKanjiDetail(codepoint: cp)
                         }
+
+                        // "Hear it" — speaks the kana headword in ja-JP. Disabled
+                        // with an install hint when no Japanese voice is present.
+                        // The custom tooltip is passed as `extraHelp` so the
+                        // disabled-state "no voice installed" message still shows.
+                        SpeakerButton(text: entry.header.kanaHead, variant: .headword,
+                                      extraHelp: "Hear '\(entry.header.kanaHead)' read aloud in Japanese.")
 
                         if let primary = primaryTranslation {
                             Text(primary)
@@ -2829,6 +2844,14 @@ struct WordEntryView: View {
 
                 ForEach(visibleList) { sent in
                     VStack(alignment: .leading, spacing: 6) {
+                        // "Hear this sentence" — speaks the full Japanese text
+                        // (jpText). A compact icon at the top-right of each row.
+                        HStack(spacing: 6) {
+                            Spacer(minLength: 0)
+                            SpeakerButton(text: sent.jpText, variant: .compact,
+                                          extraHelp: "Hear this sentence read aloud in Japanese.")
+                        }
+
                         SentenceFlowView(
                             segments: sent.segments,
                             hideKana: engine.recallMode == .hideKana
