@@ -301,6 +301,33 @@ struct WordKanjiDNA: Identifiable {
     let kunReadings: [String]
     let matchedReadingNormalized: String?
     let isJukujikun: Bool
+
+    /// The reading to show *under* this kanji in the "how the reading assembles"
+    /// card. Prefers the in-compound matched reading; falls back to the kanji's
+    /// standard on-reading (then kun) so no kanji is ever left with a bare "—".
+    /// `intermediateIsFallback` marks the fallback case so the UI can style it as
+    /// "the standard on-reading" rather than "the reading it takes here".
+    var intermediateReading: String? {
+        if let m = matchedReadingNormalized, !m.isEmpty { return m }
+        if let on = onReadings.first, !on.isEmpty { return on }
+        if let kun = kunReadings.first, !kun.isEmpty { return kun }
+        return nil
+    }
+    var intermediateIsFallback: Bool {
+        matchedReadingNormalized == nil || matchedReadingNormalized?.isEmpty == true
+    }
+}
+
+/// One "Try:" example chip for the Compound Kanji screen's search row. Seeded from
+/// the recent-kanji ring: the most frequent compound containing a recently
+/// inspected kanji, so the examples track what the user has been studying.
+struct CompoundExample: Identifiable, Hashable {
+    var id: UInt32 { entryId }
+    let entryId: UInt32
+    let word: String
+    let kana: String
+    /// The recent kanji this example was derived from (shown in the tooltip).
+    let seedGlyph: String
 }
 
 struct CollocationPattern: Identifiable, Hashable {
@@ -1177,6 +1204,17 @@ final class DaiJishowEngine: ObservableObject {
     /// not clobber the word-detail view the user just came from.
     @Published var compoundEntry: EntryDetail?
     @Published var compoundInsights: WordLexicalInsights?
+
+    /// A "no word matched" message surfaced under the compound search field when a
+    /// typed word (or name) resolves to nothing — so the field never silently
+    /// fails. Cleared the moment a decomposition succeeds.
+    @Published var compoundSearchNotice: String? = nil
+
+    /// Example compounds seeded from the user's recent-kanji ring: the single most
+    /// frequent compound containing each recently inspected kanji, de-duplicated by
+    /// compound word. Shown as chips in the compound screen's search row so the
+    /// "Try:" row is personalized to what the user has been studying.
+    @Published var recentCompoundExamples: [CompoundExample] = []
     @Published var fisheyeNodes: [FisheyeNode] = []
     @Published var overflowPreviewNodes: [FisheyeNode] = []
     @Published var leftOverflowCount: Int = 0
@@ -2551,6 +2589,7 @@ final class DaiJishowEngine: ObservableObject {
         guard let id = entryId, let detail = fetchEntryDetail(id) else {
             self.compoundEntry = nil
             self.compoundInsights = nil
+            self.recentCompoundExamples = buildRecentCompoundExamples()
             self.activeScreen = .compoundKanji
             return
         }
@@ -2560,6 +2599,8 @@ final class DaiJishowEngine: ObservableObject {
         }
         self.compoundEntry = detail
         self.compoundInsights = ensureWordInsights(for: detail)
+        self.compoundSearchNotice = nil
+        self.recentCompoundExamples = buildRecentCompoundExamples()
         self.activeScreen = .compoundKanji
 
         if recordHistory {
@@ -2574,14 +2615,37 @@ final class DaiJishowEngine: ObservableObject {
 
     /// Resolve a typed word to its entry and decompose it on the compound screen,
     /// preferring a multi-kanji exact hit so a kana query lands on the kanji form.
+    ///
+    /// Name-resilient, mirroring the main omni-search: a typed word may be a proper
+    /// name, which the exact search skips unless "Names" is on. So we try with the
+    /// user's current preference first, then retry with names forced on, and only if
+    /// both come up empty do we surface a "no compound found" notice rather than
+    /// silently dropping the word.
     func decomposeWordQuery(_ query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let h = handle else { return }
+
         var rawPtr: UnsafePointer<dj_word_hit_t>?
-        let count = trimmed.withCString { cStr in
+        var count = trimmed.withCString { cStr in
             dj_dict_search(h, cStr, DJ_SEARCH_EXACT, includeNames, 8, &rawPtr)
         }
-        guard let ptr = rawPtr, count > 0 else { return }
+        if count == 0 {
+            rawPtr = nil
+            count = trimmed.withCString { cStr in
+                dj_dict_search(h, cStr, DJ_SEARCH_EXACT, true, 8, &rawPtr)
+            }
+        }
+        guard let ptr = rawPtr, count > 0 else {
+            // Nothing matched even with names forced on: clear any stale
+            // decomposition and tell the user, so the field never fails silently.
+            self.compoundEntry = nil
+            self.compoundInsights = nil
+            self.compoundSearchNotice = "No compound found for “\(trimmed)”. Try another word, or flip on Names."
+            self.recentCompoundExamples = buildRecentCompoundExamples()
+            self.activeScreen = .compoundKanji
+            return
+        }
+
         var resolvedId: UInt32?
         for i in 0..<count {
             let hit = Self.wordHit(from: ptr[i])
@@ -2612,6 +2676,58 @@ final class DaiJishowEngine: ObservableObject {
         return nil
     }
 
+    /// The single most frequent compound containing `cp`, read off both sides of the
+    /// kanji graph as a `CompoundExample` chip. `maxPerSide` of 1 yields at most one
+    /// bubble per side; we pick the higher-share of the two so the example is the
+    /// kanji's top compound overall. Returns nil when the kanji has no compounds in
+    /// the corpus (so the caller can skip it and try the next recent kanji).
+    private func topCompoundForKanji(_ cp: UInt32) -> CompoundExample? {
+        guard let h = handle else { return nil }
+        var rawPtr: UnsafePointer<dj_fisheye_node_t>?
+        var leftOv = 0
+        var rightOv = 0
+        let count = dj_graph_solve_fisheye(
+            h, cp, DJ_EDGE_COMPOUNDS, includeNames, false, 0, 0, 1.85,
+            1, &leftOv, &rightOv, &rawPtr
+        )
+        guard let ptr = rawPtr, count > 0 else { return nil }
+        var best: dj_fisheye_node_t?
+        var bestShare: Float = -1.0
+        for i in 0..<count {
+            let node = ptr[i]
+            if node.is_overflow_preview != 0 { continue }
+            if node.share_pct > bestShare {
+                bestShare = node.share_pct
+                best = node
+            }
+        }
+        guard let n = best else { return nil }
+        let word = String(cString: n.compound_word)
+        guard !word.isEmpty else { return nil }
+        let kana = String(cString: n.compound_kana)
+        let seedGlyph = UnicodeScalar(cp).map { String($0) } ?? "?"
+        return CompoundExample(
+            entryId: n.top_entry_id,
+            word: word,
+            kana: kana,
+            seedGlyph: seedGlyph
+        )
+    }
+
+    /// Build the "Try:" example chips for the compound screen from the recent-kanji
+    /// ring: for each recently inspected kanji, its top compound, de-duplicated by
+    /// compound word and capped so the row stays tidy.
+    private func buildRecentCompoundExamples() -> [CompoundExample] {
+        var out: [CompoundExample] = []
+        var seen = Set<String>()
+        for cp in recentKanji {
+            if let ex = topCompoundForKanji(cp), seen.insert(ex.word).inserted {
+                out.append(ex)
+            }
+            if out.count >= 4 { break }
+        }
+        return out
+    }
 
     func openKanjiDetail(codepoint: UInt32, recordHistory: Bool = true) {
         guard let detail = fetchKanjiDetail(codepoint: codepoint, includeLexicalLists: true) else { return }

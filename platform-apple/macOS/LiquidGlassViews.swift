@@ -3562,6 +3562,7 @@ struct KanjiVectorDiagram: View {
 struct CompoundKanjiView: View {
     @ObservedObject var engine: DaiJishowEngine
     @State private var wordQuery: String = ""
+    @FocusState private var isSearchFocused: Bool
 
     /// Canonical multi-kanji compounds for the empty-state chips / on-screen search.
     private let exampleWords = ["漢字", "日本語", "勉強", "日本", "言葉"]
@@ -3570,59 +3571,153 @@ struct CompoundKanjiView: View {
     private var insights: WordLexicalInsights? { engine.compoundInsights }
     private var parts: [WordKanjiDNA] { engine.compoundInsights?.kanjiDNA ?? [] }
 
-    var body: some View {
-        VStack(spacing: 16) {
-            searchRow
+    /// The "Try:" chips: the most frequent compound for each recent kanji first
+    /// (personalized to what the user has been studying), padded with the canonical
+    /// examples when the ring is sparse, capped so the row stays tidy. Words are
+    /// de-duplicated, so `id: \.word` keeps the ForEach happy even for the
+    /// canonical fallback chips (which share a zero entry id).
+    private var tryChips: [CompoundExample] {
+        var seen = Set<String>()
+        var chips = engine.recentCompoundExamples.filter { seen.insert($0.word).inserted }
+        for w in exampleWords where seen.insert(w).inserted && chips.count < 6 {
+            chips.append(CompoundExample(entryId: 0, word: w, kana: "", seedGlyph: ""))
+        }
+        return Array(chips.prefix(6))
+    }
 
-            if let entry, !parts.isEmpty {
-                headerCard(entry)
-                readingInsightCard(entry)
-                kanjiCards
-            } else if let entry {
-                headerCard(entry)
-                kanaNote
-            } else {
-                emptyState
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                searchRow
+
+                if let notice = engine.compoundSearchNotice {
+                    Text(notice)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 4)
+                }
+
+                if let entry, !parts.isEmpty {
+                    headerCard(entry)
+                    readingInsightCard(entry)
+                    kanjiCards
+                } else if let entry {
+                    headerCard(entry)
+                    kanaNote
+                } else {
+                    emptyState
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 960)
+            .frame(maxWidth: .infinity, alignment: .top)
+            .textSelection(.enabled)
+            .contextMenu {
+                copyMenu
             }
         }
-        .padding(20)
+        // The field is the primary input on this screen, so grab focus on arrival —
+        // this is the screen whose search the user mistook for the top omni-search,
+        // so making the field obvious and ready is the whole point.
+        .onAppear {
+            isSearchFocused = true
+        }
+    }
+
+    /// Right-click affordances on the whole screen: speak the headword, copy the
+    /// entry, or copy just the headword — mirroring the word-detail context menu so
+    /// nothing on the compound screen is un-copyable.
+    @ViewBuilder
+    private var copyMenu: some View {
+        if let entry {
+            Button {
+                SpeechEngine.shared.speak(entry.header.kanaHead)
+            } label: {
+                Label("Speak Headword", systemImage: "speaker.wave.2.fill")
+            }
+            .disabled(!SpeechEngine.shared.japaneseVoiceAvailable
+                      || entry.header.kanaHead.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Divider()
+            Button {
+                engine.copyText(entry.copyText)
+            } label: {
+                Label("Copy Entry", systemImage: "doc.on.doc")
+            }
+            Button {
+                engine.copyText(entry.header.displayHeadword)
+            } label: {
+                Label("Copy Headword", systemImage: "text.cursor")
+            }
+        } else {
+            Text("Nothing to copy yet — decompose a word first.")
+                .font(.caption)
+        }
     }
 
     // MARK: Search row
 
     private var searchRow: some View {
         LiquidGlassCard(cornerRadius: 16) {
-            VStack(spacing: 10) {
+            VStack(spacing: 12) {
                 HStack(spacing: 10) {
                     Image(systemName: "square.split.2x2.fill")
+                        .font(.title3)
                         .foregroundStyle(.secondary)
-                    TextField("Decompose a word… (e.g. 漢字, 日本語, 勉強)", text: $wordQuery)
+                    TextField("Decompose a word…  (e.g. 漢字, 日本語, 勉強)", text: $wordQuery)
                         .textFieldStyle(.plain)
+                        .font(.title3)
+                        .focused($isSearchFocused)
                         .onSubmit { engine.decomposeWordQuery(wordQuery) }
                     Button("Decompose") {
                         engine.decomposeWordQuery(wordQuery)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
                     .disabled(wordQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
 
                 HStack(spacing: 8) {
                     Text("Try:")
-                        .font(.caption2)
+                        .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
-                    ForEach(exampleWords, id: \.self) { word in
-                        Button(word) {
-                            engine.decomposeWordQuery(word)
-                        }
-                        .buttonStyle(.plain)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.accentColor)
-                        .help("Decompose \(word)")
+                    ForEach(tryChips, id: \.word) { ex in
+                        tryChip(ex)
                     }
                     Spacer()
                 }
+                .padding(.horizontal, 14)
             }
+            .padding(.vertical, 12)
         }
+    }
+
+    /// A single "Try:" chip. A personalized chip (seeded from a recent kanji) shows
+    /// the compound + kana and names the seed kanji in its tooltip; a canonical
+    /// fallback chip just shows the word.
+    private func tryChip(_ ex: CompoundExample) -> some View {
+        Button {
+            engine.decomposeWordQuery(ex.word)
+        } label: {
+            HStack(spacing: 5) {
+                Text(ex.word)
+                    .font(.caption.weight(.medium))
+                if !ex.kana.isEmpty {
+                    Text(ex.kana)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.accentColor.opacity(0.14)))
+        }
+        .buttonStyle(.plain)
+        .help(ex.seedGlyph.isEmpty
+              ? "Decompose \(ex.word)"
+              : "Top compound for recent kanji \(ex.seedGlyph): \(ex.word)\(ex.kana.isEmpty ? "" : " (\(ex.kana))")")
     }
 
     // MARK: Header — the word with per-kanji ruby
@@ -3650,6 +3745,10 @@ struct CompoundKanjiView: View {
                         }
                     }
                     Spacer()
+                    if !entry.header.kanaHead.isEmpty {
+                        SpeakerButton(text: entry.header.kanaHead, variant: .headword)
+                            .help("Hear the headword \(entry.header.displayHeadword)")
+                    }
                 }
                 HStack(spacing: 10) {
                     if !entry.header.kanaHead.isEmpty {
@@ -3686,9 +3785,12 @@ struct CompoundKanjiView: View {
                         VStack(spacing: 4) {
                             Text(part.glyph)
                                 .font(.system(size: 28, weight: .bold))
-                            Text(part.matchedReadingNormalized ?? "—")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.cyan)
+                            Text(part.intermediateReading ?? "—")
+                                .font(.caption.weight(part.intermediateIsFallback ? .regular : .semibold))
+                                .foregroundStyle(part.intermediateIsFallback ? Color.secondary : Color.cyan)
+                                .help(part.intermediateIsFallback
+                                      ? "No distinct in-compound reading for \(part.glyph) — showing its standard on-reading."
+                                      : "\(part.glyph) is read \(part.intermediateReading ?? "") inside this compound.")
                         }
                         if idx < parts.count - 1 {
                             Text("+")
@@ -3794,6 +3896,10 @@ struct CompoundKanjiView: View {
             }
 
             HStack(spacing: 8) {
+                if let read = part.intermediateReading {
+                    SpeakerButton(text: read, variant: .compact)
+                        .help("Hear \(part.glyph) read \(read) here")
+                }
                 Button {
                     engine.openKanjiDetail(codepoint: part.codepoint)
                 } label: {
@@ -3805,10 +3911,10 @@ struct CompoundKanjiView: View {
                 Button {
                     engine.openFisheye(codepoint: part.codepoint)
                 } label: {
-                    Label("Fisheye", systemImage: "circle.hexagongrid")
+                    Label("Graph", systemImage: "circle.hexagongrid.fill")
                 }
                 .controlSize(.small)
-                .help("Open \(part.glyph)'s own single-kanji fisheye — the whole compound's multi-centered fisheye is a later step")
+                .help("Open \(part.glyph)'s own single-kanji compound graph — the whole compound's multi-centered fisheye is a later step")
 
                 Spacer()
             }
@@ -3890,7 +3996,7 @@ struct CompoundKanjiView: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
         .padding(40)
     }
 }

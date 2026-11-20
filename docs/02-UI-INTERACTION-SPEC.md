@@ -186,24 +186,49 @@ vision, no tab bar). Layout:
   ruby, from the engine's `rubyCells`), the **kana reading**, and the **primary
   gloss**.
 * **Reading insight — "compound ≠ sum of parts":** a card that lays each part's
-  **matched reading** (the reading the kanji takes *inside this compound*,
-  `matchedReadingNormalized`) beside the compound's overall reading, joined with
-  `+` then `→`. When a part is flagged **`isJukujikun`** it is highlighted with a
-  **熟字訓** note ("a meaning-based reading not in its own standard on/kun set") —
-  the pedagogically interesting case the screen exists to surface.
+  **intermediate reading** beside the compound's overall reading, joined with `+`
+  then `→`. The intermediate reading prefers the reading the kanji takes *inside
+  this compound* (`matchedReadingNormalized`, shown in cyan); when the corpus
+  bundles the part into a multi-kanji subword (e.g. 日本 → にほん) so no
+  per-kanji reading is recorded, it **falls back to the kanji's standard
+  on-reading (then kun)**, styled muted, so no kanji is ever left with a bare
+  "—". When a part is flagged **`isJukujikun`** it is highlighted with a **熟字訓**
+  note ("a meaning-based reading not in its own standard on/kun set") — the
+  pedagogically interesting case the screen exists to surface.
 * **Per-kanji cards:** a wrapping grid, one card per kanji — glyph, **on + kun**
   readings (the *matched* reading highlighted in its row), **meaning**,
   **JLPT / grade / stroke** pills, and a **熟字訓** chip when applicable — each
-  with two drills: **Detail** (→ the kanji's detail page) and **Fisheye** (→ that
-  kanji's *own* single-kanji fisheye). A literal multi-centered "fisheye of
-  fisheyes" for the *whole* compound is a **deliberate later step** — each kanji
-  drills into its single-center graph today.
+  with a **speaker button** (hear the kanji's intermediate reading aloud, for
+  audible review, reusing `SpeakerButton`) and two drills: **Detail** (→ the
+  kanji's detail page) and **Graph** (→ that kanji's *own* single-kanji compound
+  graph; labeled "Graph" with the `circle.hexagongrid.fill` glyph, matching the
+  "Explore Compound Graph" wording used elsewhere). A literal multi-centered
+  "fisheye of fisheyes" for the *whole* compound is a **deliberate later step** —
+  each kanji drills into its single-center graph today.
 * **Seeding / empty state:** the on-screen search (or one of the **example-word
   chips**) resolves a typed word to an entry (preferring a multi-kanji exact
   hit); opening from a word's strip seeds that word; a bare top-bar open falls
   back to the current word when it is multi-kanji, else a curated default compound.
   A **kana-only** word shows a "no kanji to decompose" nudge, and a screen opened
   with no word shows the example chips to start from.
+* **Name-search resilience:** a typed word may be a proper name, which the exact
+  search skips unless "Names" is on. The compound search **retries with names
+  forced on** when the first pass returns nothing (mirroring the omni-search's
+  auto-enable), and if *that* still finds nothing it surfaces a **"No compound
+  found for …"** notice under the field rather than failing silently.
+* **Recent-kanji examples:** the "Try:" chips lead with the **most frequent
+  compound for each of the 6 recent kanji** (one chip per recent kanji,
+  de-duplicated by word, capped at 4) so the examples track what the user has
+  been studying; canonical example words fill out the row when the ring is sparse.
+* **Unmistakable field, good layout:** on this screen the **top omni-search is
+  hidden** and the screen's own field is **prominent and autofocuses on arrival**
+  — it is the field the user kept mistaking for the top search bar. The whole
+  screen is wrapped in a `ScrollView` (like its siblings), so a tall
+  decomposition never overflows into the window-shade band or centers awkwardly.
+* **Audible review & copy:** a **speaker button** on the header card hears the
+  headword's kana aloud; each kanji card carries its own. The screen opts into
+  **`.textSelection(.enabled)`** and a right-click **context menu** (Speak
+  Headword / Copy Entry / Copy Headword), so nothing is un-copyable.
 * **No new core data:** the screen is a pure-SwiftUI composition over the
   engine's existing per-kanji `kanjiDNA` (built by `build_per_kanji_ruby`), so
   each part's readings/meaning/level and the 熟字訓 flag come straight from the

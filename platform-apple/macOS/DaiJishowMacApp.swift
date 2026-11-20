@@ -335,41 +335,46 @@ struct MainWorkspaceView: View {
             .padding(.vertical, 3)
             .background(Capsule().fill(.ultraThinMaterial))
 
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
+            // The Compound Kanji screen owns its own (autofocused, prominent) search
+            // field, so we hide this top omni-search there — the two are what the
+            // user kept confusing, and showing only one removes the ambiguity.
+            if engine.activeScreen != .compoundKanji {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
 
-                TextField("Search Kanji, Kana, Romaji, or English (press Enter)...", text: $engine.searchQuery)
-                    .textFieldStyle(.plain)
-                    .focused($isSearchFocused)
-                    .onChange(of: engine.searchQuery) { _, _ in
-                        engine.performSearch()
-                    }
-                    .onSubmit {
-                        engine.submitSearchQuery()
-                    }
+                    TextField("Search Kanji, Kana, Romaji, or English (press Enter)...", text: $engine.searchQuery)
+                        .textFieldStyle(.plain)
+                        .focused($isSearchFocused)
+                        .onChange(of: engine.searchQuery) { _, _ in
+                            engine.performSearch()
+                        }
+                        .onSubmit {
+                            engine.submitSearchQuery()
+                        }
 
-                if !engine.searchQuery.isEmpty {
-                    Button {
-                        engine.searchQuery = ""
-                        engine.searchResults = []
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
+                    if !engine.searchQuery.isEmpty {
+                        Button {
+                            engine.searchQuery = ""
+                            engine.searchResults = []
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Clear the search")
                     }
-                    .buttonStyle(.plain)
-                    .help("Clear the search")
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background {
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+                }
+                .frame(maxWidth: 400)
+                .help("Search by kanji, kana, romaji, or English — results appear live; press Enter to open the top hit.")
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background {
-                Capsule()
-                    .fill(.ultraThinMaterial)
-                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
-            }
-            .frame(maxWidth: 400)
-            .help("Search by kanji, kana, romaji, or English — results appear live; press Enter to open the top hit.")
 
             navScreenButton(
                 title: "Kanji Index",
