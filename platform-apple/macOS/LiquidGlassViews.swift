@@ -622,6 +622,20 @@ private struct ZStackScreenSnapshotCard: View {
             }
             .padding(28)
 
+        case .compoundWord:
+            // The snapshot carries only the entryId, so the thumbnail themes the
+            // breadcrumb's headword with the decomposition motif.
+            VStack(spacing: 10) {
+                Image(systemName: "square.split.2x2.fill")
+                    .font(.system(size: 34, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+                Text(item.label)
+                    .font(.system(size: 52, weight: .bold))
+                Text("Compound Kanji")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+
         case .none:
             VStack(spacing: 10) {
                 Text(item.label)
@@ -641,6 +655,7 @@ private struct ZStackScreenSnapshotCard: View {
         case .radicalBuilder: return "puzzlepiece.extension.fill"
         case .kanjiLookup: return "list.bullet.rectangle.portrait.fill"
         case .wordCosmos: return "sparkles"
+        case .compoundKanji: return "square.split.2x2.fill"
         }
     }
 }
@@ -2373,9 +2388,15 @@ struct WordEntryView: View {
                         .foregroundStyle(.secondary)
                         .help("The individual kanji that make up this word, with their meanings, stroke counts, and JLPT level. Click one to open its detail page.")
                     Spacer()
-                    Text("Tap any kanji to inspect stroke vectors & graph")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    Button {
+                        engine.openCompoundKanji(seedEntryId: insights.entryId)
+                    } label: {
+                        Label("Open compound breakdown", systemImage: "arrow.up.right.square.fill")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .help("Open the full Compound Kanji screen, seeded with this word — decompose every kanji, inspect each part's readings & meaning, and see how the compound's reading assembles from them")
                 }
 
                 WrappingHStack(alignment: .top, horizontalSpacing: 12, verticalSpacing: 12) {
@@ -3523,6 +3544,354 @@ struct KanjiVectorDiagram: View {
                 )
             }
         }
+    }
+}
+
+// MARK: - Compound Kanji screen (decompose a word into its per-kanji parts)
+
+/// A first-class screen that takes any multi-kanji word and decomposes it into its
+/// individual kanji — each inspectable on its own (its readings, meaning, JLPT/grade,
+/// and a drill into that kanji's *own* detail page or fisheye). The header surfaces
+/// the pedagogically interesting bit: how the compound's reading assembles from the
+/// parts, flagging 熟字訓 (jukujikun) when a part uses a meaning-based reading.
+///
+/// It is a pure-SwiftUI composition over the engine's existing per-kanji `kanjiDNA`
+/// (built by `build_per_kanji_ruby`); no new core data is needed. A literal
+/// multi-centered "fisheye of fisheyes" for the whole compound is a deliberate later
+/// step — each kanji here drills into its *single*-centered fisheye instead.
+struct CompoundKanjiView: View {
+    @ObservedObject var engine: DaiJishowEngine
+    @State private var wordQuery: String = ""
+
+    /// Canonical multi-kanji compounds for the empty-state chips / on-screen search.
+    private let exampleWords = ["漢字", "日本語", "勉強", "日本", "言葉"]
+
+    private var entry: EntryDetail? { engine.compoundEntry }
+    private var insights: WordLexicalInsights? { engine.compoundInsights }
+    private var parts: [WordKanjiDNA] { engine.compoundInsights?.kanjiDNA ?? [] }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            searchRow
+
+            if let entry, !parts.isEmpty {
+                headerCard(entry)
+                readingInsightCard(entry)
+                kanjiCards
+            } else if let entry {
+                headerCard(entry)
+                kanaNote
+            } else {
+                emptyState
+            }
+        }
+        .padding(20)
+    }
+
+    // MARK: Search row
+
+    private var searchRow: some View {
+        LiquidGlassCard(cornerRadius: 16) {
+            VStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    Image(systemName: "square.split.2x2.fill")
+                        .foregroundStyle(.secondary)
+                    TextField("Decompose a word… (e.g. 漢字, 日本語, 勉強)", text: $wordQuery)
+                        .textFieldStyle(.plain)
+                        .onSubmit { engine.decomposeWordQuery(wordQuery) }
+                    Button("Decompose") {
+                        engine.decomposeWordQuery(wordQuery)
+                    }
+                    .disabled(wordQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(.horizontal, 4)
+
+                HStack(spacing: 8) {
+                    Text("Try:")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    ForEach(exampleWords, id: \.self) { word in
+                        Button(word) {
+                            engine.decomposeWordQuery(word)
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.accentColor)
+                        .help("Decompose \(word)")
+                    }
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    // MARK: Header — the word with per-kanji ruby
+
+    private func headerCard(_ entry: EntryDetail) -> some View {
+        LiquidGlassCard(cornerRadius: 20) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
+                    if entry.rubyCells.isEmpty {
+                        Text(entry.header.displayHeadword)
+                            .font(.system(size: 52, weight: .bold))
+                    } else {
+                        HStack(spacing: 8) {
+                            ForEach(entry.rubyCells) { cell in
+                                VStack(spacing: 2) {
+                                    Text(cell.furigana)
+                                        .font(.caption2.weight(.medium))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .fixedSize()
+                                    Text(cell.surface)
+                                        .font(.system(size: 46, weight: .bold))
+                                }
+                            }
+                        }
+                    }
+                    Spacer()
+                }
+                HStack(spacing: 10) {
+                    if !entry.header.kanaHead.isEmpty {
+                        Text(entry.header.kanaHead)
+                            .font(.title3.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    if !entry.header.primaryGloss.isEmpty {
+                        Text(entry.header.primaryGloss)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    // MARK: Reading insight — how the compound's reading assembles
+
+    private func readingInsightCard(_ entry: EntryDetail) -> some View {
+        let jukujikun = parts.filter { $0.isJukujikun }
+        return LiquidGlassCard(cornerRadius: 20) {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("How the reading assembles", systemImage: "waveform.path.ecg.rectangle")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .help("Each part shows the reading it takes *inside this compound*; the compound's reading is assembled from them, but is not always their sum.")
+
+                HStack(spacing: 10) {
+                    ForEach(Array(parts.enumerated()), id: \.offset) { idx, part in
+                        VStack(spacing: 4) {
+                            Text(part.glyph)
+                                .font(.system(size: 28, weight: .bold))
+                            Text(part.matchedReadingNormalized ?? "—")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.cyan)
+                        }
+                        if idx < parts.count - 1 {
+                            Text("+")
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text("→")
+                        .font(.title3.weight(.bold))
+                    VStack(spacing: 4) {
+                        Text(entry.header.displayHeadword)
+                            .font(.system(size: 28, weight: .bold))
+                        Text(entry.header.kanaHead.isEmpty ? "—" : entry.header.kanaHead)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+
+                if !jukujikun.isEmpty {
+                    Text("…uses 熟字訓 (jukujikun): \(jukujikun.map { $0.glyph }.joined(separator: "・")) takes a meaning-based reading here, not one in its own standard on/kun set.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("The compound's reading is assembled from the parts' on readings — not always their literal sum.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    // MARK: Per-kanji component cards (the core)
+
+    private var kanjiCards: some View {
+        LiquidGlassCard(cornerRadius: 20) {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Components (\(parts.count))", systemImage: "square.grid.2x2.fill")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .help("Each kanji that makes up this word. Open its detail page, or its own single-kanji fisheye, to inspect it on its own.")
+
+                WrappingHStack(alignment: .top, horizontalSpacing: 12, verticalSpacing: 12) {
+                    ForEach(parts) { part in
+                        kanjiCard(part)
+                    }
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    private func kanjiCard(_ part: WordKanjiDNA) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Text(part.glyph)
+                    .font(.system(size: 40, weight: .bold))
+                    .frame(width: 58, height: 58)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.white.opacity(0.08))
+                    )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(part.meanings.split(separator: ";").first.map(String.init) ?? "Kanji")
+                            .font(.subheadline.weight(.bold))
+                            .lineLimit(1)
+                        if part.strokes > 0 {
+                            Text("\(part.strokes)画")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        if !part.jlptLabel.isEmpty {
+                            Text(part.jlptLabel)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.cyan)
+                        }
+                        if !part.gradeLabel.isEmpty {
+                            Text(part.gradeLabel)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        if part.isJukujikun {
+                            Text("熟字訓")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.orange.opacity(0.22)))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+
+                    if !part.onReadings.isEmpty {
+                        readingTokenRow(label: "音", tokens: part.onReadings.prefix(4).map { $0 }, matched: part.matchedReadingNormalized)
+                    }
+                    if !part.kunReadings.isEmpty {
+                        readingTokenRow(label: "訓", tokens: part.kunReadings.prefix(4).map { $0 }, matched: part.matchedReadingNormalized)
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    engine.openKanjiDetail(codepoint: part.codepoint)
+                } label: {
+                    Label("Detail", systemImage: "character.book.closed")
+                }
+                .controlSize(.small)
+                .help("Open \(part.glyph)'s detail page")
+
+                Button {
+                    engine.openFisheye(codepoint: part.codepoint)
+                } label: {
+                    Label("Fisheye", systemImage: "circle.hexagongrid")
+                }
+                .controlSize(.small)
+                .help("Open \(part.glyph)'s own single-kanji fisheye — the whole compound's multi-centered fisheye is a later step")
+
+                Spacer()
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                )
+        )
+    }
+
+    private func readingTokenRow(label: String, tokens: [String], matched: String?) -> some View {
+        HStack(spacing: 5) {
+            Text(label)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
+            ForEach(Array(tokens.enumerated()), id: \.offset) { _, tok in
+                let isMatch = matched != nil && tok == matched
+                Text(tok)
+                    .font(.caption2.weight(isMatch ? .bold : .regular))
+                    .foregroundStyle(isMatch ? .cyan : .primary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(isMatch ? Color.cyan.opacity(0.18) : Color.white.opacity(0.06)))
+            }
+        }
+    }
+
+    // MARK: States
+
+    private var kanaNote: some View {
+        LiquidGlassCard(cornerRadius: 20) {
+            VStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.title)
+                    .foregroundStyle(.secondary)
+                Text("This word has no kanji to decompose — it's written in kana only.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text("Try a two-kanji word like 漢字 or 勉強.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(24)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "square.split.2x2.fill")
+                .font(.system(size: 56, weight: .light))
+                .foregroundStyle(.secondary)
+            VStack(spacing: 6) {
+                Text("Compound Kanji")
+                    .font(.title.weight(.bold))
+                Text("Decompose any multi-kanji word into its parts — inspect each kanji's readings & meaning, and see how the compound's reading assembles from them.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 460)
+            }
+            HStack(spacing: 8) {
+                ForEach(exampleWords, id: \.self) { word in
+                    Button(word) {
+                        engine.decomposeWordQuery(word)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .help("Decompose \(word)")
+                }
+            }
+            Text("Or type a word above and press Enter.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(40)
     }
 }
 

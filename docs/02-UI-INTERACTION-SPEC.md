@@ -5,7 +5,8 @@ Dai-Jishow abandons conventional nested menus, sidebars, and modal dialogs in fa
 > **Status snapshot.** The macOS desktop shell ships today. The **Z-Stack
 > navigation deck**, single-window liquid-glass surface, **Reader/Detailed**
 > word entry, **Kanji detail** with a "Vocabulary & Compounds" display-mode
-> switch, the **Fisheye** explorer, **Word Cloud**, **Recall** modes,
+> switch, the **Fisheye** explorer, **Word Cloud**, the **Compound Kanji**
+> decomposer, **Recall** modes,
 > **hover tooltips** on every control, **text selection + copy**, and an
 > **About / Preferences** window are all **built**. The 3D "Time Machine" zoom,
 > the **Radial Bloom** selection menu (§3), and the multi-device matrix (§5) are
@@ -131,7 +132,7 @@ vision, no tab bar). Layout:
     expansion, not the current design.
 * **Names** toggle (include proper names — with a graceful **auto-nudge** when a
   proper name is the search's best match but is hidden by Names being off; see
-  §6.4), a segmented **Recall** picker
+  §6.5), a segmented **Recall** picker
   (*Full / Hide Kana / Hide Gloss*), and **recent-kanji** chips.
 * **Every control carries a hover tooltip** explaining what it is / does.
 
@@ -161,6 +162,10 @@ vision, no tab bar). Layout:
   section header and every chip carry a **hover tooltip** — the chip tooltip
   decodes the `〜`-marked slot, names the grammatical role (Modifier /
   Preceding / Following Particle / Adjectival), and explains the `×N` count.
+* **Open the Compound Kanji screen:** the **Kanji DNA** strip's header carries an
+  **"Open compound breakdown ↗"** button that seeds the dedicated Compound Kanji
+  screen (§6.4) with *this* word, so you can pivot from a word's quick per-kanji
+  strip to the full, interactive decomposition (each part inspectable on its own).
 
 ### 6.3 Kanji Detail
 * Glyph with **animated KanjiVG stroke vectors**, on/kun readings, full metadata,
@@ -169,7 +174,43 @@ vision, no tab bar). Layout:
   **Ends with** — persisted per user. A counter reads "X of Y words" and an
   empty-state message appears when a filtered view has no matches.
 
-### 6.4 Navigation, Feedback & Packaging
+### 6.4 Compound Kanji
+* **The screen:** a dedicated **Compound Kanji** view that decomposes any
+  multi-kanji word into its individual kanji, each inspectable on its own — the
+  "Kanji DNA" strip of a single word, elevated to a first-class, interactive
+  screen. Reached two ways: a **4th top-bar button** ("Compounds", the same
+  icon-collapsing treatment as the other three screens) and the **"Open compound
+  breakdown ↗"** button on a word entry's **Kanji DNA** strip (§6.2), which seeds
+  the screen with *that* word.
+* **Header card:** the headword with **furigana over each glyph** (per-kanji
+  ruby, from the engine's `rubyCells`), the **kana reading**, and the **primary
+  gloss**.
+* **Reading insight — "compound ≠ sum of parts":** a card that lays each part's
+  **matched reading** (the reading the kanji takes *inside this compound*,
+  `matchedReadingNormalized`) beside the compound's overall reading, joined with
+  `+` then `→`. When a part is flagged **`isJukujikun`** it is highlighted with a
+  **熟字訓** note ("a meaning-based reading not in its own standard on/kun set") —
+  the pedagogically interesting case the screen exists to surface.
+* **Per-kanji cards:** a wrapping grid, one card per kanji — glyph, **on + kun**
+  readings (the *matched* reading highlighted in its row), **meaning**,
+  **JLPT / grade / stroke** pills, and a **熟字訓** chip when applicable — each
+  with two drills: **Detail** (→ the kanji's detail page) and **Fisheye** (→ that
+  kanji's *own* single-kanji fisheye). A literal multi-centered "fisheye of
+  fisheyes" for the *whole* compound is a **deliberate later step** — each kanji
+  drills into its single-center graph today.
+* **Seeding / empty state:** the on-screen search (or one of the **example-word
+  chips**) resolves a typed word to an entry (preferring a multi-kanji exact
+  hit); opening from a word's strip seeds that word; a bare top-bar open falls
+  back to the current word when it is multi-kanji, else a curated default compound.
+  A **kana-only** word shows a "no kanji to decompose" nudge, and a screen opened
+  with no word shows the example chips to start from.
+* **No new core data:** the screen is a pure-SwiftUI composition over the
+  engine's existing per-kanji `kanjiDNA` (built by `build_per_kanji_ruby`), so
+  each part's readings/meaning/level and the 熟字訓 flag come straight from the
+  engine — the drills reuse `openKanjiDetail` / `openFisheye`, and the screen is
+  part of the Z-Stack history (a breadcrumb that restores to the same word).
+
+### 6.5 Navigation, Feedback & Packaging
 * **Z-Stack deck** (⌘\\) scrubs the lookup trail; **Word Cloud** (⌘⇧W) is a
   randomized prevalence bubble cloud whose bubbles can be **tinted by difficulty** — a **Color** control (the control bar) switches between **Prevalence** (the frequency tiers), **JLPT** (a green→red N5…N1 ramp from the word's hardest head-kanji level), and **Grade** (a light→deep slate ramp from its highest head-kanji grade; kana-only words get a neutral dot); ⌘⇧C toggles the **Detailed** view. In the **ranked** layout each row carries the frequency-tier chip *plus* a **JLPT** chip and a **grade** chip (when the word has a head kanji to derive them from), each self-documenting via tooltip.
 * **JLPT / grade guidance:** the JLPT legend, the ranked-row JLPT chip, and the
@@ -226,11 +267,12 @@ vision, no tab bar). Layout:
   decorative legend drops to its own row, so the "Graph Mode" label never
   collapses into a multi-line mess.
 * **Icon-collapse ("crunch to icon"):** the top-bar **Kanji Index / Radicals /
-  Word Cloud** buttons and the Word Cloud control bar's **Roll / Sample / Color**
+  Word Cloud / Compounds** buttons and the Word Cloud control bar's **Roll / Sample / Color**
   controls **drop their text label and show the icon only** when the row is too
   narrow to fit it, so a label never spills onto a second line. Each row measures
   its own width (`measureWidth(into:)` in `AdaptiveControls.swift`) and gates the
-  collapse on a named threshold; a **tooltip is always attached**, so a collapsed
+  collapse on a named threshold (the top-bar cluster is sized for **four** screen
+  buttons); a **tooltip is always attached**, so a collapsed
   icon stays self-documenting.
 * **Legend tooltips:** the Word Cloud colour legend carries a per-dot tooltip
   (its meaning) *and* an overall tooltip, so when the window is narrow and only

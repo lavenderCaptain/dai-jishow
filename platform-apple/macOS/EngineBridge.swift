@@ -525,6 +525,7 @@ enum ActiveScreenKind {
     case radicalBuilder
     case kanjiLookup
     case wordCosmos
+    case compoundKanji
 }
 
 /// Prevalence-tier ceiling for the Word Cosmos sampler. `maxFreqRank` is the
@@ -641,6 +642,7 @@ enum HistorySnapshot {
     case fisheye(kanji: KanjiDetail, nodes: [FisheyeNode], leftOverflow: Int, rightOverflow: Int)
     case radicalBuilder(selectedIds: [UInt8], targetStrokes: Int, matches: [UInt32])
     case kanjiLookup(mode: KanjiLookupMode, strokeCount: Int, sortOrder: KanjiSortOrder, results: [KanjiIndexItem])
+    case compoundWord(entryId: UInt32)
 }
 
 enum RecallMode: String, CaseIterable, Identifiable {
@@ -1169,6 +1171,12 @@ final class DaiJishowEngine: ObservableObject {
 
     @Published var activeEntry: EntryDetail?
     @Published var activeKanji: KanjiDetail?
+
+    /// The word the Compound Kanji screen is currently decomposing, kept separate
+    /// from `activeEntry` so opening the screen (or searching a word into it) does
+    /// not clobber the word-detail view the user just came from.
+    @Published var compoundEntry: EntryDetail?
+    @Published var compoundInsights: WordLexicalInsights?
     @Published var fisheyeNodes: [FisheyeNode] = []
     @Published var overflowPreviewNodes: [FisheyeNode] = []
     @Published var leftOverflowCount: Int = 0
@@ -2020,6 +2028,13 @@ final class DaiJishowEngine: ObservableObject {
         case .wordCosmos:
             // The cosmos is a transient, re-sampled view; no state to snapshot.
             break
+        case .compoundKanji:
+            // The screen's state is which word it is decomposing; record it so a
+            // breadcrumb can restore the same decomposition.
+            if let id = compoundEntry?.header.id {
+                historySnapshots[item.id] = .compoundWord(entryId: id)
+            }
+            break
         }
     }
 
@@ -2122,6 +2137,11 @@ final class DaiJishowEngine: ObservableObject {
         case .wordCosmos:
             // The cosmos is a transient, re-sampled view; no state to snapshot.
             break
+        case .compoundKanji:
+            if let id = compoundEntry?.header.id {
+                historySnapshots[item.id] = .compoundWord(entryId: id)
+            }
+            break
         }
     }
 
@@ -2197,6 +2217,16 @@ final class DaiJishowEngine: ObservableObject {
             activeScreen = .kanjiLookup
         case .wordCosmos:
             openWordCosmos(recordHistory: false)
+        case .compoundKanji:
+            // Restore to the same decomposition: prefer the snapshot's entryId, fall
+            // back to the breadcrumb's target, else the empty (example) state.
+            let seed: UInt32?
+            if case .compoundWord(let id) = historySnapshots[item.id] {
+                seed = id
+            } else {
+                seed = (item.targetId == 0 ? nil : item.targetId)
+            }
+            openCompoundKanji(seedEntryId: seed, recordHistory: false)
         }
     }
 
@@ -2456,17 +2486,22 @@ final class DaiJishowEngine: ObservableObject {
         )
     }
 
-    func openWordEntry(entryId: UInt32, recordHistory: Bool = true) {
-        let detail: EntryDetail
+    /// Resolve an `EntryDetail` for `entryId`, memoised in `entryDetailCache`.
+    /// Shared by the word-detail and compound-kANJI screens so both fetch once.
+    private func fetchEntryDetail(_ entryId: UInt32) -> EntryDetail? {
         if let cached = entryDetailCache[entryId] {
-            detail = cached
-        } else {
-            guard let h = handle else { return }
-            var raw = dj_entry_detail_t()
-            guard dj_dict_get_entry_detail(h, entryId, &raw) else { return }
-            detail = parseEntryDetail(raw)
-            entryDetailCache[entryId] = detail
+            return cached
         }
+        guard let h = handle else { return nil }
+        var raw = dj_entry_detail_t()
+        guard dj_dict_get_entry_detail(h, entryId, &raw) else { return nil }
+        let detail = parseEntryDetail(raw)
+        entryDetailCache[entryId] = detail
+        return detail
+    }
+
+    func openWordEntry(entryId: UInt32, recordHistory: Bool = true) {
+        guard let detail = fetchEntryDetail(entryId) else { return }
         self.activeEntry = detail
         if !detail.hasJapaneseGlosses && glossLanguageMode != .english {
             self.glossLanguageMode = .english
@@ -2487,6 +2522,96 @@ final class DaiJishowEngine: ObservableObject {
             ))
         }
     }
+
+    // MARK: - Compound Kanji screen
+
+    /// Open the Compound Kanji screen, decomposing a word into its per-kanji parts.
+    ///
+    /// The target word is resolved in this order:
+    ///   1. an explicit `seedEntryId` (e.g. the "Open compound breakdown" button on
+    ///      a word-detail's Kanji DNA strip), or
+    ///   2. the currently open word, when it is itself a multi-kanji word, or
+    ///   3. a sensible built-in default compound.
+    ///
+    /// If nothing resolves, the screen still opens to its empty state (a word search
+    /// plus example chips), so the top-bar entry point always navigates somewhere.
+    func openCompoundKanji(seedEntryId: UInt32? = nil, recordHistory: Bool = true) {
+        ensureKanjiCatalogLoaded()
+
+        var entryId = seedEntryId
+        if entryId == nil,
+           let active = activeEntry,
+           active.header.displayHeadword.unicodeScalars.filter({ isKanjiScalar($0.value) }).count >= 2 {
+            entryId = active.header.id
+        }
+        if entryId == nil {
+            entryId = Self.defaultCompoundEntryId(handle: handle)
+        }
+
+        guard let id = entryId, let detail = fetchEntryDetail(id) else {
+            self.compoundEntry = nil
+            self.compoundInsights = nil
+            self.activeScreen = .compoundKanji
+            return
+        }
+
+        for scalar in detail.header.displayHeadword.unicodeScalars where isKanjiScalar(scalar.value) {
+            pushRecentKanji(scalar.value)
+        }
+        self.compoundEntry = detail
+        self.compoundInsights = ensureWordInsights(for: detail)
+        self.activeScreen = .compoundKanji
+
+        if recordHistory {
+            recordNavigation(NavBreadcrumb(
+                kind: .compoundKanji,
+                targetId: id,
+                label: detail.header.displayHeadword,
+                subtitle: "Compound Kanji"
+            ))
+        }
+    }
+
+    /// Resolve a typed word to its entry and decompose it on the compound screen,
+    /// preferring a multi-kanji exact hit so a kana query lands on the kanji form.
+    func decomposeWordQuery(_ query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let h = handle else { return }
+        var rawPtr: UnsafePointer<dj_word_hit_t>?
+        let count = trimmed.withCString { cStr in
+            dj_dict_search(h, cStr, DJ_SEARCH_EXACT, includeNames, 8, &rawPtr)
+        }
+        guard let ptr = rawPtr, count > 0 else { return }
+        var resolvedId: UInt32?
+        for i in 0..<count {
+            let hit = Self.wordHit(from: ptr[i])
+            let kanjiCount = hit.kanjiHead.unicodeScalars.filter { isKanjiScalar($0.value) }.count
+            if kanjiCount >= 2 { resolvedId = hit.id; break }
+        }
+        if resolvedId == nil {
+            resolvedId = ptr[0].entry_id
+        }
+        if let id = resolvedId {
+            openCompoundKanji(seedEntryId: id, recordHistory: true)
+        }
+    }
+
+    /// A curated fallback word for the compound screen when the user opens it with no
+    /// current word: a few canonical two-kanji compounds, first one that resolves.
+    private static func defaultCompoundEntryId(handle: OpaquePointer?) -> UInt32? {
+        guard let h = handle else { return nil }
+        for head in ["漢字", "日本語", "勉強", "日本", "言葉"] {
+            var rawPtr: UnsafePointer<dj_word_hit_t>?
+            let count = head.withCString { cStr in
+                dj_dict_search(h, cStr, DJ_SEARCH_EXACT, true, 5, &rawPtr)
+            }
+            if let ptr = rawPtr, count > 0 {
+                return ptr[0].entry_id
+            }
+        }
+        return nil
+    }
+
 
     func openKanjiDetail(codepoint: UInt32, recordHistory: Bool = true) {
         guard let detail = fetchKanjiDetail(codepoint: codepoint, includeLexicalLists: true) else { return }

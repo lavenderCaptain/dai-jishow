@@ -157,14 +157,14 @@ struct MainWorkspaceView: View {
     @ObservedObject var engine: DaiJishowEngine
     @FocusState private var isSearchFocused: Bool
 
-    /// Measured width of the top nav bar; drives `navCompact` so the three screen
-    /// buttons (Kanji Index / Radicals / Word Cloud) drop to icon-only when the
-    /// window is too narrow to show their labels on one line.
+    /// Measured width of the top nav bar; drives `navCompact` so the four screen
+    /// buttons (Kanji Index / Radicals / Word Cloud / Compounds) drop to icon-only
+    /// when the window is too narrow to show their labels on one line.
     @State private var navBarWidth: CGFloat = 0
 
     /// Below this bar width the screen buttons crunch to icons (a tooltip keeps
-    /// each one self-documenting). Tunable.
-    private var navCompact: Bool { isRowCompact(navBarWidth, threshold: 1040) }
+    /// each one self-documenting). Tunable; sized for the four screen buttons.
+    private var navCompact: Bool { isRowCompact(navBarWidth, threshold: 1180) }
 
     var body: some View {
         ZStack {
@@ -204,6 +204,8 @@ struct MainWorkspaceView: View {
                             KanjiLookupView(engine: engine)
                         case .wordCosmos:
                             WordCosmosView(engine: engine)
+                        case .compoundKanji:
+                            CompoundKanjiView(engine: engine)
                         }
                     }
 
@@ -394,6 +396,15 @@ struct MainWorkspaceView: View {
                 compact: navCompact,
                 help: "Open the Word Cloud — a randomized prevalence bubble cloud (⌘⇧W)",
                 action: { engine.openWordCosmos() }
+            )
+
+            navScreenButton(
+                title: "Compounds",
+                systemImage: "square.split.2x2.fill",
+                isActive: engine.activeScreen == .compoundKanji,
+                compact: navCompact,
+                help: "Open the Compound Kanji screen — decompose a word into its kanji, inspect each part's readings & meaning, and see how the compound reading assembles from them",
+                action: { engine.openCompoundKanji() }
             )
 
             Toggle("Names", isOn: Binding(
