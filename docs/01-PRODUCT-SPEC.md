@@ -29,6 +29,7 @@ Dai-Jishow fuses three paradigms into a single cohesive study and reference envi
   * **Natural Collocations:** Statistical `Noun + を + Verb` and modifier pairings.
   * **Lemmatized Example Sentences:** Pre-indexed by lemma ID so conjugated forms appear automatically, with toggleable furigana and audio TTS.
 * **Active-Recall Display Toggles:** Instant pills for `Full`, `Hide Kana`, `Hide Gloss`, `Kana Only`, and `Kanji Only`.
+* **Reverse Lookups (English → Japanese) — *Built (macOS, basic)*:** type an English word and the engine returns the Japanese entries whose sense-0 gloss matches via the `en_glosses` FTS5 index (e.g. *sake* → 酒/鮭 *and* 為 *benefit*), surfaced in the **"Also in English glosses"** column; the romaji → kana/kanji direction is also live. This is **not** a full bidirectional English↔Japanese dictionary — English is a supplementary, relevance-ranked match path, not a co-equal search axis. **Planned expansion:** full-string / multi-gloss ranking, English proper names, and a dedicated Japanese→English "find me an English word" search axis.
 
 ### 1.2 Kanji Reference & Dokusha Spatial Fisheye Explorer — *Built (macOS)*
 * **Kanji Detail View:**

@@ -117,7 +117,21 @@ vision, no tab bar). Layout:
    kanji/kana queries. As a special case, when a clean-romaji query transliterates to
    kana that matches nothing (e.g. *bore* → *ぼれ*), those English-gloss results
    populate the main list directly, so the dropdown is never empty.
-* **Names** toggle (include proper names), a segmented **Recall** picker
+    **Reverse lookups (capability note):** this is a genuine *English → Japanese*
+    reverse lookup — type an English word and the engine returns the Japanese
+    entries whose sense-0 gloss matches (e.g. *sake* → 酒/鮭 *and* 為 *benefit*),
+    plus the romaji → kana/kanji direction (*sake* → *さけ*). It is **not** a full
+    bidirectional English↔Japanese dictionary: the engine's spine is
+    Japanese-headword → definition, so English is a *supplementary, relevance-ranked*
+    match path (FTS5 over `en_glosses`, re-ranked by `english_gloss_relevance_tier`,
+    capped, deduped against the main list, and shown only for ASCII queries with
+    ≥ 2 chars). The Japanese→English "find me an English word" direction is not a
+    distinct search axis today, and richer English-anchored reverse lookup
+    (full-string / multi-gloss ranking, English proper names) is a planned
+    expansion, not the current design.
+* **Names** toggle (include proper names — with a graceful **auto-nudge** when a
+  proper name is the search's best match but is hidden by Names being off; see
+  §6.4), a segmented **Recall** picker
   (*Full / Hide Kana / Hide Gloss*), and **recent-kanji** chips.
 * **Every control carries a hover tooltip** explaining what it is / does.
 
@@ -180,6 +194,24 @@ vision, no tab bar). Layout:
   `AVSpeechSynthesizer` has no per-mora pitch control, so the voice speaks its own
   standard accent; the speaker is "hear the standard reading", not a re-render of
   the diagram's downstep.
+* **Proper-name auto-nudge** (the top-bar **Names** toggle, `includeNames`): with
+  Names **off**, the omni-search excludes proper names (`is_name = 1`), so a place
+  like **Akihabara** can hide its real answer — 秋葉原 — behind the only visible
+  result, an event compound such as 秋葉原通り魔事件. The detection is precise:
+  proper names carry a *frequency sentinel*, and the AUTO search orders by
+  *exact-head-then-frequency*, so a name lands at **#1 only when no common word has
+  an exact reading match for it** (verified: it does **not** fire on ordinary words
+  like *aoi* / *yuki* / *michi*, whose common reading always outranks the name
+  homonym). On the debounced settle of a Names-off search the engine runs one small
+  speculative Names-on search; if its top hit is a proper name, it acts **on the
+  user's behalf** — flips **Names** on (re-running the search via the toggle's
+  `.onChange`), **flashes the toggle** so the result shift reads as "this control
+  just changed", and shows a one-line **fading banner** at the top of the results
+  (*"Found the name 秋葉原 · Names turned on · Undo"*). The intent is honoured: a
+  **manual off** switches the nudge to a *non-flipping* "you might want to turn it
+  back on" **suggestion** (same banner, *"Turn on Names"* instead of *"Undo"*), and
+  a query the user has **undone or dismissed** is not re-nudged until they run a new
+  one. The banner auto-dismisses after ~6 s.
 * **Window behaviour** (the title bar is hidden, so the usual affordances are
   re-installed by a transparent top-bar handle — `WindowZoomHandle` /
   `WindowFrameCoordinator`): **drag** the window from its empty top bar;

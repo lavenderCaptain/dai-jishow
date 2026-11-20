@@ -156,7 +156,7 @@ fi
 
 # --- DMG (drag-to-Applications installer) --------------------------------
 # The standard "drag the app into Applications" package: the .app plus a
-# symlink to /Applications. Open the .dmg, drag DaiJishow onto the
+# symlink to /Applications. Open the .dmg, drag Dai-Jishow onto the
 # Applications icon, done.
 if [[ "$MAKE_DMG" -eq 1 ]]; then
   echo "==> creating DMG (drag-to-Applications)"
@@ -180,7 +180,7 @@ if [[ "$MAKE_DMG" -eq 1 ]]; then
       -imagekey zlib-level=9 \
       "$DMG_OUT" >/dev/null; then
     echo "    + $DMG_NAME ($(du -h "$DMG_OUT" | cut -f1))"
-    echo "    open \"$DMG_OUT\"   # then drag DaiJishow onto the Applications icon"
+    echo "    open \"$DMG_OUT\"   # then drag Dai-Jishow onto the Applications icon"
   else
     echo "    ! DMG creation failed (hdiutil unavailable or disk full)"
   fi

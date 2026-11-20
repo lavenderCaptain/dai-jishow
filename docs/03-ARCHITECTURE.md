@@ -41,6 +41,7 @@ Dai-Jishow uses a **shared C++20 core** exposed through a **flat C11 ABI (`dj_ca
 ### 3.1 `dj_storage`
 * Wraps SQLite3 (`WITHOUT ROWID` tables, FTS5 contentless prefix/substring indexes, and `ATTACH DATABASE` support for user-imported Yomitan ZIP dictionaries).
 * Decodes quantized binary KanjiVG polylines (`uint16` coordinate streams) and pre-tokenized example sentence span blobs.
+* **Reverse lookup (English → Japanese):** the `entries_fts` index over `en_glosses` backs the "Also in English glosses" column — `db_search_words` runs the English-gloss FTS5 query (mode `DJ_SEARCH_ENGLISH`) and re-ranks hits by `english_gloss_relevance_tier` (sense-0 gloss relevance) before truncating. This makes English a *supplementary, relevance-ranked* match path; it is **not** a co-equal Japanese→English search axis. A full-string / multi-gloss ranking and a dedicated English-anchored search are a planned expansion.
 
 ### 3.2 `dj_nlp`
 * **Morphological Analyzer:** Embeds `libmecab` with a compact binary dictionary for sub-millisecond tokenization of live OCR text and recursive Japanese definition jumps.
@@ -81,6 +82,12 @@ Dai-Jishow uses a **shared C++20 core** exposed through a **flat C11 ABI (`dj_ca
   **drag-to-Applications DMG** (`DaiJishow-<version>.dmg`: the app plus an
   `/Applications` symlink). Flags: `--release`, `--no-db`, `--symlink-db`,
   `--no-dmg`.
+* **Naming:** The fused forms above — `DaiJishow`, `DaiJishowCore`,
+  `DaiJishowMac`, the `DaiJishow.app` / `DaiJishow-<version>.dmg` artifacts, and
+  the `daijishow.db` bundle — are the *code & artifact* stem and are written fused
+  on purpose: Swift / C++ / CMake identifiers and the compiled binary cannot carry
+  a hyphen. The hyphenated *Dai‑Jishow* is the display/product name used in prose
+  and the UI (see the README's "Naming" note).
 * **Status:** Today the only shipped UI shell is **macOS**. The iOS/iPadOS,
   watchOS, and Android/Wear OS shells in the diagram above are designed but not
   yet implemented; the C++ core is shared and platform-neutral.

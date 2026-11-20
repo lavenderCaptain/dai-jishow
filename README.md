@@ -7,6 +7,13 @@ ships a **native macOS desktop app** rendered with translucent *Liquid Glass*
 materials. Apple (iOS/watchOS) and Android (Wear OS) shells are on the roadmap;
 the macOS shell is the current product.
 
+> **Naming.** *Dai‑Jishow* (hyphenated) is the display/product name, used in prose,
+> the UI, and this page. In code and build artifacts the name is written fused —
+> `DaiJishow`, `DaiJishowCore`, `DaiJishowMac` — because Swift / C++ / CMake
+> identifiers and the compiled binary cannot contain a hyphen; the lowercase
+> `dai-jishow` is the repository and URL. This split is intentional, not a
+> typo.
+
 ## What's Built Today (macOS)
 
 A single-window, focus-first desktop dictionary. No tab bar, no nested menus —
@@ -95,7 +102,7 @@ swift build
 # Open the app directly:
 open build/DaiJishow.app
 
-# …or the installer: open build/DaiJishow-<version>.dmg and drag DaiJishow onto
+# …or the installer: open build/DaiJishow-<version>.dmg and drag Dai-Jishow onto
 # the Applications folder.
 ```
 

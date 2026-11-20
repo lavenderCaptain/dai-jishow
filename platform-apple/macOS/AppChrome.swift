@@ -251,7 +251,10 @@ struct SettingsView: View {
                 .labelsHidden()
                 .help("Toggle kana and/or glosses for self-quiz recall.")
 
-                Toggle("Include proper names in search", isOn: $engine.includeNames)
+                Toggle("Include proper names in search", isOn: Binding(
+                    get: { engine.includeNames },
+                    set: { engine.setNamesIncluded($0, userInitiated: true) }
+                ))
                 Toggle("Expand Detailed View (full dashboard)", isOn: $engine.isWordCockpitExpanded)
             }
 

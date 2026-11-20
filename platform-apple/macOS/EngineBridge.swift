@@ -812,6 +812,21 @@ enum KanaNormalizer {
     }
 }
 
+/// A transient "hidden proper name" nudge, surfaced above the search results.
+///
+/// With Names off, the omni-search excludes proper names (`is_name = 1`), so a
+/// place like 秋葉原 "Akihabara" can be hidden behind the only visible result — an
+/// event compound such as 秋葉原通り魔事件. Because proper names carry a frequency
+/// sentinel, the AUTO search ranks a name at #1 *only* when it is the genuine best
+/// match and the names-off view is hiding it. When that happens we surface the
+/// hidden name and, on the user's behalf, flip Names on — or, once they've turned
+/// it off themselves, merely *suggest* turning it back on.
+struct NameNudge: Identifiable {
+    let id = UUID()
+    let hit: WordHit          // the hidden proper name (the engine's best match)
+    let autoEnabled: Bool     // true = we flipped Names on; false = suggest-only
+}
+
 @MainActor
 final class DaiJishowEngine: ObservableObject {
     private static let cockpitDefaultsKey = "daijishow.wordCockpitExpanded"
@@ -829,6 +844,38 @@ final class DaiJishowEngine: ObservableObject {
     @Published var includeNames: Bool = false
     @Published var recallMode: RecallMode = .full
     @Published var searchResults: [WordHit] = []
+
+    // MARK: Proper-name auto-nudge
+
+    /// A "hidden proper name" nudge currently shown above the results. See
+    /// `NameNudge`. Cleared by a new query or by its own dismissal timer.
+    @Published var nameNudge: NameNudge?
+
+    /// True when the user has *manually* turned Names off this session. The
+    /// auto-nudge then stops flipping it back on, but still leaves a gentle
+    /// "you might want to turn it back on" suggestion when the signal fires.
+    private var userToggledNamesManually = false
+
+    /// A query the user has already dismissed/undid the nudge for, so the same
+    /// query does not instantly re-raise the banner; a *new* query may still nudge.
+    private var suppressedNudgeQuery = ""
+
+    /// The query that raised the current nudge. A re-search of the *same* query
+    /// (e.g. the auto-enable's `includeNames = true` firing the toggle's
+    /// `.onChange` → `performSearch`) must **not** clear the banner, or the nudge
+    /// would vanish the instant Names flips on; only a *different* query supersedes it.
+    private var nudgeSourceQuery = ""
+
+    /// Backing timer for the auto-dismissing nudge banner.
+    private var nameNudgeDismissal: Task<Void, Never>?
+
+    /// Monotonic token so overlapping pulse timers only the latest one can clear
+    /// the flash.
+    private var nameFlashToken = 0
+
+    /// True briefly while the top-bar Names toggle is flashing, so an auto-enable
+    /// reads as "this control just changed" rather than a silent result shift.
+    @Published private(set) var namesToggleFlash = false
 
     /// English-gloss matches for the current romaji query, surfaced as a separate
     /// "Also in English glosses" section beneath the main (Japanese) results.
@@ -984,6 +1031,113 @@ final class DaiJishowEngine: ObservableObject {
         } else {
             searchFilters.insert(filter)
         }
+    }
+
+    // MARK: Proper-name auto-nudge controls
+
+    /// Route a Names-toggle change through here. A *user* change records intent: a
+    /// manual off suppresses the auto-nudge for the rest of the session, a manual
+    /// on re-enables it. The engine's own auto-enable passes `userInitiated: false`,
+    /// leaving intent untouched. Setting `includeNames` triggers the toggle's
+    /// `.onChange`, which re-runs the search (and the fisheye side-effects).
+    func setNamesIncluded(_ on: Bool, userInitiated: Bool) {
+        if userInitiated {
+            userToggledNamesManually = (on == false)
+        }
+        includeNames = on
+    }
+
+    /// Briefly flash the top-bar Names toggle so an auto-enable is visible as the
+    /// cause of a result change. Only the latest pulse can clear the flag, so rapid
+    /// nudges never prematurely end each other.
+    func pulseNamesToggle() {
+        nameFlashToken &+= 1
+        let token = nameFlashToken
+        namesToggleFlash = true
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.25))
+            guard !Task.isCancelled, let self else { return }
+            if self.nameFlashToken == token { self.namesToggleFlash = false }
+        }
+    }
+
+    /// Surface a "hidden proper name" nudge for `trimmed`. With Names off, run a
+    /// small speculative Names-on search and, if its #1 hit is a proper name, raise
+    /// a nudge. This is precise: proper names carry a frequency sentinel, so by the
+    /// AUTO search's `CASE WHEN head = query THEN 0, freq_overall` ordering a name
+    /// sits at #1 *only* when no common word has an exact reading match — i.e. the
+    /// hidden name really is the best answer. It never fires on ordinary words like
+    /// "aoi", whose common reading always outranks the name homonym.
+    ///
+    /// Honours explicit intent: when not suppressed, it flips Names on *for the
+    /// user* (and flashes the toggle); once they've turned it off themselves, it
+    /// leaves a gentle "turn it back on?" suggestion instead. A query the user has
+    /// already dismissed is not re-nudged until they run a new one.
+    private func checkHiddenProperName(for trimmed: String, handle h: OpaquePointer) {
+        // Skip a query the user already dismissed/undid; a new query may still nudge.
+        if suppressedNudgeQuery == trimmed { return }
+        var rawPtr: UnsafePointer<dj_word_hit_t>?
+        let count = trimmed.withCString { cStr in
+            dj_dict_search(h, cStr, DJ_SEARCH_AUTO, true, 8, &rawPtr)
+        }
+        guard let ptr = rawPtr, count > 0 else { return }
+        let top = Self.wordHit(from: ptr[0])
+        guard top.isName else { return }   // #1 is a proper name the names-off view hides
+
+        let nudge = NameNudge(hit: top, autoEnabled: !userToggledNamesManually)
+        nameNudge = nudge
+        nudgeSourceQuery = trimmed
+        scheduleNudgeDismissal()
+
+        if userToggledNamesManually {
+            // Respect the user's explicit off: don't flip it back, just nudge.
+            return
+        }
+        // Auto-enable on the user's behalf. Setting `includeNames` re-runs the
+        // search via the toggle's `.onChange`, repopulating with names included.
+        includeNames = true
+        pulseNamesToggle()
+    }
+
+    private func scheduleNudgeDismissal() {
+        guard let current = nameNudge else { return }
+        nameNudgeDismissal?.cancel()
+        nameNudgeDismissal = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled, let self else { return }
+            // Clear only if nothing newer has superseded this nudge.
+            if self.nameNudge?.id == current.id { self.nameNudge = nil }
+        }
+    }
+
+    /// Undo a proper-name auto-enable: turn Names off and, since the user is opting
+    /// out *for this query*, suppress the nudge for it until they run a new one.
+    /// This is per-query (not the global `userToggledNamesManually` flag, which only
+    /// a *manual* Names-off sets), so the next place-name search can still auto-enable.
+    func undoNamesAutoEnable() {
+        suppressedNudgeQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        nameNudgeDismissal?.cancel()
+        nameNudge = nil
+        setNamesIncluded(false, userInitiated: false)
+    }
+
+    /// Dismiss the nudge banner without changing Names, suppressing it for the
+    /// current query so it does not instantly re-raise on the re-search.
+    func dismissNameNudge() {
+        suppressedNudgeQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        nameNudgeDismissal?.cancel()
+        nameNudge = nil
+    }
+
+    /// The suggest banner's "Turn on Names" button. The user wants proper names, so
+    /// re-enable auto-flip *globally* (clearing the manual-off suppression) and clear
+    /// the now-satisfied nudge — its job is done once the name is visible, so it must
+    /// not linger as a stale "Turn on Names" prompt after names flip on.
+    func turnOnNamesFromNudge() {
+        suppressedNudgeQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        nameNudgeDismissal?.cancel()
+        nameNudge = nil
+        setNamesIncluded(true, userInitiated: true)
     }
 
     /// Drives the About / Credits sheet (standard Mac "About" chrome).
@@ -2066,6 +2220,16 @@ final class DaiJishowEngine: ObservableObject {
 
     private func executeSearchNow(trimmed: String) {
         guard let h = handle else { return }
+
+        // A *new* query (different from the one that raised the current nudge)
+        // supersedes a stale "hidden proper name" nudge. The auto-enable's re-search
+        // of the *same* query must **not** clear it, or the banner would vanish the
+        // instant Names flips on.
+        if trimmed != nudgeSourceQuery {
+            nameNudgeDismissal?.cancel()
+            nameNudge = nil
+        }
+
         if trimmed.unicodeScalars.count == 1, let scalar = trimmed.unicodeScalars.first, isKanjiScalar(scalar.value) {
             pushRecentKanji(scalar.value)
         }
@@ -2095,6 +2259,15 @@ final class DaiJishowEngine: ObservableObject {
             }
         }
         self.searchResults = hits
+
+        // With Names off, peek at what Names-on would return and, if its #1 hit is a
+        // proper name the names-off view is hiding, surface a nudge. Runs *before*
+        // the English-gloss search below so that call cannot invalidate the engine
+        // arena holding the nudge's hit (already copied out into a Swift WordHit).
+        if !includeNames {
+            checkHiddenProperName(for: trimmed, handle: h)
+        }
+
         self.englishMatches = fetchEnglishMatches(for: trimmed, exclude: Set(hits.map { $0.id }))
     }
 

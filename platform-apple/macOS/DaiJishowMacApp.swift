@@ -396,20 +396,30 @@ struct MainWorkspaceView: View {
                 action: { engine.openWordCosmos() }
             )
 
-            Toggle("Names", isOn: $engine.includeNames)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .fixedSize()
-                .help("Include proper names (人名) in search results and related-word lists")
-                .onChange(of: engine.includeNames) { _, _ in
-                    engine.performSearch()
-                    engine.invalidateFisheyeSnapshots()
-                    if engine.activeScreen == .fisheye, let cp = engine.activeKanji?.codepoint {
-                        engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: 1.85)
-                    } else if engine.activeScreen == .kanjiDetail {
-                        engine.refreshActiveKanjiDetail()
-                    }
+            Toggle("Names", isOn: Binding(
+                get: { engine.includeNames },
+                set: { engine.setNamesIncluded($0, userInitiated: true) }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .fixedSize()
+            // Flash the toggle when the engine auto-enables Names, so the result
+            // shift reads as "this control just changed" rather than a silent flip.
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(engine.namesToggleFlash ? Color.accentColor.opacity(0.28) : Color.clear)
+            )
+            .animation(.easeInOut(duration: 0.45), value: engine.namesToggleFlash)
+            .help("Include proper names (人名) in search and related-word lists. Auto-turned on when a proper name is the best match for your search — the toggle flashes and you can undo it from the results.")
+            .onChange(of: engine.includeNames) { _, _ in
+                engine.performSearch()
+                engine.invalidateFisheyeSnapshots()
+                if engine.activeScreen == .fisheye, let cp = engine.activeKanji?.codepoint {
+                    engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: 1.85)
+                } else if engine.activeScreen == .kanjiDetail {
+                    engine.refreshActiveKanjiDetail()
                 }
+            }
 
             Picker("Recall", selection: $engine.recallMode) {
                 ForEach(RecallMode.allCases) { mode in
@@ -493,10 +503,15 @@ struct MainWorkspaceView: View {
             HStack {
                 LiquidGlassCard(cornerRadius: 18, highlightOpacity: 0.35) {
                     VStack(spacing: 0) {
+                        if engine.nameNudge != nil {
+                            nameNudgeBanner
+                            Divider().opacity(0.4)
+                        }
                         filterChipRow
                         Divider().opacity(0.4)
                         resultsBody
                     }
+                    .animation(.easeInOut(duration: 0.25), value: engine.nameNudge?.id)
                 }
                 .padding(.leading, 118)
                 Spacer()
@@ -504,6 +519,68 @@ struct MainWorkspaceView: View {
             Spacer()
         }
         .padding(.top, 4)
+    }
+
+    /// A transient banner above the search results, raised when the engine's best
+    /// match is a proper name the (Names-off) search is hiding. Two flavours:
+    ///  • autoEnabled — we flipped Names on for the user; offer an Undo.
+    ///  • suggest     — the user turned Names off themselves; only *suggest* turning
+    ///                  it back on, without flipping the toggle.
+    @ViewBuilder
+    private var nameNudgeBanner: some View {
+        if let nudge = engine.nameNudge {
+            HStack(spacing: 8) {
+                Image(systemName: nudge.autoEnabled
+                      ? "person.crop.circle.badge.plus"
+                      : "questionmark.circle")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.accentColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    if nudge.autoEnabled {
+                        Text("Found the name \(nudge.hit.displayHeadword)")
+                            .font(.subheadline.weight(.semibold))
+                        Text("\(nudge.hit.kanaHead)  ·  \(nudge.hit.primaryGloss)  ·  Names turned on")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        Text("Names are off — \(nudge.hit.displayHeadword) looks like what you meant")
+                            .font(.subheadline.weight(.semibold))
+                        Text("\(nudge.hit.kanaHead)  ·  \(nudge.hit.primaryGloss)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                if nudge.autoEnabled {
+                    Button("Undo") { engine.undoNamesAutoEnable() }
+                        .help("Turn Names back off")
+                } else {
+                    Button("Turn on Names") { engine.turnOnNamesFromNudge() }
+                        .help("Include proper names so \(nudge.hit.displayHeadword) shows")
+                }
+
+                Button {
+                    engine.dismissNameNudge()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.accentColor.opacity(0.10))
+            )
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
     }
 
     /// The dropdown body. The main (Japanese) results always occupy the left;
