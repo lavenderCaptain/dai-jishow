@@ -29,11 +29,36 @@ cd "$ROOT"
 APP_NAME="DaiJishow"
 BINARY="DaiJishowMac"
 BUNDLE_ID="org.daijishow.mac"
-SHORT_VERSION="0.9ß"
-BUILD_VERSION="0.9ß"
 MIN_OS="14.0"
 BUILD_DIR="build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
+
+# --- version (single source of truth: the git release tag) -------------
+# Capture the version from the latest git tag so the About page, Info.plist,
+# and the DMG filename all agree — there is no hand-maintained version string
+# to drift. The About panel shows "short (build …)": e.g. 0.9ß (build rc3)
+# for a release candidate, or just 0.9ß for the final v0.9ß tag.
+capture_version() {
+  local tag
+  tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+  if [[ -z "$tag" ]]; then
+    tag="0.9ß"                       # no git tags at all — sane default
+  fi
+  tag="${tag#v}"                    # drop the conventional leading "v"
+  if [[ "$tag" == *-* ]]; then
+    SHORT_VERSION="${tag%%-*}"      # marketing part,  e.g. 0.9ß
+    BUILD_VERSION="${tag#*-}"       # RC/build suffix, e.g. rc3
+  else
+    SHORT_VERSION="$tag"
+    BUILD_VERSION="$tag"            # no suffix → About shows just the short
+  fi
+  FULL_VERSION="$SHORT_VERSION"
+  if [[ "$BUILD_VERSION" != "$SHORT_VERSION" ]]; then
+    FULL_VERSION="${SHORT_VERSION}-${BUILD_VERSION}"
+  fi
+}
+capture_version
+echo "==> version: $FULL_VERSION  (About page shows \"$SHORT_VERSION (build $BUILD_VERSION)\")"
 
 CONFIG="debug"
 BUNDLE_DB=1
@@ -144,7 +169,7 @@ if [[ "$MAKE_DMG" -eq 1 ]]; then
   # Deterministic layout: drop any stray Finder state.
   find "$DMG_DIR" -name .DS_Store -delete 2>/dev/null || true
 
-  DMG_NAME="DaiJishow-${SHORT_VERSION}.dmg"
+  DMG_NAME="DaiJishow-${FULL_VERSION}.dmg"
   DMG_OUT="$BUILD_DIR/$DMG_NAME"
   rm -f "$DMG_OUT"
 
