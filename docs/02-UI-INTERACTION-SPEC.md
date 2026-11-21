@@ -184,7 +184,11 @@ vision, no tab bar). Layout:
   the screen with *that* word.
 * **Header card:** the headword with **furigana over each glyph** (per-kanji
   ruby, from the engine's `rubyCells`), the **kana reading**, and the **primary
-  gloss**.
+  gloss**. A **"Show in context"** button (top-right, next to the headword
+  speaker) is the **inverse of "Open compound breakdown ↗"**: it jumps from this
+  decomposition back to the word's **full dictionary entry** (definitions,
+  example sentences, inflections) so a decomposition never strands you away from
+  the word itself — `openWordEntry` for the same headword you are decomposing.
 * **Reading insight — "compound ≠ sum of parts":** a card that lays each **ruby
   cell's** reading beside the compound's overall reading, joined with `+` then
   `→` (e.g. 日本 (にほん) + 語 (ご) → 日本語 (にほんご)). The cell is the right

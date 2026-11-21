@@ -3754,6 +3754,18 @@ struct CompoundKanjiView: View {
                         SpeakerButton(text: entry.header.kanaHead, variant: .headword)
                             .help("Hear the headword \(entry.header.displayHeadword)")
                     }
+                    // Inverse of "Open compound breakdown ↗": jump from this
+                    // decomposition back to the word's full dictionary entry
+                    // (definitions, examples, inflections) so a decomposition
+                    // never strands you away from the word itself.
+                    Button {
+                        engine.openWordEntry(entryId: entry.header.id)
+                    } label: {
+                        Label("Show in context", systemImage: "text.book.closed.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Open \(entry.header.displayHeadword)'s full dictionary entry — definitions, examples, and inflections — instead of this decomposition")
                 }
                 HStack(spacing: 10) {
                     if !entry.header.kanaHead.isEmpty {
