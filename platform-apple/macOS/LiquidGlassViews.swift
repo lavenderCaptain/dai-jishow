@@ -2659,7 +2659,10 @@ struct WordEntryView: View {
                                         .lineLimit(2)
                                 }
                             }
-                            .frame(width: 176, alignment: .leading)
+                            // Hug the content: cap the width instead of fixing it, so a
+                            // short gloss no longer leaves blank space on either side of
+                            // the card while a long one still wraps at this tidy width.
+                            .frame(maxWidth: 176, alignment: .leading)
                             .padding(12)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -2755,7 +2758,9 @@ struct WordEntryView: View {
                                     .lineLimit(1)
                             }
                         }
-                        .frame(width: 164, alignment: .leading)
+                        // Hug the content: cap the width instead of fixing it, so a
+                        // short compound no longer leaves blank space on either side.
+                        .frame(maxWidth: 164, alignment: .leading)
                         .padding(10)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)

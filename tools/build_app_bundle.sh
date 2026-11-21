@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# build_app_bundle.sh — assemble a distributable DaiJishow.app from the SwiftPM
+# build_app_bundle.sh — assemble a distributable Dai-Jishow.app from the SwiftPM
 # build, so the app carries its own icon, a self-contained corpus, and a real
 # Info.plist (and shows a Dock icon in Finder).
 #
-# Layout produced under build/DaiJishow.app:
+# Layout produced under build/Dai-Jishow.app:
 #   Contents/MacOS/DaiJishowMac       compiled executable
 #   Contents/Resources/AppIcon.icns   the app icon (generated on demand)
 #   Contents/Resources/daijishow.db   the bundled corpus (self-contained)
@@ -17,7 +17,7 @@
 #   ./tools/build_app_bundle.sh --symlink-db  # link the DB instead of copying
 #   ./tools/build_app_bundle.sh --no-dmg   # skip the drag-to-Applications .dmg
 #
-# The DMG (build/DaiJishow-<version>.dmg) is the standard "drag the app into the
+# The DMG (build/Dai-Jishow-<version>.dmg) is the standard "drag the app into the
 # Applications folder" installer: it contains the .app plus a symlink to
 # /Applications, so you drag-and-drop to install.
 #
@@ -26,7 +26,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-APP_NAME="DaiJishow"
+APP_NAME="Dai-Jishow"
 BINARY="DaiJishowMac"
 BUNDLE_ID="org.daijishow.mac"
 MIN_OS="14.0"
@@ -126,8 +126,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>            <string>${APP_NAME//-/_}</string>
-    <key>CFBundleDisplayName</key>     <string>Dai-Jishow</string>
+    <key>CFBundleName</key>            <string>${APP_NAME}</string>
+    <key>CFBundleDisplayName</key>     <string>${APP_NAME}</string>
     <key>CFBundleExecutable</key>      <string>$BINARY</string>
     <key>CFBundleIdentifier</key>      <string>$BUNDLE_ID</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
@@ -169,12 +169,12 @@ if [[ "$MAKE_DMG" -eq 1 ]]; then
   # Deterministic layout: drop any stray Finder state.
   find "$DMG_DIR" -name .DS_Store -delete 2>/dev/null || true
 
-  DMG_NAME="DaiJishow-${FULL_VERSION}.dmg"
+  DMG_NAME="${APP_NAME}-${FULL_VERSION}.dmg"
   DMG_OUT="$BUILD_DIR/$DMG_NAME"
   rm -f "$DMG_OUT"
 
   if hdiutil create \
-      -volname "DaiJishow" \
+      -volname "${APP_NAME}" \
       -srcfolder "$DMG_DIR" \
       -ov -format UDZO \
       -imagekey zlib-level=9 \

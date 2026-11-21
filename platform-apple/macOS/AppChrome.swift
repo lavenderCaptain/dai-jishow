@@ -81,7 +81,11 @@ struct AboutView: View {
     @Environment(\.dismiss) private var dismiss
 
     private var appName: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+        // Prefer the display name (what the menu bar / Finder show), then the
+        // bundle name, then a sane literal — so the headline always reads
+        // "Dai-Jishow", even as a bare dev binary with no Info.plist.
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+            ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String)
             ?? "Dai-Jishow"
     }
 

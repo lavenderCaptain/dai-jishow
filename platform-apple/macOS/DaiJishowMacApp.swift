@@ -100,6 +100,14 @@ struct DaiJishowMacApp: App {
                 }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
 
+                // "Open Compounds" opens the Compound Kanji screen (decompose a word into
+                // its kanji). ⌘⇧D — mnemonic for "Decompose" — since ⌘⇧C is the
+                // Detailed/Reader toggle and ⌘⌥C is Copy Entry, both C-shortcuts taken.
+                Button("Open Compounds") {
+                    engine.openCompoundKanji()
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+
                 Divider()
 
                 Button("Navigate Back") {
@@ -408,7 +416,7 @@ struct MainWorkspaceView: View {
                 systemImage: "square.split.2x2.fill",
                 isActive: engine.activeScreen == .compoundKanji,
                 compact: navCompact,
-                help: "Open the Compound Kanji screen — decompose a word into its kanji, inspect each part's readings & meaning, and see how the compound reading assembles from them",
+                help: "Open the Compound Kanji screen — decompose a word into its kanji, inspect each part's readings & meaning, and see how the compound reading assembles from them (⌘⇧D)",
                 action: { engine.openCompoundKanji() }
             )
 

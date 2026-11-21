@@ -8,11 +8,14 @@ materials. Apple (iOS/watchOS) and Android (Wear OS) shells are on the roadmap;
 the macOS shell is the current product.
 
 > **Naming.** *Dai‑Jishow* (hyphenated) is the display/product name, used in prose,
-> the UI, and this page. In code and build artifacts the name is written fused —
-> `DaiJishow`, `DaiJishowCore`, `DaiJishowMac` — because Swift / C++ / CMake
-> identifiers and the compiled binary cannot contain a hyphen; the lowercase
-> `dai-jishow` is the repository and URL. This split is intentional, not a
-> typo.
+> the UI, and this page. In code the name is written fused — `DaiJishow`,
+> `DaiJishowCore`, `DaiJishowMac`, and the `daijishow.db` bundle — because Swift /
+> C++ / CMake identifiers and the compiled binary cannot contain a hyphen; the
+> lowercase `dai-jishow` is the repository and URL. The hyphenated name now reaches
+> the shipped app too: the `Dai-Jishow.app` bundle and `Dai-Jishow-<version>.dmg`
+> installer set their display name to "Dai-Jishow" so Finder, the Dock, the menu
+> bar, and the About panel all read "Dai-Jishow" (the binary inside still builds as
+> `DaiJishowMac`). This split is intentional, not a typo.
 
 ## What's Built Today (macOS)
 
@@ -84,7 +87,7 @@ idiom triggers) exist in the schema but are not yet populated by the ETL.
   `DaiJishowMacApp`, `AppChrome`, `RadicalCatalog`.
 * `platform-android/` — Placeholder (`.gitkeep`); the Android/Wear OS shell is
   not yet built.
-* `tools/` — `build_app_bundle.sh` (assembles `DaiJishow.app` + a
+* `tools/` — `build_app_bundle.sh` (assembles `Dai-Jishow.app` + a
   drag-to-Applications DMG) and `make_icon.swift`.
 
 ## Build & Run
@@ -100,9 +103,9 @@ swift build
 ./tools/build_app_bundle.sh
 
 # Open the app directly:
-open build/DaiJishow.app
+open build/Dai-Jishow.app
 
-# …or the installer: open build/DaiJishow-<version>.dmg and drag Dai-Jishow onto
+# …or the installer: open build/Dai-Jishow-<version>.dmg and drag Dai-Jishow onto
 # the Applications folder.
 ```
 
