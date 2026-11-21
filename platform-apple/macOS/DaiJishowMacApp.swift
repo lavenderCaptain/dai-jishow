@@ -525,7 +525,7 @@ struct MainWorkspaceView: View {
     private var searchResultsDropdown: some View {
         VStack {
             HStack {
-                LiquidGlassCard(cornerRadius: 18, highlightOpacity: 0.35) {
+                GlassCard(cornerRadius: 18, highlightOpacity: 0.35) {
                     VStack(spacing: 0) {
                         if engine.nameNudge != nil {
                             nameNudgeBanner

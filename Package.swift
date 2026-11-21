@@ -1,7 +1,7 @@
 // swift-tools-version: 5.9
 // Zero-Xcode-project Swift Package Manager manifest for Dai-Jishow.
 // Compiles the C++20 `core/` engine directly and links it into the native
-// macOS SwiftUI + Liquid Glass application (`DaiJishowMac`).
+// macOS SwiftUI glass-material application (`DaiJishowMac`).
 
 import PackageDescription
 
@@ -35,7 +35,7 @@ let package = Package(
             ]
         ),
 
-        // 2. Native macOS SwiftUI + Canvas Liquid Glass shell
+        // 2. Native macOS SwiftUI + Canvas glass-material shell
         .executableTarget(
             name: "DaiJishowMac",
             dependencies: ["DaiJishowCore"],

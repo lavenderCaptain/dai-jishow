@@ -72,7 +72,7 @@ Dai-Jishow uses a **shared C++20 core** exposed through a **flat C11 ABI (`dj_ca
   `.macOS(.v14)`. Run `swift build` at the repo root.
 * **Native C interop:** `platform-apple/macOS/EngineBridge.swift` calls the C11
   ABI (`dj_capi.h`) directly and owns all app state (history/Z-stack, recall
-  mode, kanji display mode, search). `LiquidGlassViews.swift` holds the views;
+  mode, kanji display mode, search). `GlassViews.swift` holds the views;
   `DaiJishowMacApp.swift` the scene, menu commands, and top bar; `AppChrome.swift`
   the About/Preferences windows.
 * **Packaging:** `tools/build_app_bundle.sh` assembles `build/Dai-Jishow.app`

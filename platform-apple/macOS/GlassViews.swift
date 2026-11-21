@@ -3,7 +3,7 @@ import DaiJishowCore
 
 // MARK: - Glass Surface Primitive
 
-struct LiquidGlassCard<Content: View>: View {
+struct GlassCard<Content: View>: View {
     var cornerRadius: CGFloat = 20
     var highlightOpacity: Double = 0.28
     @ViewBuilder var content: () -> Content
@@ -1005,7 +1005,7 @@ struct FisheyeGraphView: View {
                         Spacer()
 
                         if let active = activeInspectorNode {
-                            LiquidGlassCard(cornerRadius: 18) {
+                            GlassCard(cornerRadius: 18) {
                                 HStack(spacing: 16) {
                                     VStack(alignment: .leading, spacing: 3) {
                                         HStack(spacing: 8) {
@@ -1990,7 +1990,7 @@ struct WordCosmosView: View {
                 let pillText = engine.wordCosmosColorMode == .prevalence
                     ? "\(info.label) • \(info.rankStr)"
                     : engine.cosmosDifficultyLabel(for: word)
-                LiquidGlassCard(cornerRadius: 18) {
+                GlassCard(cornerRadius: 18) {
                     HStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 8) {
@@ -2187,7 +2187,7 @@ struct WordEntryView: View {
     // MARK: - 1. Hero Lexical Card (Headword + Pitch Contour + Telemetry + Mode Switch)
 
     private var headerHeroCard: some View {
-        LiquidGlassCard(cornerRadius: 22) {
+        GlassCard(cornerRadius: 22) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 16) {
                     // Kanji + its headline meaning, level with each other.
@@ -2380,7 +2380,7 @@ struct WordEntryView: View {
     // MARK: - Kanji DNA Breakdown Strip
 
     private var kanjiDNASection: some View {
-        LiquidGlassCard(cornerRadius: 20) {
+        GlassCard(cornerRadius: 20) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label("Kanji DNA", systemImage: "square.grid.2x2.fill")
@@ -2500,7 +2500,7 @@ struct WordEntryView: View {
     // MARK: - Contextual Senses Section
 
     private var definitionsSection: some View {
-        LiquidGlassCard(cornerRadius: 20) {
+        GlassCard(cornerRadius: 20) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     Label("Definitions", systemImage: "book.pages.fill")
@@ -2578,7 +2578,7 @@ struct WordEntryView: View {
     @ViewBuilder
     private var transitivityPairBanner: some View {
         if entry.header.pairEntryId > 0 {
-            LiquidGlassCard(cornerRadius: 16) {
+            GlassCard(cornerRadius: 16) {
                 HStack(spacing: 12) {
                     Label("自他ペア", systemImage: "arrow.left.arrow.right.circle.fill")
                         .font(.caption.weight(.bold))
@@ -2624,7 +2624,7 @@ struct WordEntryView: View {
         let items = insights.homonyms
         let visible = showAllHomonyms ? items : Array(items.prefix(limit))
         let hasMore = items.count > limit
-        return LiquidGlassCard(cornerRadius: 20) {
+        return GlassCard(cornerRadius: 20) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label("Homonyms • 同音異義語 (\(entry.header.kanaHead))", systemImage: "waveform.and.magnifyingglass")
@@ -2701,7 +2701,7 @@ struct WordEntryView: View {
     // MARK: - Word Family Section (Prefix & Suffix Compounds)
 
     private var wordFamilySection: some View {
-        LiquidGlassCard(cornerRadius: 20) {
+        GlassCard(cornerRadius: 20) {
             VStack(alignment: .leading, spacing: 14) {
                 Label("Word Family • Compounds", systemImage: "point.3.connected.trianglepath.dotted")
                     .font(.subheadline.weight(.bold))
@@ -2797,7 +2797,7 @@ struct WordEntryView: View {
     private var sentencesAndCollocationsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             if !insights.collocations.isEmpty {
-                LiquidGlassCard(cornerRadius: 18) {
+                GlassCard(cornerRadius: 18) {
                     VStack(alignment: .leading, spacing: 10) {
                         Label("Corpus Collocations", systemImage: "link")
                             .font(.subheadline.weight(.bold))
@@ -2833,7 +2833,7 @@ struct WordEntryView: View {
     private var sentencesSection: some View {
         let visibleList = showAllSentences ? activeSentences : Array(activeSentences.prefix(4))
 
-        return LiquidGlassCard(cornerRadius: 20) {
+        return GlassCard(cornerRadius: 20) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     Label("Example Sentences", systemImage: "text.quote")
@@ -2903,7 +2903,7 @@ struct WordEntryView: View {
     // MARK: - Verb / Adjective Conjugation Matrix
 
     private func inflectionMatrixSection(title: String, forms: [InflectionForm]) -> some View {
-        LiquidGlassCard(cornerRadius: 20) {
+        GlassCard(cornerRadius: 20) {
             VStack(alignment: .leading, spacing: 12) {
                 Label(title, systemImage: "tablecells")
                     .font(.subheadline.weight(.bold))
@@ -3171,7 +3171,7 @@ struct KanjiDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if let title = kanji.specialCaseTitle, let explanation = kanji.specialCaseExplanation {
-                    LiquidGlassCard(cornerRadius: 18, highlightOpacity: 0.36) {
+                    GlassCard(cornerRadius: 18, highlightOpacity: 0.36) {
                         HStack(alignment: .top, spacing: 14) {
                             Image(systemName: "info.circle.fill")
                                 .font(.title2)
@@ -3190,7 +3190,7 @@ struct KanjiDetailView: View {
                 }
 
                 HStack(alignment: .top, spacing: 24) {
-                    LiquidGlassCard(cornerRadius: 24) {
+                    GlassCard(cornerRadius: 24) {
                         VStack(spacing: 12) {
                             if kanji.strokePolylines.isEmpty {
                                 VStack(spacing: 8) {
@@ -3224,7 +3224,7 @@ struct KanjiDetailView: View {
                         .padding(20)
                     }
 
-                    LiquidGlassCard(cornerRadius: 24) {
+                    GlassCard(cornerRadius: 24) {
                         VStack(alignment: .leading, spacing: 14) {
                             HStack(spacing: 10) {
                                 Text(kanji.glyph)
@@ -3316,7 +3316,7 @@ struct KanjiDetailView: View {
                 }
 
                 if !kanji.standaloneEntries.isEmpty {
-                    LiquidGlassCard(cornerRadius: 20) {
+                    GlassCard(cornerRadius: 20) {
                         VStack(alignment: .leading, spacing: 14) {
                             Text("Standalone Dictionary Entries (\(kanji.glyph))")
                                 .font(.headline)
@@ -3373,7 +3373,7 @@ struct KanjiDetailView: View {
                 }
 
                 if !kanji.relatedWords.isEmpty {
-                    LiquidGlassCard(cornerRadius: 20) {
+                    GlassCard(cornerRadius: 20) {
                         VStack(alignment: .leading, spacing: 12) {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack {
@@ -3456,7 +3456,7 @@ struct KanjiDetailView: View {
                         .padding(20)
                     }
                 } else if kanji.standaloneEntries.isEmpty {
-                    LiquidGlassCard(cornerRadius: 18) {
+                    GlassCard(cornerRadius: 18) {
                         HStack(spacing: 12) {
                             Image(systemName: "tray")
                                 .foregroundStyle(.secondary)
@@ -3663,7 +3663,7 @@ struct CompoundKanjiView: View {
     // MARK: Search row
 
     private var searchRow: some View {
-        LiquidGlassCard(cornerRadius: 16) {
+        GlassCard(cornerRadius: 16) {
             VStack(spacing: 12) {
                 HStack(spacing: 10) {
                     Image(systemName: "square.split.2x2.fill")
@@ -3728,7 +3728,7 @@ struct CompoundKanjiView: View {
     // MARK: Header — the word with per-kanji ruby
 
     private func headerCard(_ entry: EntryDetail) -> some View {
-        LiquidGlassCard(cornerRadius: 20) {
+        GlassCard(cornerRadius: 20) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 10) {
                     if entry.rubyCells.isEmpty {
@@ -3802,7 +3802,7 @@ struct CompoundKanjiView: View {
         // is read ニチ+ホン+ご. Iterate the cells instead: 日本(にほん) + 語(ご).
         let cells = entry.rubyCells
         let jukujikun = parts.filter { $0.isJukujikun }
-        return LiquidGlassCard(cornerRadius: 20) {
+        return GlassCard(cornerRadius: 20) {
             VStack(alignment: .leading, spacing: 12) {
                 Label("How the reading assembles", systemImage: "waveform.path.ecg.rectangle")
                     .font(.subheadline.weight(.bold))
@@ -3858,7 +3858,7 @@ struct CompoundKanjiView: View {
     // MARK: Per-kanji component cards (the core)
 
     private var kanjiCards: some View {
-        LiquidGlassCard(cornerRadius: 20) {
+        GlassCard(cornerRadius: 20) {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Components (\(parts.count))", systemImage: "square.grid.2x2.fill")
                     .font(.subheadline.weight(.bold))
@@ -3983,7 +3983,7 @@ struct CompoundKanjiView: View {
     // MARK: States
 
     private var kanaNote: some View {
-        LiquidGlassCard(cornerRadius: 20) {
+        GlassCard(cornerRadius: 20) {
             VStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .font(.title)
@@ -4173,7 +4173,7 @@ struct RadicalBuilderView: View {
             .padding(.top, 14)
 
             HStack(alignment: .top, spacing: 20) {
-                LiquidGlassCard(cornerRadius: 20) {
+                GlassCard(cornerRadius: 20) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Text("214 Kangxi Radicals")
@@ -4267,7 +4267,7 @@ struct RadicalBuilderView: View {
                 }
                 .frame(maxWidth: 440)
 
-                LiquidGlassCard(cornerRadius: 20) {
+                GlassCard(cornerRadius: 20) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Text("Matching Kanji (\(engine.radicalMatches.count))")
@@ -4382,7 +4382,7 @@ struct KanjiLookupView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            LiquidGlassCard(cornerRadius: 20) {
+            GlassCard(cornerRadius: 20) {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 12) {
                         Picker("Lookup Mode", selection: $engine.kanjiLookupMode) {
@@ -4413,7 +4413,7 @@ struct KanjiLookupView: View {
             .padding(.horizontal, 24)
             .padding(.top, 14)
 
-            LiquidGlassCard(cornerRadius: 20) {
+            GlassCard(cornerRadius: 20) {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("Indexed Kanji Results (\(engine.kanjiLookupResults.count))")

@@ -3,7 +3,7 @@
 **Dai-Jishow** is an encyclopedic, zero-bloat, offline-first Japanese–English and
 Japanese–Japanese dictionary, kanji explorer, and (eventually) live AR reading
 lens. The engine is built in **C++20** behind a flat **C11 ABI**, and today it
-ships a **native macOS desktop app** rendered with translucent *Liquid Glass*
+ships a **native macOS desktop app** rendered with translucent *glass*
 materials. Apple (iOS/watchOS) and Android (Wear OS) shells are on the roadmap;
 the macOS shell is the current product.
 
@@ -69,7 +69,7 @@ idiom triggers) exist in the schema but are not yet populated by the ETL.
    exposed via a flat **C11 ABI (`dj_capi.h`)**. No Electron, no web views, and
    a tiny active footprint via read-only memory-mapped SQLite (`mmap`).
 2. **Focus + Context Everywhere:** Navigation abandons flat page reloads in favor
-   of a **3D Time Machine Z-Stack** ("Zoom Out" for spatial trail context).
+   of a **3D Zoom-Out Z-Stack** ("Zoom Out" for spatial trail context).
 3. **Encyclopedic Offline Depth:** Merges JMdict, JMnedict, KANJIDIC2, KanjiVG,
    Kanjium pitch accents, and Tatoeba example sentences into a single unified
    database, with BCCWJ/Jiten frequency profiles and *Yojijukugo* / idioms on the
@@ -82,8 +82,8 @@ idiom triggers) exist in the schema but are not yet populated by the ETL.
   `dj_state`, `dj_capi`), built as the `DaiJishowCore` library.
 * `tools/corpus-builder/` — Offline Python ETL that builds `daijishow.db`
   (`build_corpus.py`, with `fetch_sources.py` and `pack_kanjivg.py`).
-* `platform-apple/macOS/` — The native SwiftUI + Liquid Glass macOS shell
-  (`DaiJishowMac`): `EngineBridge` (C11 bridge + app state), `LiquidGlassViews`,
+* `platform-apple/macOS/` — The native SwiftUI glass-material macOS shell
+  (`DaiJishowMac`): `EngineBridge` (C11 bridge + app state), `GlassViews`,
   `DaiJishowMacApp`, `AppChrome`, `RadicalCatalog`.
 * `platform-android/` — Placeholder (`.gitkeep`); the Android/Wear OS shell is
   not yet built.
@@ -120,14 +120,14 @@ cd tools/corpus-builder && python3 build_corpus.py
 ## Roadmap
 
 - [x] **Phase 0:** Reverse-engineer the Dokusha v1.5 interaction model & design
-      the interactive macOS Liquid Glass prototype.
+      the interactive macOS glass-material prototype.
 - [x] **Phase 1:** Build `tools/corpus-builder` ETL pipeline and compile a
       unified `daijishow.db`.
 - [x] **Phase 2:** Implement the `core/` C++20 engine + `dj_capi.h` and a CLI
       (`tools/dj_cli`) test harness.
-- [x] **Phase 3:** Build the **macOS Desktop** native SwiftUI + Liquid Glass
+- [x] **Phase 3:** Build the **macOS Desktop** native SwiftUI glass-material
       application, packaged as a signed `.app` + DMG.
 - [ ] **Phase 4:** Extend the Apple shell to **iPhone/iPad** (live AR camera) and
-      **Apple Watch** (Digital-Crown Z-stack).
+      **Apple Watch** (crown Z-stack).
 - [ ] **Phase 5:** Port the native UI shell to **Android** and **Wear OS** over
       `libdaijishow.so`.

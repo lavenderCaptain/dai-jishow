@@ -1,20 +1,20 @@
-# 02 — UI & Interaction Specification (Liquid Glass & Focus + Context)
+# 02 — UI & Interaction Specification (Glass Material & Focus + Context)
 
-Dai-Jishow abandons conventional nested menus, sidebars, and modal dialogs in favor of a spatial **Focus + Context** paradigm rendered with translucent **Liquid Glass** materials.
+Dai-Jishow abandons conventional nested menus, sidebars, and modal dialogs in favor of a spatial **Focus + Context** paradigm rendered with translucent **glass** materials.
 
 > **Status snapshot.** The macOS desktop shell ships today. The **Z-Stack
-> navigation deck**, single-window liquid-glass surface, **Reader/Detailed**
+> navigation deck**, single-window glass surface, **Reader/Detailed**
 > word entry, **Kanji detail** with a "Vocabulary & Compounds" display-mode
 > switch, the **Fisheye** explorer, **Word Cloud**, the **Compound Kanji**
 > decomposer, **Recall** modes,
 > **hover tooltips** on every control, **text selection + copy**, and an
-> **About / Preferences** window are all **built**. The 3D "Time Machine" zoom,
+> **About / Preferences** window are all **built**. The 3D **Zoom-Out Z-Stack**,
 > the **Radial Bloom** selection menu (§3), and the multi-device matrix (§5) are
 > **designed, not yet built**. See §6 for the current macOS layout.
 
 ---
 
-## 1. Visual Language: Liquid Glass
+## 1. Visual Language: Glass Material
 
 * **Depth-Layered Translucency:** Every active surface is rendered as a frosted, refractive glass pane floating in Z-space (`Z = 0` for active focus; `Z = -1, -2, ...` for receding context).
 * **Refractive Rim & Edge Highlights:** Subtle specular edge highlights separate overlapping cards without heavy opaque borders, allowing the underlying kanji graph or live camera feed to bleed softly through.
@@ -22,16 +22,16 @@ Dai-Jishow abandons conventional nested menus, sidebars, and modal dialogs in fa
 
 ---
 
-## 2. The 3D Time Machine Z-Stack
+## 2. The 3D Zoom-Out Z-Stack
 
-Instead of flat page replacement or a cramped text breadcrumb bar, every lookup step pushes a new glass frame forward along the Z-axis—inspired by macOS Time Machine and classic console "zoom-out for commentary" framing.
+Instead of flat page replacement or a cramped text breadcrumb bar, every lookup step pushes a new glass frame forward along the Z-axis—inspired by zoom-out-for-context navigation and classic console "zoom-out for commentary" framing.
 
 ### 2.1 Depth States
 * **Focus Mode (`Zoomed In`, Default):**
   * The active card sits at `Z = 0` (`scale = 1.0`, `blur = 0`).
   * Previous cards recede backward (`Z = -1`, `Z = -2`, `Z = -3`), scaling down slightly (`0.94^|z|`), shifting upward slightly, and gaining progressive backdrop blur.
 * **Context Mode (`Zoomed Out`):**
-  * **Triggers:** Trackpad two-finger pinch-out (macOS), screen pinch-out (iOS/iPadOS), `Esc` key, top-bar `Zoom Out` toggle, or Digital Crown / rotary scroll (watchOS/Wear OS).
+  * **Triggers:** Trackpad two-finger pinch-out (macOS), screen pinch-out (iOS/iPadOS), `Esc` key, top-bar `Zoom Out` toggle, or crown / rotary scroll (watchOS/Wear OS).
   * **Spatial Layout:** The camera pulls back into a three-quarter isometric view displaying the entire card stack simultaneously, connected by subtle luminous tether lines showing which character spawned the next card.
   * **Peripheral Coaching Panels:** Zooming out reveals ambient side panels around the stack:
     1. **6-Kanji Compound Ring:** The last 6 inspected kanji with toggles for `ALL` / `ANY` compound searches.
@@ -81,9 +81,9 @@ Whenever the user clicks or taps a Japanese word or kanji (in a definition, an e
 
 | Feature | macOS Desktop | iPhone / iPad | Apple Watch / Wear OS |
 | :--- | :--- | :--- | :--- |
-| **Z-Stack Scrubbing** | Trackpad pinch + scroll wheel + `←/→` keys | Edge swipe + two-finger pinch | **Digital Crown / Rotating Bezel** |
+| **Z-Stack Scrubbing** | Trackpad pinch + scroll wheel + `←/→` keys | Edge swipe + two-finger pinch | **Crown / Rotating Bezel** |
 | **Fisheye Node Count** | 30–40 neighbors (15–20 per side) | 20–24 neighbors (10–12 per side) | **6 neighbors (3 Left + 3 Right)** |
-| **Camera / Lens** | Continuity Camera, Screen-Region OCR, File/Clipboard | Live 60/120 Hz AR camera + Split-Screen Reader | Voice dictation, Scribble/Handwriting, Synced Cards |
+| **Camera / Lens** | Camera scan, Screen-Region OCR, File/Clipboard | Live 60/120 Hz AR camera + Split-Screen Reader | Voice dictation, Handwriting input, Synced Cards |
 | **Active Recall** | Keyboard shortcuts (`1/2/3`) for `Full / Hide Kana / Hide Gloss` | Top glass toggle pills | Tap-to-reveal reading/gloss on card |
 
 ---
