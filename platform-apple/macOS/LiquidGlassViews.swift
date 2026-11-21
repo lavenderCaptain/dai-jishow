@@ -3772,27 +3772,33 @@ struct CompoundKanjiView: View {
     // MARK: Reading insight — how the compound's reading assembles
 
     private func readingInsightCard(_ entry: EntryDetail) -> some View {
+        // The honest "reading part" of a compound is the *ruby cell*, not a per-kanji
+        // on-reading: the corpus bundles multi-kanji subwords (e.g. 日本→にほん) into a
+        // single cell, so iterating per-kanji on-readings would misleadingly imply 日本語
+        // is read ニチ+ホン+ご. Iterate the cells instead: 日本(にほん) + 語(ご).
+        let cells = entry.rubyCells
         let jukujikun = parts.filter { $0.isJukujikun }
         return LiquidGlassCard(cornerRadius: 20) {
             VStack(alignment: .leading, spacing: 12) {
                 Label("How the reading assembles", systemImage: "waveform.path.ecg.rectangle")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.secondary)
-                    .help("Each part shows the reading it takes *inside this compound*; the compound's reading is assembled from them, but is not always their sum.")
+                    .help("Each ruby cell shows the reading it carries *inside this compound*; the compound's reading is assembled from them, but is not always their sum.")
 
                 HStack(spacing: 10) {
-                    ForEach(Array(parts.enumerated()), id: \.offset) { idx, part in
+                    ForEach(Array(cells.enumerated()), id: \.offset) { idx, cell in
                         VStack(spacing: 4) {
-                            Text(part.glyph)
+                            Text(cell.furigana.isEmpty ? "—" : cell.furigana)
+                                .font(.caption.weight(cell.furigana.isEmpty ? .regular : .medium))
+                                .foregroundStyle(cell.furigana.isEmpty ? Color.secondary : Color.cyan)
+                                .lineLimit(1)
+                                .help(cell.furigana.isEmpty
+                                      ? "No reading recorded for \(cell.surface) in this compound."
+                                      : "\(cell.surface) is read \(cell.furigana) inside this compound.")
+                            Text(cell.surface)
                                 .font(.system(size: 28, weight: .bold))
-                            Text(part.intermediateReading ?? "—")
-                                .font(.caption.weight(part.intermediateIsFallback ? .regular : .semibold))
-                                .foregroundStyle(part.intermediateIsFallback ? Color.secondary : Color.cyan)
-                                .help(part.intermediateIsFallback
-                                      ? "No distinct in-compound reading for \(part.glyph) — showing its standard on-reading."
-                                      : "\(part.glyph) is read \(part.intermediateReading ?? "") inside this compound.")
                         }
-                        if idx < parts.count - 1 {
+                        if idx < cells.count - 1 {
                             Text("+")
                                 .font(.title3.weight(.bold))
                                 .foregroundStyle(.secondary)
@@ -3898,7 +3904,9 @@ struct CompoundKanjiView: View {
             HStack(spacing: 8) {
                 if let read = part.intermediateReading {
                     SpeakerButton(text: read, variant: .compact)
-                        .help("Hear \(part.glyph) read \(read) here")
+                        .help(part.intermediateIsFallback
+                              ? "Hear \(part.glyph)'s on-reading \(read)"
+                              : "Hear \(part.glyph) read \(read) inside this compound")
                 }
                 Button {
                     engine.openKanjiDetail(codepoint: part.codepoint)

@@ -185,20 +185,25 @@ vision, no tab bar). Layout:
 * **Header card:** the headword with **furigana over each glyph** (per-kanji
   ruby, from the engine's `rubyCells`), the **kana reading**, and the **primary
   gloss**.
-* **Reading insight — "compound ≠ sum of parts":** a card that lays each part's
-  **intermediate reading** beside the compound's overall reading, joined with `+`
-  then `→`. The intermediate reading prefers the reading the kanji takes *inside
-  this compound* (`matchedReadingNormalized`, shown in cyan); when the corpus
-  bundles the part into a multi-kanji subword (e.g. 日本 → にほん) so no
-  per-kanji reading is recorded, it **falls back to the kanji's standard
-  on-reading (then kun)**, styled muted, so no kanji is ever left with a bare
-  "—". When a part is flagged **`isJukujikun`** it is highlighted with a **熟字訓**
+* **Reading insight — "compound ≠ sum of parts":** a card that lays each **ruby
+  cell's** reading beside the compound's overall reading, joined with `+` then
+  `→` (e.g. 日本 (にほん) + 語 (ご) → 日本語 (にほんご)). The cell is the right
+  granularity: the corpus bundles multi-kanji subwords (e.g. 日本 → にほん) into
+  one ruby cell, so iterating *per-kanji* on-readings would misleadingly imply
+  日本語 is read ニチ + ホン + ご. Each cell shows its furigana over its surface
+  (in cyan), matching the header card; a cell with no recorded reading shows a
+  muted "—". When a part is flagged **`isJukujikun`** it is highlighted with a
+  **熟字訓**
   note ("a meaning-based reading not in its own standard on/kun set") — the
-  pedagogically interesting case the screen exists to surface.
+  pedagogically interesting case the screen exists to surface. Jukujikun is a
+  *single-kanji* phenomenon, so a multi-kanji cell (e.g. 日本, an on-reading
+  compound with 連音) is never flagged; only a single-kanji cell whose furigana
+  matches none of its on/kun readings is.
 * **Per-kanji cards:** a wrapping grid, one card per kanji — glyph, **on + kun**
   readings (the *matched* reading highlighted in its row), **meaning**,
   **JLPT / grade / stroke** pills, and a **熟字訓** chip when applicable — each
-  with a **speaker button** (hear the kanji's intermediate reading aloud, for
+  with a **speaker button** (hears the kanji's reading — its in-compound reading
+  when the corpus records one, else its on-reading — for
   audible review, reusing `SpeakerButton`) and two drills: **Detail** (→ the
   kanji's detail page) and **Graph** (→ that kanji's *own* single-kanji compound
   graph; labeled "Graph" with the `circle.hexagongrid.fill` glyph, matching the

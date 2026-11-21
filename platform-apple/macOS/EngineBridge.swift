@@ -302,11 +302,11 @@ struct WordKanjiDNA: Identifiable {
     let matchedReadingNormalized: String?
     let isJukujikun: Bool
 
-    /// The reading to show *under* this kanji in the "how the reading assembles"
-    /// card. Prefers the in-compound matched reading; falls back to the kanji's
-    /// standard on-reading (then kun) so no kanji is ever left with a bare "—".
-    /// `intermediateIsFallback` marks the fallback case so the UI can style it as
-    /// "the standard on-reading" rather than "the reading it takes here".
+    /// The reading to use for this kanji's per-kanji speaker button: the in-compound
+    /// matched reading when the corpus records one, else the kanji's standard on-reading
+    /// (then kun) so the speaker always has something to say. `intermediateIsFallback`
+    /// marks the on-reading case so the UI can phrase it as the kanji's own reading
+    /// rather than a reading it takes inside the compound.
     var intermediateReading: String? {
         if let m = matchedReadingNormalized, !m.isEmpty { return m }
         if let on = onReadings.first, !on.isEmpty { return on }
@@ -1382,7 +1382,11 @@ final class DaiJishowEngine: ObservableObject {
                     onReadings: onList,
                     kunReadings: kunList,
                     matchedReadingNormalized: matchedNorm,
-                    isJukujikun: isMultiKanjiCell && !normFuri.isEmpty
+                    // Jukujikun is a *single-kanji* phenomenon: one kanji read with a
+                    // meaning-based reading that isn't in its own on/kun set. A multi-kanji
+                    // cell (e.g. 日本→にほん, on-readings with 連音) is NOT jukujikun, so
+                    // only flag a single-kanji cell whose furigana matched none of its readings.
+                    isJukujikun: !isMultiKanjiCell && !normFuri.isEmpty && matchedNorm == nil
                 ))
                 cellIdx += 1
             }
