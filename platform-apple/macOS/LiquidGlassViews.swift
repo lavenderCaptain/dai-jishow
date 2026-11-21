@@ -3757,14 +3757,21 @@ struct CompoundKanjiView: View {
                     // Inverse of "Open compound breakdown ↗": jump from this
                     // decomposition back to the word's full dictionary entry
                     // (definitions, examples, inflections) so a decomposition
-                    // never strands you away from the word itself.
+                    // never strands you away from the word itself. Rendered as a
+                    // visible accent chip sitting right next to the headword
+                    // speaker (the "Try:" chips' capsule treatment) so it's never
+                    // lost against the dark glass.
                     Button {
                         engine.openWordEntry(entryId: entry.header.id)
                     } label: {
                         Label("Show in context", systemImage: "text.book.closed.fill")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+                            .foregroundStyle(Color.accentColor)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
                     .help("Open \(entry.header.displayHeadword)'s full dictionary entry — definitions, examples, and inflections — instead of this decomposition")
                 }
                 HStack(spacing: 10) {
