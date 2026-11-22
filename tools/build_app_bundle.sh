@@ -16,6 +16,7 @@
 #   ./tools/build_app_bundle.sh --no-db    # skip bundling the ~221 MB corpus
 #   ./tools/build_app_bundle.sh --symlink-db  # link the DB instead of copying
 #   ./tools/build_app_bundle.sh --no-dmg   # skip the drag-to-Applications .dmg
+#   ./tools/build_app_bundle.sh --skip-tests  # skip the swift-test gate (dev only)
 #
 # The DMG (build/Dai-Jishow-<version>.dmg) is the standard "drag the app into the
 # Applications folder" installer: it contains the .app plus a symlink to
@@ -64,12 +65,14 @@ CONFIG="debug"
 BUNDLE_DB=1
 LINK_DB=0
 MAKE_DMG=1
+SKIP_TESTS=0
 for arg in "$@"; do
   case "$arg" in
     --release)      CONFIG="release" ;;
     --no-db)        BUNDLE_DB=0 ;;
     --symlink-db)   BUNDLE_DB=1; LINK_DB=1 ;;
     --no-dmg)       MAKE_DMG=0 ;;
+    --skip-tests)   SKIP_TESTS=1 ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown flag: $arg" >&2; exit 1 ;;
@@ -81,6 +84,21 @@ swift build -c "$CONFIG"
 BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)"
 EXEC="$BIN_PATH/$BINARY"
 [[ -f "$EXEC" ]] || { echo "executable not found: $EXEC" >&2; exit 1; }
+
+# --- regression tests (gate) --------------------------------------------
+# Run the Swift Testing suite (DaiJishowMorphTests) BEFORE assembling the .app so
+# a broken conjugation / part-of-speech / pitch-accent change cannot ship a DMG.
+# This is the "don't break things further as we iterate" gate. With `set -e`
+# (line 24) above, a failing `swift test` aborts the whole build. The suite only
+# depends on the pure, dependency-free DaiJishowMorph library, so it is fast and
+# hermetic (no ~221 MB corpus, no engine). Bypass for fast local iteration with
+# `--skip-tests` — use only while actively editing the morphology.
+if [[ "$SKIP_TESTS" == "1" ]]; then
+  echo "==> skipping tests (--skip-tests)"
+else
+  echo "==> swift test"
+  swift test
+fi
 
 # --- icon ---------------------------------------------------------------
 ensure_icon() {

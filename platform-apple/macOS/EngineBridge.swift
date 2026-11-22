@@ -1,6 +1,10 @@
 import Foundation
 import SwiftUI
 import DaiJishowCore
+// Pure morphology core (conjugation, POS tags, pitch contour + kana helpers) lives
+// in the DaiJishowMorph library so it can be unit-tested. The engine adapts its
+// EntryDetail / SenseItem into Morph's flat parameters at the call sites below.
+import DaiJishowMorph
 #if os(macOS)
 import AppKit
 #endif
@@ -222,64 +226,10 @@ enum GlossLanguageMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-struct PitchAccentContour {
-    let downstep: UInt8
-    let morae: [String]
-    let highStates: [Bool]      // length == morae.count
-    let particleHigh: Bool      // pitch of trailing particle (e.g. が)
-    let showParticle: Bool      // render the trailing が node (nouns only)
-    let patternName: String     // e.g. "頭高 [1]", "平板 [0]", "中高 [2]", "尾高 [3]"
-    let patternSublabel: String // e.g. "Atamadaka", "Heiban", "Nakadaka", "Odaka"
-
-    static func build(kana: String, pitchAccent: UInt8, showParticle: Bool = false) -> PitchAccentContour? {
-        guard pitchAccent != 255 else { return nil }
-        let morae = KanaNormalizer.splitMorae(kana)
-        guard !morae.isEmpty else { return nil }
-
-        let n = morae.count
-        let k = Int(pitchAccent)
-        var highs = [Bool](repeating: false, count: n)
-        let particleHigh: Bool
-        let name: String
-        let sublabel: String
-
-        if k == 0 {
-            // Heiban: L-H-H...H + H particle
-            for i in 1..<n { highs[i] = true }
-            particleHigh = true
-            name = "平板 [0]"
-            sublabel = "Heiban (Flat)"
-        } else if k == 1 {
-            // Atamadaka: H-L-L...L + L particle
-            highs[0] = true
-            particleHigh = false
-            name = "頭高 [1]"
-            sublabel = "Atamadaka (Initial Drop)"
-        } else if k >= n {
-            // Odaka: L-H-H...H + L particle
-            for i in 1..<n { highs[i] = true }
-            particleHigh = false
-            name = "尾高 [\(k)]"
-            sublabel = "Odaka (Tail Drop)"
-        } else {
-            // Nakadaka: L-H...H(up to k)-L...L + L particle
-            for i in 1..<min(k, n) { highs[i] = true }
-            particleHigh = false
-            name = "中高 [\(k)]"
-            sublabel = "Nakadaka (Mid Drop)"
-        }
-
-        return PitchAccentContour(
-            downstep: pitchAccent,
-            morae: morae,
-            highStates: highs,
-            particleHigh: particleHigh,
-            showParticle: showParticle,
-            patternName: name,
-            patternSublabel: sublabel
-        )
-    }
-}
+// `PitchAccentContour` and its `build` factory were extracted to the
+// `DaiJishowMorph` library (PitchAccentContour.swift) so the pitch-accent logic
+// — including the rc7 trailing-が noun-gating — can be unit-tested. This file
+// imports the library, so the type is in scope here.
 
 struct WordTelemetry {
     let frequencyTier: String
@@ -339,12 +289,9 @@ struct CollocationPattern: Identifiable, Hashable {
     let count: Int
 }
 
-struct InflectionForm: Identifiable {
-    let id: String
-    let label: String
-    let surface: String
-    let kana: String
-}
+// `InflectionForm` was extracted to the `DaiJishowMorph` library
+// (InflectionForm.swift) so the conjugation matrix it populates can be tested.
+// Imported above, so it remains in scope for `WordLexicalInsights.inflections`.
 
 struct WordLexicalInsights {
     let entryId: UInt32
@@ -702,146 +649,11 @@ enum KanjiRelatedDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - Kana, Mora & Romaji Normalization Helpers
-
-enum KanaNormalizer {
-    private static let smallCombiningKana: Set<Character> = [
-        "ゃ", "ゅ", "ょ", "ぁ", "ぃ", "ぅ", "ぇ", "ぉ", "ゎ",
-        "ャ", "ュ", "ョ", "ァ", "ィ", "ゥ", "ェ", "ォ", "ヮ"
-    ]
-
-    private static let romajiTable: [(String, String)] = [
-        ("ltsu", "っ"), ("xtsu", "っ"),
-        ("sha", "しゃ"), ("shu", "しゅ"), ("sho", "しょ"),
-        ("shi", "し"), ("sya", "しゃ"), ("syu", "しゅ"), ("syo", "しょ"),
-        ("cha", "ちゃ"), ("chu", "ちゅ"), ("cho", "ちょ"),
-        ("chi", "ち"), ("tya", "ちゃ"), ("tyu", "ちゅ"), ("tyo", "ちょ"),
-        ("tsu", "つ"),
-        ("ja", "じゃ"), ("ju", "じゅ"), ("jo", "じょ"),
-        ("jya", "じゃ"), ("jyu", "じゅ"), ("jyo", "じょ"),
-        ("zya", "じゃ"), ("zyu", "じゅ"), ("zyo", "じょ"),
-        ("kya", "きゃ"), ("kyu", "きゅ"), ("kyo", "きょ"),
-        ("gya", "ぎゃ"), ("gyu", "ぎゅ"), ("gyo", "ぎょ"),
-        ("nya", "にゃ"), ("nyu", "にゅ"), ("nyo", "にょ"),
-        ("hya", "ひゃ"), ("hyu", "ひゅ"), ("hyo", "ひょ"),
-        ("bya", "びゃ"), ("byu", "びゅ"), ("byo", "びょ"),
-        ("pya", "ぴゃ"), ("pyu", "ぴゅ"), ("pyo", "ぴょ"),
-        ("mya", "みゃ"), ("myu", "みゅ"), ("myo", "みょ"),
-        ("rya", "りゃ"), ("ryu", "りゅ"), ("ryo", "りょ"),
-        ("fu", "ふ"), ("hu", "ふ"),
-        ("ji", "じ"), ("zi", "じ"),
-        ("di", "ぢ"), ("du", "づ"),
-        ("ti", "ち"), ("tu", "つ"), ("si", "し"),
-        ("ka", "か"), ("ki", "き"), ("ku", "く"), ("ke", "け"), ("ko", "こ"),
-        ("ga", "が"), ("gi", "ぎ"), ("gu", "ぐ"), ("ge", "げ"), ("go", "ご"),
-        ("sa", "さ"), ("su", "す"), ("se", "せ"), ("so", "そ"),
-        ("za", "ざ"), ("zu", "ず"), ("ze", "ぜ"), ("zo", "ぞ"),
-        ("ta", "た"), ("te", "て"), ("to", "と"),
-        ("da", "だ"), ("de", "で"), ("do", "ど"),
-        ("na", "な"), ("ni", "に"), ("nu", "ぬ"), ("ne", "ね"), ("no", "の"),
-        ("ha", "は"), ("hi", "ひ"), ("he", "へ"), ("ho", "ほ"),
-        ("ba", "ば"), ("bi", "び"), ("bu", "ぶ"), ("be", "べ"), ("bo", "ぼ"),
-        ("pa", "ぱ"), ("pi", "ぴ"), ("pu", "ぷ"), ("pe", "ぺ"), ("po", "ぽ"),
-        ("ma", "ま"), ("mi", "み"), ("mu", "む"), ("me", "め"), ("mo", "も"),
-        ("ya", "や"), ("yu", "ゆ"), ("yo", "よ"),
-        ("ra", "ら"), ("ri", "り"), ("ru", "る"), ("re", "れ"), ("ro", "ろ"),
-        ("wa", "わ"), ("wi", "ゐ"), ("we", "ゑ"), ("wo", "を"),
-        ("nn", "ん"), ("n'", "ん"),
-        ("a", "あ"), ("i", "い"), ("u", "う"), ("e", "え"), ("o", "お")
-    ]
-
-    static func splitMorae(_ kana: String) -> [String] {
-        let trimmed = kana.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-        var morae: [String] = []
-        for ch in trimmed {
-            if smallCombiningKana.contains(ch), let last = morae.popLast() {
-                morae.append(last + String(ch))
-            } else {
-                morae.append(String(ch))
-            }
-        }
-        return morae
-    }
-
-    static func katakanaToHiragana(_ input: String) -> String {
-        var out = ""
-        out.reserveCapacity(input.count)
-        for scalar in input.unicodeScalars {
-            let v = scalar.value
-            if (0x30A1...0x30F6).contains(v), let h = UnicodeScalar(v - 0x60) {
-                out.unicodeScalars.append(h)
-            } else {
-                out.unicodeScalars.append(scalar)
-            }
-        }
-        return out
-    }
-
-    static func cleanReadingToken(_ raw: String) -> String {
-        let stripped = raw
-            .replacingOccurrences(of: "-", with: "")
-            .replacingOccurrences(of: ".", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return katakanaToHiragana(stripped)
-    }
-
-    /// Stem before okurigana dot (e.g. "おお.きい" -> "おお")
-    static func stemBeforeDot(_ raw: String) -> String {
-        let base = raw.split(separator: ".").first.map(String.init) ?? raw
-        return cleanReadingToken(base)
-    }
-
-    static func romajiToHiragana(_ input: String) -> String {
-        let s = katakanaToHiragana(input.lowercased().trimmingCharacters(in: .whitespacesAndNewlines))
-        var result = ""
-        var idx = s.startIndex
-
-        while idx < s.endIndex {
-            let rem = s[idx...]
-            if rem.count >= 2 {
-                let c1 = rem[rem.startIndex]
-                let c2 = rem[rem.index(after: rem.startIndex)]
-                if c1 == c2 && c1 >= "a" && c1 <= "z" && !"aeiouyn".contains(c1) {
-                    result.append("っ")
-                    idx = s.index(after: idx)
-                    continue
-                }
-            }
-
-            var matched = false
-            for (rom, hira) in romajiTable {
-                if rem.hasPrefix(rom) {
-                    result.append(hira)
-                    idx = s.index(idx, offsetBy: rom.count)
-                    matched = true
-                    break
-                }
-            }
-            if matched { continue }
-
-            let ch = s[idx]
-            if ch == "n" {
-                let nextIdx = s.index(after: idx)
-                if nextIdx == s.endIndex {
-                    result.append("ん")
-                    idx = nextIdx
-                    continue
-                }
-                let nextCh = s[nextIdx]
-                if !"aeiouy".contains(nextCh) {
-                    result.append("ん")
-                    idx = nextIdx
-                    continue
-                }
-            }
-
-            result.append(ch)
-            idx = s.index(after: idx)
-        }
-        return result
-    }
-}
+// Kana / mora / romaji helpers (`KanaNormalizer`) were extracted to the
+// `DaiJishowMorph` library (KanaNormalizer.swift) so the pitch-accent and
+// conjugation logic can be unit-tested. This file imports the library, so
+// `KanaNormalizer.splitMorae` / `cleanReadingToken` / `stemBeforeDot` resolve
+// from there.
 
 /// A transient "hidden proper name" nudge, surfaced above the search results.
 ///
@@ -1436,7 +1248,14 @@ final class DaiJishowEngine: ObservableObject {
         // 2. Per-Sense Part-of-Speech / Grammatical Tags
         var senseTags: [UInt32: [String]] = [:]
         for sense in entry.senses {
-            senseTags[sense.id] = Self.inferSenseTags(sense: sense, entry: entry)
+            // POS / grammatical tags now come from the pure, unit-tested
+            // DaiJishowMorph core; the engine adapts its sense/entry into its flat
+            // parameters.
+            senseTags[sense.id] = Morph.senseTags(
+                kana: entry.header.kanaHead,
+                posMask: sense.posMask,
+                glosses: sense.enGlosses
+            )
         }
 
         // 3. Homonyms (同音異義語) via exact kana match
@@ -1586,7 +1405,13 @@ final class DaiJishowEngine: ObservableObject {
         )
 
         // 6. Conjugation / Inflection Matrix (Verbs & Adjectives)
-        let (inflections, inflectionHeader) = Self.generateInflections(for: entry)
+        // Conjugation matrix now comes from the pure, unit-tested DaiJishowMorph
+        // core; the engine adapts its entry into the morpher's flat parameters.
+        let (inflections, inflectionHeader) = Morph.inflections(
+            surface: entry.header.displayHeadword,
+            kana: entry.header.kanaHead,
+            posMask: entry.header.posMask
+        )
 
         return WordLexicalInsights(
             entryId: entry.header.id,
@@ -1632,57 +1457,6 @@ final class DaiJishowEngine: ObservableObject {
         return s
     }
 
-    private static func inferSenseTags(sense: SenseItem, entry: EntryDetail) -> [String] {
-        var tags: [String] = []
-        let glosses = sense.enGlosses
-            .split(separator: ";")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-        let kana = entry.header.kanaHead
-        // POS from the corpus bitmask (POS_BITS in build_corpus.py): bit0=n,
-        // bits1–5=verbs (v1/v5/vs/vt/vi), bit6=adj-i, bit7=adj-na, bit8=adv,
-        // bit10=prt. Replaces the old "gloss starts with 'to '" heuristic, which
-        // mis-labeled nouns whose gloss began with "to " as verbs.
-        let mask = sense.posMask
-        let verbBits: UInt64 = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5)
-
-        if glosses.contains(where: { $0.hasPrefix("-") }) {
-            tags.append("Suffix")
-        }
-        if glosses.contains(where: { $0.hasSuffix("-") }) {
-            tags.append("Prefix")
-        }
-
-        if (mask & verbBits) != 0 {
-            if mask & (1 << 4) != 0 {           // vt
-                tags.append("Transitive • 他動詞")
-            } else if mask & (1 << 5) != 0 {    // vi
-                tags.append("Intransitive • 自動詞")
-            }
-            if kana == "する" || kana.hasSuffix("する") {
-                tags.append("Suru Verb")
-            } else if mask & (1 << 1) != 0 {    // v1
-                tags.append("Ichidan Verb")
-            } else {
-                tags.append("Godan Verb")
-            }
-        } else if mask & (1 << 7) != 0 {       // adj-na
-            tags.append("Na-Adj")
-        } else if mask & (1 << 6) != 0 {       // adj-i
-            tags.append("i-Adj")
-        } else if tags.isEmpty {
-            // Fallback when posMask carries no POS bits: keep the legacy kana
-            // heuristic for i-adjectives, otherwise treat as a noun / expression.
-            if mask == 0 && kana.hasSuffix("い") &&
-                !kana.hasSuffix("たい") && !kana.hasSuffix("ない") &&
-                glosses.contains(where: { !$0.hasPrefix("to ") && !$0.contains(" ") }) {
-                tags.append("i-Adj")
-            } else {
-                tags.append("Noun / Expr.")
-            }
-        }
-        return Array(tags.prefix(2))
-    }
-
     private static func extractCollocations(headword: String, entryId: UInt32, sentences: [SentenceItem]) -> [CollocationPattern] {
         guard !sentences.isEmpty else { return [] }
         let particles: Set<String> = ["が", "を", "に", "へ", "で", "と", "から", "まで", "より", "の", "な", "も", "は"]
@@ -1724,152 +1498,6 @@ final class DaiJishowEngine: ObservableObject {
         }
         .prefix(6)
         .map { $0 }
-    }
-
-    private static func generateInflections(for entry: EntryDetail) -> ([InflectionForm], String?) {
-        let surface = entry.header.displayHeadword
-        let kana = entry.header.kanaHead
-        guard surface.count >= 2, kana.count >= 2 else { return ([], nil) }
-
-        // Part-of-speech from the corpus bitmask (POS_BITS in build_corpus.py):
-        // bit0=n, bits1–5=verbs (v1/v5/vs/vt/vi), bit6=adj-i, bit7=adj-na,
-        // bit8=adv, bit10=prt. This replaces the old "gloss starts with 'to '"
-        // heuristic, which mis-fires on nouns whose English gloss happens to
-        // start with "to " and never sees na-adjectives.
-        let mask = entry.header.posMask
-        let verbBits: UInt64 = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5)
-        let isVerb = (mask & verbBits) != 0
-
-        if isVerb {
-            // Irregular "る"-ending verbs. These look like ichidan but are not:
-            // 来る/くる conjugate 来/こ (not 来/く), and ある / いる take ない
-            // (not あらない / いらない) in the negative.
-            if surface == "来る" || (surface == kana && kana == "くる") {
-                let sStem = surface == "来る" ? "来" : "く"
-                let kStem = "く"
-                return ([
-                    InflectionForm(id: "pol", label: "Polite", surface: sStem + "ます", kana: kStem + "ます"),
-                    InflectionForm(id: "neg", label: "Negative", surface: (surface == "来る" ? "来ない" : "こない"), kana: "こない"),
-                    InflectionForm(id: "past", label: "Past", surface: sStem + "た", kana: kStem + "た"),
-                    InflectionForm(id: "te", label: "Te-form", surface: sStem + "て", kana: kStem + "て"),
-                    InflectionForm(id: "pot", label: "Potential", surface: sStem + "られる", kana: kStem + "られる"),
-                    InflectionForm(id: "pas", label: "Passive", surface: sStem + "られる", kana: kStem + "られる")
-                ], "Irregular Verb (来る / くる)")
-            }
-            if surface == kana && kana == "ある" {
-                return ([
-                    InflectionForm(id: "pol", label: "Polite", surface: "あります", kana: "あります"),
-                    InflectionForm(id: "neg", label: "Negative", surface: "ない", kana: "ない"),
-                    InflectionForm(id: "past", label: "Past", surface: "あった", kana: "あった"),
-                    InflectionForm(id: "te", label: "Te-form", surface: "あって", kana: "あって"),
-                    InflectionForm(id: "pot", label: "Potential", surface: "あれる", kana: "あれる"),
-                    InflectionForm(id: "pas", label: "Passive", surface: "あられる", kana: "あられる")
-                ], "Irregular Verb (ある)")
-            }
-            if surface == kana && kana == "いる" {
-                return ([
-                    InflectionForm(id: "pol", label: "Polite", surface: "います", kana: "います"),
-                    InflectionForm(id: "neg", label: "Negative", surface: "いない", kana: "いない"),
-                    InflectionForm(id: "past", label: "Past", surface: "いた", kana: "いた"),
-                    InflectionForm(id: "te", label: "Te-form", surface: "いて", kana: "いて"),
-                    InflectionForm(id: "pot", label: "Potential", surface: "いられる", kana: "いられる"),
-                    InflectionForm(id: "pas", label: "Passive", surface: "いられる", kana: "いられる")
-                ], "Irregular Verb (いる)")
-            }
-
-            let sStem = String(surface.dropLast())
-            let kStem = String(kana.dropLast())
-
-            if kana == "する" || kana.hasSuffix("する") {
-                let sBase = String(surface.dropLast(2))
-                let kBase = String(kana.dropLast(2))
-                return ([
-                    InflectionForm(id: "pol", label: "Polite", surface: sBase + "します", kana: kBase + "します"),
-                    InflectionForm(id: "neg", label: "Negative", surface: sBase + "しない", kana: kBase + "しない"),
-                    InflectionForm(id: "past", label: "Past", surface: sBase + "した", kana: kBase + "した"),
-                    InflectionForm(id: "te", label: "Te-form", surface: sBase + "して", kana: kBase + "して"),
-                    InflectionForm(id: "pot", label: "Potential", surface: sBase + "できる", kana: kBase + "できる"),
-                    InflectionForm(id: "pas", label: "Passive", surface: sBase + "される", kana: kBase + "される")
-                ], "Suru Verb Inflections")
-            }
-
-            if kana.hasSuffix("る") {
-                let preLast = kana.dropLast().last
-                let ichidanVowels: Set<Character> = [
-                    "い", "き", "ぎ", "し", "じ", "ち", "に", "ひ", "び", "ぴ", "み", "り",
-                    "え", "け", "げ", "せ", "ぜ", "て", "で", "ね", "へ", "べ", "ぺ", "め", "れ"
-                ]
-                if let v = preLast, ichidanVowels.contains(v) {
-                    return ([
-                        InflectionForm(id: "pol", label: "Polite", surface: sStem + "ます", kana: kStem + "ます"),
-                        InflectionForm(id: "neg", label: "Negative", surface: sStem + "ない", kana: kStem + "ない"),
-                        InflectionForm(id: "past", label: "Past", surface: sStem + "た", kana: kStem + "た"),
-                        InflectionForm(id: "te", label: "Te-form", surface: sStem + "て", kana: kStem + "て"),
-                        InflectionForm(id: "pot", label: "Potential", surface: sStem + "られる", kana: kStem + "られる"),
-                        InflectionForm(id: "pas", label: "Passive", surface: sStem + "られる", kana: kStem + "られる")
-                    ], "Ichidan Verb Inflections")
-                }
-            }
-
-            // Godan Verb table
-            if let last = kana.last {
-                struct GodanRow {
-                    let a: String; let i: String; let e: String; let te: String; let ta: String
-                }
-                let table: [Character: GodanRow] = [
-                    "う": GodanRow(a: "わ", i: "い", e: "え", te: "って", ta: "った"),
-                    "く": GodanRow(a: "か", i: "き", e: "け", te: "いて", ta: "いた"),
-                    "ぐ": GodanRow(a: "が", i: "ぎ", e: "げ", te: "いで", ta: "いだ"),
-                    "す": GodanRow(a: "さ", i: "し", e: "せ", te: "して", ta: "した"),
-                    "つ": GodanRow(a: "た", i: "ち", e: "て", te: "って", ta: "った"),
-                    "ぬ": GodanRow(a: "な", i: "に", e: "ね", te: "んで", ta: "んだ"),
-                    "ぶ": GodanRow(a: "ば", i: "び", e: "べ", te: "んで", ta: "んだ"),
-                    "む": GodanRow(a: "ま", i: "み", e: "め", te: "んで", ta: "んだ"),
-                    "る": GodanRow(a: "ら", i: "り", e: "れ", te: "って", ta: "った")
-                ]
-                if let row = table[last] {
-                    let isIku = (kana == "いく" || kana == "ゆく")
-                    let teEnd = isIku ? "って" : row.te
-                    let taEnd = isIku ? "った" : row.ta
-                    return ([
-                        InflectionForm(id: "pol", label: "Polite", surface: sStem + row.i + "ます", kana: kStem + row.i + "ます"),
-                        InflectionForm(id: "neg", label: "Negative", surface: sStem + row.a + "ない", kana: kStem + row.a + "ない"),
-                        InflectionForm(id: "past", label: "Past", surface: sStem + taEnd, kana: kStem + taEnd),
-                        InflectionForm(id: "te", label: "Te-form", surface: sStem + teEnd, kana: kStem + teEnd),
-                        InflectionForm(id: "pot", label: "Potential", surface: sStem + row.e + "る", kana: kStem + row.e + "る"),
-                        InflectionForm(id: "pas", label: "Passive", surface: sStem + row.a + "れる", kana: kStem + row.a + "れる")
-                    ], "Godan Verb Inflections")
-                }
-            }
-        }
-
-        // Na-adjective (keiyogo / quasi-adjective), bit 7: 静か → 静かな / 静かに /
-        // 静かだった / 静かではない. The surface itself is the stem (no だ, no drop).
-        if (mask & (1 << 7)) != 0 {
-            return ([
-                InflectionForm(id: "na", label: "Adjectival", surface: surface + "な", kana: kana + "な"),
-                InflectionForm(id: "adv", label: "Adverbial", surface: surface + "に", kana: kana + "に"),
-                InflectionForm(id: "past", label: "Past", surface: surface + "だった", kana: kana + "だった"),
-                InflectionForm(id: "neg", label: "Negative", surface: surface + "ではない", kana: kana + "ではない")
-            ], "Na-Adjective Inflections")
-        }
-
-        // i-Adjective check (e.g. 大きい, 新しい, 高い). Prefer the corpus bit (6),
-        // but fall back to the kana heuristic when posMask is unknown (0).
-        let isIAdj = (mask & (1 << 6)) != 0 ||
-            (mask == 0 && kana.hasSuffix("い") && surface.hasSuffix("い") && !isVerb && kana.count >= 3)
-        if isIAdj {
-            let sStem = String(surface.dropLast())
-            let kStem = String(kana.dropLast())
-            return ([
-                InflectionForm(id: "adv", label: "Adverbial", surface: sStem + "く", kana: kStem + "く"),
-                InflectionForm(id: "neg", label: "Negative", surface: sStem + "くない", kana: kStem + "くない"),
-                InflectionForm(id: "past", label: "Past", surface: sStem + "かった", kana: kStem + "かった"),
-                InflectionForm(id: "te", label: "Te-form", surface: sStem + "くて", kana: kStem + "くて")
-            ], "i-Adjective Inflections")
-        }
-
-        return ([], nil)
     }
 
     // MARK: - Fast In-Memory Kanji Catalog (Lazy-Built from Engine)

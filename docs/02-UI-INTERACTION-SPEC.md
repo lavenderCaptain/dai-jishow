@@ -158,7 +158,13 @@ vision, no tab bar). Layout:
   **ある / いる** (negative `ない` / `いない`, not `あらない` / `いらない`) —
   **i-adjectives** (`大きい` → `大きく / 高くない / 高かった / 高くて`), and
   **na-adjectives / keiyogo** (`静か` → `静かな / 静かに / 静かだった /
-  静かではない`, the surface itself being the stem).
+  静かではない`, the surface itself being the stem). Every form's **surface**
+  (kanji side) is rendered from the kanji stem — so godan past/te read `書いた /
+  書いて` and `行った / 行って`, not the all-kana `かいた / いった` (a rendering
+  the regression suite caught and fixed). The whole matrix lives in the
+  `DaiJishowMorph` library and is locked by `swift test`
+  (`Tests/DaiJishowMorphTests/ConjugationTests.swift`) so a future edit that
+  regresses a form fails the build gate before a DMG.
 * **Pills that would clip off-screen** (the Kanji DNA strip, Homonyms,
   Compounds, Collocations) now **wrap to multiple rows** — no horizontal
   scroll, nothing cut off — and show the **top 10** with a **"Show more / Show

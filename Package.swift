@@ -35,11 +35,28 @@ let package = Package(
             ]
         ),
 
-        // 2. Native macOS SwiftUI + Canvas glass-material shell
+        // 2. Pure Swift morphology core (conjugation + POS + pitch), extracted from
+        //    the executable so it can be unit-tested. SwiftPM cannot `@testable`
+        //    import an executable target, so this logic lives in its own library.
+        //    Dependency-free: no engine, no DB, no UI, no MainActor.
+        .target(
+            name: "DaiJishowMorph",
+            path: "Sources/DaiJishowMorph"
+        ),
+
+        // 3. Native macOS SwiftUI + Canvas glass-material shell
         .executableTarget(
             name: "DaiJishowMac",
-            dependencies: ["DaiJishowCore"],
+            dependencies: ["DaiJishowCore", "DaiJishowMorph"],
             path: "platform-apple/macOS"
+        ),
+
+        // 4. Regression tests for the morphology core (Swift Testing). Locked in by
+        //    `swift test` in tools/build_app_bundle.sh so a broken conjugation/POS
+        //    change cannot ship a DMG.
+        .testTarget(
+            name: "DaiJishowMorphTests",
+            dependencies: ["DaiJishowMorph"]
         )
     ]
 )

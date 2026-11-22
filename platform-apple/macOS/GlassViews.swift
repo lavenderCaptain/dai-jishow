@@ -1,5 +1,8 @@
 import SwiftUI
 import DaiJishowCore
+// Pure morphology core (PitchAccentContour, InflectionForm, KanaNormalizer) lives
+// in the DaiJishowMorph library so it can be unit-tested.
+import DaiJishowMorph
 
 // MARK: - Glass Surface Primitive
 

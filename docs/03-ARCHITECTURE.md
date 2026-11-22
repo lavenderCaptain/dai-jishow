@@ -68,8 +68,9 @@ Dai-Jishow uses a **shared C++20 core** exposed through a **flat C11 ABI (`dj_ca
 
 * **Build:** The whole project builds with the **Swift Package Manager** (no
   `.xcodeproj`). `Package.swift` compiles the `core/` C++20 sources into the
-  `DaiJishowCore` library and the `DaiJishowMac` SwiftUI app, targeting
-  `.macOS(.v14)`. Run `swift build` at the repo root.
+  `DaiJishowCore` library, the pure-Swift morphology core into the dependency-free
+  `DaiJishowMorph` library, and the `DaiJishowMac` SwiftUI app (which depends on
+  both), targeting `.macOS(.v14)`. Run `swift build` at the repo root.
 * **Native C interop:** `platform-apple/macOS/EngineBridge.swift` calls the C11
   ABI (`dj_capi.h`) directly and owns all app state (history/Z-stack, recall
   mode, kanji display mode, search). `GlassViews.swift` holds the views;
@@ -81,7 +82,26 @@ Dai-Jishow uses a **shared C++20 core** exposed through a **flat C11 ABI (`dj_ca
   `Info.plist`), applies an **ad-hoc code signature**, and produces a
   **drag-to-Applications DMG** (`Dai-Jishow-<version>.dmg`: the app plus an
   `/Applications` symlink). Flags: `--release`, `--no-db`, `--symlink-db`,
-  `--no-dmg`.
+  `--no-dmg`, `--skip-tests` (bypass the regression gate for fast local iteration).
+* **Morphology library & regression gate:** The pure conjugation / part-of-speech
+  / pitch-accent logic — `Morph.inflections`, `Morph.senseTags`,
+  `PitchAccentContour` (its `build` factory), `KanaNormalizer`, and the
+  `InflectionForm` value type — lives in the dependency-free `DaiJishowMorph`
+  Swift library (`Sources/DaiJishowMorph/`), extracted out of the `DaiJishowMac`
+  executable so it can be unit-tested: SwiftPM cannot `@testable import` an
+  *executable* target, so logic worth locking down must first live in a library.
+  The move is behavior-preserving (bodies verbatim; only the entry point flattens
+  from `EntryDetail` / `SenseItem` to plain `String` / `UInt64` params and the
+  access level widens to `public`); `DaiJishowMac` then `import`s the library and
+  adapts its own aggregates into the morpher's flat parameters at the two call
+  sites in `EngineBridge.swift`.
+* **Regression tests:** `Tests/DaiJishowMorphTests/` locks the morphology with
+  **Swift Testing** (`@Suite` / `@Test` / `#expect`) — the chosen framework for all
+  unit / backend / integration logic; **XCTest is reserved for UI automation**.
+  The suite is hermetic (hand-built `(surface, kana, posMask)` fixtures, no
+  ~221 MB corpus, no engine). `tools/build_app_bundle.sh` runs `swift test` as a
+  **gate before `.app` / DMG assembly**, so a broken conjugation, POS verdict, or
+  pitch contour can never ship.
 * **Naming:** The *code stem* — `DaiJishow`, `DaiJishowCore`, `DaiJishowMac`, and
   the `daijishow.db` bundle — is written fused on purpose: Swift / C++ / CMake
   identifiers and the compiled binary cannot carry a hyphen. The hyphenated

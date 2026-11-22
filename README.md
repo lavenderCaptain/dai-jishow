@@ -80,6 +80,15 @@ idiom triggers) exist in the schema but are not yet populated by the ETL.
 * `docs/` — Product, UI/interaction, architecture, and corpus specifications.
 * `core/` — Platform-agnostic C++20 engine (`dj_storage`, `dj_nlp`, `dj_graph`,
   `dj_state`, `dj_capi`), built as the `DaiJishowCore` library.
+* `Sources/DaiJishowMorph/` — Pure, dependency-free Swift morphology core
+  (`Morph.inflections` / `Morph.senseTags`, `PitchAccentContour`,
+  `KanaNormalizer`, `InflectionForm`), extracted from the executable so it can be
+  unit-tested (SwiftPM cannot `@testable import` an executable target).
+  `DaiJishowMac` imports it and adapts its `EntryDetail` / `SenseItem` into the
+  morpher's flat parameters.
+* `Tests/DaiJishowMorphTests/` — Regression suite (**Swift Testing**) locking the
+  conjugation / part-of-speech / pitch-accent behavior; run by `swift test` and
+  gated into `tools/build_app_bundle.sh` so a broken form can't ship a DMG.
 * `tools/corpus-builder/` — Offline Python ETL that builds `daijishow.db`
   (`build_corpus.py`, with `fetch_sources.py` and `pack_kanjivg.py`).
 * `platform-apple/macOS/` — The native SwiftUI glass-material macOS shell
@@ -98,6 +107,10 @@ The project builds with the Swift Package Manager (there is no `.xcodeproj`):
 # 1. Build the C++ core + macOS app
 swift build
 
+# 1b. (optional) Run the morphology regression suite — also run automatically
+#     as a gate inside ./tools/build_app_bundle.sh below
+swift test
+
 # 2. Assemble a distributable .app (icon + self-contained corpus + Info.plist)
 #    and a drag-to-Applications DMG in build/
 ./tools/build_app_bundle.sh
@@ -110,7 +123,8 @@ open build/Dai-Jishow.app
 ```
 
 Handy flags: `--release` (optimized build), `--no-db` (skip the ~221 MB corpus),
-`--symlink-db` (link instead of copy), `--no-dmg` (skip the DMG). The corpus is
+`--symlink-db` (link instead of copy), `--no-dmg` (skip the DMG), `--skip-tests`
+(bypass the `swift test` regression gate for fast local iteration). The corpus is
 recreated from raw sources with:
 
 ```bash
