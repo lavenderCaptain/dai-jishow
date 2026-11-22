@@ -227,10 +227,11 @@ struct PitchAccentContour {
     let morae: [String]
     let highStates: [Bool]      // length == morae.count
     let particleHigh: Bool      // pitch of trailing particle (e.g. が)
+    let showParticle: Bool      // render the trailing が node (nouns only)
     let patternName: String     // e.g. "頭高 [1]", "平板 [0]", "中高 [2]", "尾高 [3]"
     let patternSublabel: String // e.g. "Atamadaka", "Heiban", "Nakadaka", "Odaka"
 
-    static func build(kana: String, pitchAccent: UInt8) -> PitchAccentContour? {
+    static func build(kana: String, pitchAccent: UInt8, showParticle: Bool = false) -> PitchAccentContour? {
         guard pitchAccent != 255 else { return nil }
         let morae = KanaNormalizer.splitMorae(kana)
         guard !morae.isEmpty else { return nil }
@@ -273,6 +274,7 @@ struct PitchAccentContour {
             morae: morae,
             highStates: highs,
             particleHigh: particleHigh,
+            showParticle: showParticle,
             patternName: name,
             patternSublabel: sublabel
         )
@@ -1636,6 +1638,12 @@ final class DaiJishowEngine: ObservableObject {
             .split(separator: ";")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
         let kana = entry.header.kanaHead
+        // POS from the corpus bitmask (POS_BITS in build_corpus.py): bit0=n,
+        // bits1–5=verbs (v1/v5/vs/vt/vi), bit6=adj-i, bit7=adj-na, bit8=adv,
+        // bit10=prt. Replaces the old "gloss starts with 'to '" heuristic, which
+        // mis-labeled nouns whose gloss began with "to " as verbs.
+        let mask = sense.posMask
+        let verbBits: UInt64 = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5)
 
         if glosses.contains(where: { $0.hasPrefix("-") }) {
             tags.append("Suffix")
@@ -1643,24 +1651,29 @@ final class DaiJishowEngine: ObservableObject {
         if glosses.contains(where: { $0.hasSuffix("-") }) {
             tags.append("Prefix")
         }
-        if glosses.contains(where: { $0.hasPrefix("to ") }) {
-            if entry.header.pairEntryId > 0 {
-                if kana.hasSuffix("す") {
-                    tags.append("Transitive • 他動詞")
-                } else {
-                    tags.append("Intransitive • 自動詞")
-                }
+
+        if (mask & verbBits) != 0 {
+            if mask & (1 << 4) != 0 {           // vt
+                tags.append("Transitive • 他動詞")
+            } else if mask & (1 << 5) != 0 {    // vi
+                tags.append("Intransitive • 自動詞")
             }
             if kana == "する" || kana.hasSuffix("する") {
                 tags.append("Suru Verb")
-            } else if kana.hasSuffix("える") || kana.hasSuffix("いる") {
-                tags.append("Verb")
+            } else if mask & (1 << 1) != 0 {    // v1
+                tags.append("Ichidan Verb")
             } else {
                 tags.append("Godan Verb")
             }
-        }
-        if tags.isEmpty {
-            if kana.hasSuffix("い") && !kana.hasSuffix("たい") && !kana.hasSuffix("ない") &&
+        } else if mask & (1 << 7) != 0 {       // adj-na
+            tags.append("Na-Adj")
+        } else if mask & (1 << 6) != 0 {       // adj-i
+            tags.append("i-Adj")
+        } else if tags.isEmpty {
+            // Fallback when posMask carries no POS bits: keep the legacy kana
+            // heuristic for i-adjectives, otherwise treat as a noun / expression.
+            if mask == 0 && kana.hasSuffix("い") &&
+                !kana.hasSuffix("たい") && !kana.hasSuffix("ない") &&
                 glosses.contains(where: { !$0.hasPrefix("to ") && !$0.contains(" ") }) {
                 tags.append("i-Adj")
             } else {
@@ -1718,13 +1731,52 @@ final class DaiJishowEngine: ObservableObject {
         let kana = entry.header.kanaHead
         guard surface.count >= 2, kana.count >= 2 else { return ([], nil) }
 
-        let allGlosses = entry.senses
-            .flatMap { $0.enGlosses.split(separator: ";") }
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-
-        let isVerb = allGlosses.contains { $0.hasPrefix("to ") }
+        // Part-of-speech from the corpus bitmask (POS_BITS in build_corpus.py):
+        // bit0=n, bits1–5=verbs (v1/v5/vs/vt/vi), bit6=adj-i, bit7=adj-na,
+        // bit8=adv, bit10=prt. This replaces the old "gloss starts with 'to '"
+        // heuristic, which mis-fires on nouns whose English gloss happens to
+        // start with "to " and never sees na-adjectives.
+        let mask = entry.header.posMask
+        let verbBits: UInt64 = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5)
+        let isVerb = (mask & verbBits) != 0
 
         if isVerb {
+            // Irregular "る"-ending verbs. These look like ichidan but are not:
+            // 来る/くる conjugate 来/こ (not 来/く), and ある / いる take ない
+            // (not あらない / いらない) in the negative.
+            if surface == "来る" || (surface == kana && kana == "くる") {
+                let sStem = surface == "来る" ? "来" : "く"
+                let kStem = "く"
+                return ([
+                    InflectionForm(id: "pol", label: "Polite", surface: sStem + "ます", kana: kStem + "ます"),
+                    InflectionForm(id: "neg", label: "Negative", surface: (surface == "来る" ? "来ない" : "こない"), kana: "こない"),
+                    InflectionForm(id: "past", label: "Past", surface: sStem + "た", kana: kStem + "た"),
+                    InflectionForm(id: "te", label: "Te-form", surface: sStem + "て", kana: kStem + "て"),
+                    InflectionForm(id: "pot", label: "Potential", surface: sStem + "られる", kana: kStem + "られる"),
+                    InflectionForm(id: "pas", label: "Passive", surface: sStem + "られる", kana: kStem + "られる")
+                ], "Irregular Verb (来る / くる)")
+            }
+            if surface == kana && kana == "ある" {
+                return ([
+                    InflectionForm(id: "pol", label: "Polite", surface: "あります", kana: "あります"),
+                    InflectionForm(id: "neg", label: "Negative", surface: "ない", kana: "ない"),
+                    InflectionForm(id: "past", label: "Past", surface: "あった", kana: "あった"),
+                    InflectionForm(id: "te", label: "Te-form", surface: "あって", kana: "あって"),
+                    InflectionForm(id: "pot", label: "Potential", surface: "あれる", kana: "あれる"),
+                    InflectionForm(id: "pas", label: "Passive", surface: "あられる", kana: "あられる")
+                ], "Irregular Verb (ある)")
+            }
+            if surface == kana && kana == "いる" {
+                return ([
+                    InflectionForm(id: "pol", label: "Polite", surface: "います", kana: "います"),
+                    InflectionForm(id: "neg", label: "Negative", surface: "いない", kana: "いない"),
+                    InflectionForm(id: "past", label: "Past", surface: "いた", kana: "いた"),
+                    InflectionForm(id: "te", label: "Te-form", surface: "いて", kana: "いて"),
+                    InflectionForm(id: "pot", label: "Potential", surface: "いられる", kana: "いられる"),
+                    InflectionForm(id: "pas", label: "Passive", surface: "いられる", kana: "いられる")
+                ], "Irregular Verb (いる)")
+            }
+
             let sStem = String(surface.dropLast())
             let kStem = String(kana.dropLast())
 
@@ -1791,8 +1843,22 @@ final class DaiJishowEngine: ObservableObject {
             }
         }
 
-        // i-Adjective check (e.g. 大きい, 新しい, 高い)
-        if kana.hasSuffix("い") && surface.hasSuffix("い") && !isVerb && kana.count >= 3 {
+        // Na-adjective (keiyogo / quasi-adjective), bit 7: 静か → 静かな / 静かに /
+        // 静かだった / 静かではない. The surface itself is the stem (no だ, no drop).
+        if (mask & (1 << 7)) != 0 {
+            return ([
+                InflectionForm(id: "na", label: "Adjectival", surface: surface + "な", kana: kana + "な"),
+                InflectionForm(id: "adv", label: "Adverbial", surface: surface + "に", kana: kana + "に"),
+                InflectionForm(id: "past", label: "Past", surface: surface + "だった", kana: kana + "だった"),
+                InflectionForm(id: "neg", label: "Negative", surface: surface + "ではない", kana: kana + "ではない")
+            ], "Na-Adjective Inflections")
+        }
+
+        // i-Adjective check (e.g. 大きい, 新しい, 高い). Prefer the corpus bit (6),
+        // but fall back to the kana heuristic when posMask is unknown (0).
+        let isIAdj = (mask & (1 << 6)) != 0 ||
+            (mask == 0 && kana.hasSuffix("い") && surface.hasSuffix("い") && !isVerb && kana.count >= 3)
+        if isIAdj {
             let sStem = String(surface.dropLast())
             let kStem = String(kana.dropLast())
             return ([

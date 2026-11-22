@@ -2096,7 +2096,10 @@ struct WordEntryView: View {
 
     private var pitchContour: PitchAccentContour? {
         guard engine.recallMode != .hideKana else { return nil }
-        return PitchAccentContour.build(kana: entry.header.kanaHead, pitchAccent: entry.header.pitchAccent)
+        // Render the trailing が particle only for nouns (posMask bit0); it reads
+        // ungrammatically after conjugated verbs/adjectives (taberu-ga, takai-ga).
+        let isNoun = (entry.header.posMask & 1) != 0
+        return PitchAccentContour.build(kana: entry.header.kanaHead, pitchAccent: entry.header.pitchAccent, showParticle: isNoun)
     }
 
     private var activeSentences: [SentenceItem] {
@@ -2992,7 +2995,8 @@ struct PitchAccentContourView: View {
                         if idx + 1 < contour.highStates.count {
                             return contour.highStates[idx + 1]
                         } else {
-                            return contour.particleHigh
+                            // No connector to the trailing particle when it is hidden.
+                            return contour.showParticle ? contour.particleHigh : nil
                         }
                     }()
 
@@ -3017,18 +3021,21 @@ struct PitchAccentContourView: View {
                     }
                 }
 
-                // Trailing grammatical particle node (が)
-                VStack(spacing: 4) {
-                    ZStack {
-                        Color.clear.frame(width: 22, height: 22)
-                        Circle()
-                            .strokeBorder(contour.particleHigh ? Color.accentColor : Color.white.opacity(0.45), lineWidth: 1.5)
-                            .frame(width: 8, height: 8)
-                            .offset(y: contour.particleHigh ? -6 : 6)
+                // Trailing grammatical particle node (が) — rendered for nouns only,
+                // since が after a conjugated verb/adjective looks ungrammatical.
+                if contour.showParticle {
+                    VStack(spacing: 4) {
+                        ZStack {
+                            Color.clear.frame(width: 22, height: 22)
+                            Circle()
+                                .strokeBorder(contour.particleHigh ? Color.accentColor : Color.white.opacity(0.45), lineWidth: 1.5)
+                                .frame(width: 8, height: 8)
+                                .offset(y: contour.particleHigh ? -6 : 6)
+                        }
+                        Text("が")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
                     }
-                    Text("が")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 12)

@@ -147,7 +147,18 @@ vision, no tab bar). Layout:
 * **Detailed dashboard:** a wrapping **Kanji DNA** strip, POS-tagged
   **Definitions**, a **自他 pair** banner, **Homonyms** (同音異義語), **Word
   Family** (prefix/suffix compounds), **Corpus Collocations**, **Example
-  Sentences**, and a **conjugation matrix** for verbs / adjectives.
+  Sentences**, and a **conjugation matrix** for verbs / adjectives. The
+  matrix is **POS-driven**: it reads each entry's `posMask` (the corpus
+  bitmask — see §6.1 chips) instead of sniffing English glosses, so the
+  right inflection table fires and a noun whose gloss happens to start with
+  *"to "* is never mis-conjugated as a verb. It covers **Suru** verbs
+  (`する` / `～する`), **Ichidan**, **Godan** (incl. the `いく`/`ゆく`
+  te-form exception), **irregular** `る`-ending verbs — **来る / くる**
+  (`来ます / 来ない / 来た / 来て`, never the ichidan-looking `来れる`) and
+  **ある / いる** (negative `ない` / `いない`, not `あらない` / `いらない`) —
+  **i-adjectives** (`大きい` → `大きく / 高くない / 高かった / 高くて`), and
+  **na-adjectives / keiyogo** (`静か` → `静かな / 静かに / 静かだった /
+  静かではない`, the surface itself being the stem).
 * **Pills that would clip off-screen** (the Kanji DNA strip, Homonyms,
   Compounds, Collocations) now **wrap to multiple rows** — no horizontal
   scroll, nothing cut off — and show the **top 10** with a **"Show more / Show
@@ -268,7 +279,11 @@ vision, no tab bar). Layout:
   Note the pitch-accent diagram (`PitchAccentContourView`) is a *learning* asset —
   `AVSpeechSynthesizer` has no per-mora pitch control, so the voice speaks its own
   standard accent; the speaker is "hear the standard reading", not a re-render of
-  the diagram's downstep.
+  the diagram's downstep. The diagram's trailing **が** node is **nouns-only**
+  (gated on `posMask` bit 0): `が` attaches naturally to nouns but looks
+  ungrammatical after a conjugated verb or adjective (*taberu-ga*, *takai-ga*),
+  so on verbs / adjectives the node — and its connector to the final mora — is
+  hidden.
 * **Proper-name auto-nudge** (the top-bar **Names** toggle, `includeNames`): with
   Names **off**, the omni-search excludes proper names (`is_name = 1`), so a place
   like **Akihabara** can hide its real answer — 秋葉原 — behind the only visible
