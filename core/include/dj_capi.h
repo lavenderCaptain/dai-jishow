@@ -228,6 +228,19 @@ typedef struct {
 } dj_fisheye_node_t;
 
 /**
+ * An idiom, yojijukugo (4-character compound), or proverb (`kotowaza`) stored
+ * in the `idioms` table and linked back to its dictionary entry.
+ */
+typedef struct {
+    uint32_t    entry_id;
+    uint8_t     idiom_kind;        /* 1 = Yojijukugo, 2 = Kan'yoku, 3 = Kotowaza */
+    const char* kanji_head;
+    const char* kana_head;
+    const char* figurative_gloss;
+    const char* anchor_lemmas;
+} dj_idiom_t;
+
+/**
  * Create an engine handle backed by `db_path`.
  *
  * The database is opened read-only, without mutexes (the host must serialize
@@ -336,6 +349,26 @@ size_t dj_kanji_search_radicals(
     int16_t          target_strokes,
     int8_t           stroke_tolerance,
     const uint32_t** out_codepoints);
+
+/**
+ * Load idioms, yojijukugo, and proverbs (`idioms` table) anchored by a
+ * single kanji codepoint, ordered by corpus frequency.
+ */
+size_t dj_dict_get_kanji_idioms(
+    dj_engine_t*       engine,
+    uint32_t           codepoint,
+    size_t             limit,
+    const dj_idiom_t** out_idioms);
+
+/**
+ * Load idioms, yojijukugo, and proverbs linked to a dictionary entry
+ * (either directly via `entry_id` or sharing its kanji components).
+ */
+size_t dj_dict_get_entry_idioms(
+    dj_engine_t*       engine,
+    uint32_t           entry_id,
+    size_t             limit,
+    const dj_idiom_t** out_idioms);
 
 /**
  * Solve the fisheye kanji graph around a center kanji.

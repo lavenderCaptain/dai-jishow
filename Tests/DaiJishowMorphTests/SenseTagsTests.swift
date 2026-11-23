@@ -86,4 +86,30 @@ struct SenseTagsTests {
         let prefix = Morph.senseTags(kana: "しょ", posMask: 1, glosses: "un-; prefix")
         #expect(prefix.contains("Prefix"))
     }
+
+    // MARK: Register & specialized POS bits
+
+    @Test("Standalone adverb / particle / onomatopoeia senseTags")
+    func specializedPrimaryTags() {
+        #expect(Morph.senseTags(kana: "とても", posMask: 1 << 8, glosses: "very") == ["Adverb"])
+        #expect(Morph.senseTags(kana: "から", posMask: 1 << 10, glosses: "from") == ["Particle"])
+        #expect(Morph.senseTags(kana: "きらきら", posMask: 1 << 13, glosses: "glittering") == ["Onomatopoeia"])
+        #expect(Morph.senseTags(kana: "いちじく", posMask: 1 << 11, glosses: "four chars") == ["Yojijukugo"])
+        #expect(Morph.senseTags(kana: "ねこにこばん", posMask: 1 << 21, glosses: "pearls before swine") == ["Proverb"])
+    }
+
+    @Test("registerTags extracts keigo, colloquial, slang, dialect, and idiom badges")
+    func registerTagsExtraction() {
+        let keigoMask: UInt64 = (1 << 14) | (1 << 16) | (1 << 17)
+        let keigo = Morph.registerTags(posMask: keigoMask)
+        #expect(keigo.contains("Honorific • 尊敬語"))
+        #expect(keigo.contains("Polite • 丁寧語"))
+        #expect(keigo.contains("Colloquial"))
+
+        let idiomMask: UInt64 = (1 << 12) | (1 << 13) | (1 << 20)
+        let idioms = Morph.registerTags(posMask: idiomMask)
+        #expect(idioms.contains("Idiom • 慣用句"))
+        #expect(idioms.contains("Onomatopoeia"))
+        #expect(idioms.contains("Kansai-ben"))
+    }
 }

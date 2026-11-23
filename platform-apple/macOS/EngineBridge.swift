@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import SwiftUI
 import DaiJishowCore
 // Pure morphology core (conjugation, POS tags, pitch contour + kana helpers) lives
@@ -70,6 +71,12 @@ enum SearchFilter: String, CaseIterable, Identifiable, Hashable {
     case adjectives = "Adjectives"
     case adverbs = "Adverbs"
     case particles = "Particles"
+    case onomatopoeia = "Onomatopoeia"
+    case yojijukugo = "Yojijukugo"
+    case idioms = "Idioms"
+    case proverbs = "Proverbs"
+    case keigo = "Keigo"
+    case colloquial = "Colloquial"
     // JLPT level + grade chips. These are *derived* from a word's head kanji (see
     // `derivedGradeJlpt`), not stored on the hit, so they need the kanji catalog.
     case jlpt5 = "N5"
@@ -87,12 +94,18 @@ enum SearchFilter: String, CaseIterable, Identifiable, Hashable {
     /// derived JLPT/grade chip).
     var posBits: UInt64 {
         switch self {
-        case .nouns:      return 1 << 0          // n
-        case .verbs:      return (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) // v1 v5 vs vt vi
-        case .adjectives: return (1 << 6) | (1 << 7)   // adj-i (keiyoushi) + adj-na (keiyogo)
-        case .adverbs:    return 1 << 8          // adv
-        case .particles:  return 1 << 10         // prt
-        default:          return 0              // common + all derived filters
+        case .nouns:        return 1 << 0          // n
+        case .verbs:        return (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) // v1 v5 vs vt vi
+        case .adjectives:   return (1 << 6) | (1 << 7)   // adj-i (keiyoushi) + adj-na (keiyogo)
+        case .adverbs:      return 1 << 8          // adv
+        case .particles:    return 1 << 10         // prt
+        case .yojijukugo:   return 1 << 11         // yoji
+        case .idioms:       return 1 << 12         // id
+        case .onomatopoeia: return 1 << 13         // on-mim
+        case .keigo:        return (1 << 14) | (1 << 15) | (1 << 16) // hon + hum + pol
+        case .colloquial:   return (1 << 17) | (1 << 18) // col + sl
+        case .proverbs:     return 1 << 21         // proverb
+        default:            return 0              // common + all derived filters
         }
     }
 
@@ -134,8 +147,14 @@ enum SearchFilter: String, CaseIterable, Identifiable, Hashable {
         case .nouns:      return Color(red: 0.30, green: 0.58, blue: 0.95) // blue
         case .verbs:      return Color(red: 0.97, green: 0.55, blue: 0.18) // orange — action
         case .adjectives: return Color(red: 0.72, green: 0.45, blue: 0.95) // purple
-        case .adverbs:    return Color(red: 0.45, green: 0.78, blue: 0.35) // green
-        case .particles:  return Color(red: 0.42, green: 0.52, blue: 0.85) // indigo/slate
+        case .adverbs:      return Color(red: 0.45, green: 0.78, blue: 0.35) // green
+        case .particles:    return Color(red: 0.42, green: 0.52, blue: 0.85) // indigo/slate
+        case .onomatopoeia: return Color(red: 0.96, green: 0.54, blue: 0.72) // rose
+        case .yojijukugo:   return Color(red: 0.95, green: 0.72, blue: 0.24) // gold
+        case .idioms:       return Color(red: 0.36, green: 0.78, blue: 0.88) // cyan
+        case .proverbs:     return Color(red: 0.76, green: 0.56, blue: 0.96) // lavender
+        case .keigo:        return Color(red: 0.88, green: 0.64, blue: 0.36) // bronze
+        case .colloquial:   return Color(red: 0.54, green: 0.82, blue: 0.56) // mint
         // JLPT chips: a green→red ramp by difficulty (N5 easiest, N1 hardest).
         case .jlpt5:      return Color(red: 0.42, green: 0.78, blue: 0.35) // green
         case .jlpt4:      return Color(red: 0.86, green: 0.74, blue: 0.20) // yellow
@@ -293,6 +312,36 @@ struct CollocationPattern: Identifiable, Hashable {
 // (InflectionForm.swift) so the conjugation matrix it populates can be tested.
 // Imported above, so it remains in scope for `WordLexicalInsights.inflections`.
 
+struct IdiomItem: Identifiable, Hashable {
+    var id: UInt32 { entryId }
+    let entryId: UInt32
+    let idiomKind: UInt8
+    let kanjiHead: String
+    let kanaHead: String
+    let figurativeGloss: String
+    let anchorLemmas: String
+
+    var displayHeadword: String {
+        kanjiHead.isEmpty ? kanaHead : kanjiHead
+    }
+
+    var kindLabel: String {
+        switch idiomKind {
+        case 1: return "四字熟語 • Yojijukugo"
+        case 3: return "諺 • Proverb"
+        default: return "慣用句 • Idiom"
+        }
+    }
+
+    var shortKindLabel: String {
+        switch idiomKind {
+        case 1: return "四字熟語"
+        case 3: return "諺"
+        default: return "慣用句"
+        }
+    }
+}
+
 struct WordLexicalInsights {
     let entryId: UInt32
     let telemetry: WordTelemetry
@@ -304,8 +353,10 @@ struct WordLexicalInsights {
     let collocations: [CollocationPattern]
     let fallbackSentences: [SentenceItem]
     let fallbackSourceWord: String?
+    let fallbackSourceEntryId: UInt32?
     let inflections: [InflectionForm]
     let inflectionHeader: String?
+    let idioms: [IdiomItem]
 }
 
 // MARK: - Kanji Index & Detail Models
@@ -360,6 +411,8 @@ struct KanjiDetail {
     let radicalId: Int
     let skipCode: UInt32
     let fourCorner: UInt32
+    let skipCodeLabel: String
+    let fourCornerLabel: String
     let kyujitaiGlyph: String?
     let onReadings: [String]
     let kunReadings: [String]
@@ -368,6 +421,7 @@ struct KanjiDetail {
     let strokePolylines: [[CGPoint]]
     let standaloneEntries: [EntryDetail]
     let relatedWords: [WordHit]
+    let idioms: [IdiomItem]
 
     var unicodeHex: String {
         String(format: "U+%04X", codepoint)
@@ -494,7 +548,7 @@ struct FisheyeNode: Identifiable {
     }
 }
 
-enum ActiveScreenKind {
+enum ActiveScreenKind: String {
     case fisheye
     case wordEntry
     case kanjiDetail
@@ -502,6 +556,7 @@ enum ActiveScreenKind {
     case kanjiLookup
     case wordCosmos
     case compoundKanji
+    case studyLibrary
 }
 
 /// Prevalence-tier ceiling for the Word Cosmos sampler. `maxFreqRank` is the
@@ -618,7 +673,9 @@ enum HistorySnapshot {
     case fisheye(kanji: KanjiDetail, nodes: [FisheyeNode], leftOverflow: Int, rightOverflow: Int)
     case radicalBuilder(selectedIds: [UInt8], targetStrokes: Int, matches: [UInt32])
     case kanjiLookup(mode: KanjiLookupMode, strokeCount: Int, sortOrder: KanjiSortOrder, results: [KanjiIndexItem])
+    case wordCosmos(words: [WordHit], tier: WordCosmosTier, layout: WordCosmosLayout, colorMode: WordCosmosColorMode)
     case compoundWord(entryId: UInt32)
+    case studyLibrary(deckCount: Int, itemCount: Int)
 }
 
 enum RecallMode: String, CaseIterable, Identifiable {
@@ -674,19 +731,58 @@ struct NameNudge: Identifiable {
 final class DaiJishowEngine: ObservableObject {
     private static let cockpitDefaultsKey = "daijishow.wordCockpitExpanded"
     private static let kanjiRelatedModeKey = "daijishow.kanjiRelatedMode"
+    private static let recallModeKey = "daijishow.recallMode"
+    private static let includeNamesKey = "daijishow.includeNames"
+    private static let maxFisheyePerSideKey = "daijishow.maxFisheyePerSide"
+    private static let showFisheyePercentagesKey = "daijishow.showFisheyePercentages"
+    private static let recentKanjiKey = "daijishow.recentKanji"
+    private static let wordCosmosTierKey = "daijishow.wordCosmosTier"
+    private static let wordCosmosLayoutKey = "daijishow.wordCosmosLayout"
+    private static let wordCosmosCountKey = "daijishow.wordCosmosCount"
+    private static let wordCosmosColorModeKey = "daijishow.wordCosmosColorMode"
+    private static let lastScreenKey = "daijishow.lastScreen"
+    private static let lastTargetIdKey = "daijishow.lastTargetId"
 
     private var handle: OpaquePointer?
+    private var isBootstrapped = false
     private var searchDebounceTask: Task<Void, Never>?
     private var historySnapshots: [UUID: HistorySnapshot] = [:]
     private var cachedKanjiCatalog: [KanjiIndexItem]?
     private var cachedKanjiByCodepoint: [UInt32: KanjiIndexItem]?
     private var wordInsightsCache: [String: WordLexicalInsights] = [:]
     private var entryDetailCache: [UInt32: EntryDetail] = [:]
+    private var studyStoreCancellable: AnyCancellable?
+
+    let studyStore = StudyStore()
 
     @Published var searchQuery: String = ""
-    @Published var includeNames: Bool = false
-    @Published var recallMode: RecallMode = .full
-    @Published var searchResults: [WordHit] = []
+    @Published var searchContainsMode: Bool = false {
+        didSet {
+            if isBootstrapped && !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                performSearch()
+            }
+        }
+    }
+    @Published var selectedSearchIndex: Int = 0
+    @Published var includeNames: Bool = false {
+        didSet {
+            if isBootstrapped {
+                UserDefaults.standard.set(includeNames, forKey: Self.includeNamesKey)
+            }
+        }
+    }
+    @Published var recallMode: RecallMode = .full {
+        didSet {
+            if isBootstrapped {
+                UserDefaults.standard.set(recallMode.rawValue, forKey: Self.recallModeKey)
+            }
+        }
+    }
+    @Published var searchResults: [WordHit] = [] {
+        didSet {
+            selectedSearchIndex = 0
+        }
+    }
 
     // MARK: Proper-name auto-nudge
 
@@ -1033,8 +1129,20 @@ final class DaiJishowEngine: ObservableObject {
     @Published var overflowPreviewNodes: [FisheyeNode] = []
     @Published var leftOverflowCount: Int = 0
     @Published var rightOverflowCount: Int = 0
-    @Published var maxFisheyePerSide: Int = 12
-    @Published var showFisheyePercentages: Bool = true
+    @Published var maxFisheyePerSide: Int = 12 {
+        didSet {
+            if isBootstrapped {
+                UserDefaults.standard.set(maxFisheyePerSide, forKey: Self.maxFisheyePerSideKey)
+            }
+        }
+    }
+    @Published var showFisheyePercentages: Bool = true {
+        didSet {
+            if isBootstrapped {
+                UserDefaults.standard.set(showFisheyePercentages, forKey: Self.showFisheyePercentagesKey)
+            }
+        }
+    }
     @Published var fisheyeMode: dj_fisheye_mode_t = DJ_EDGE_COMPOUNDS
     @Published var selectedFisheyeNode: FisheyeNode?
     @Published var hoveredFisheyeNode: FisheyeNode?
@@ -1042,15 +1150,43 @@ final class DaiJishowEngine: ObservableObject {
     // MARK: - Word Cosmos (randomized prevalence bubble cloud)
     @Published var wordCosmosWords: [WordHit] = []
     @Published var wordCosmosSeed: UInt64 = 0
-    @Published var wordCosmosTier: WordCosmosTier = .core
-    @Published var wordCosmosLayout: WordCosmosLayout = .cloud
+    @Published var wordCosmosTier: WordCosmosTier = .core {
+        didSet {
+            if isBootstrapped {
+                UserDefaults.standard.set(wordCosmosTier.rawValue, forKey: Self.wordCosmosTierKey)
+            }
+        }
+    }
+    @Published var wordCosmosLayout: WordCosmosLayout = .cloud {
+        didSet {
+            if isBootstrapped {
+                UserDefaults.standard.set(wordCosmosLayout.rawValue, forKey: Self.wordCosmosLayoutKey)
+            }
+        }
+    }
     @Published var wordCosmosMode: WordCosmosMode = .cosmos
-    @Published var wordCosmosCount: Int = 50
-    @Published var wordCosmosIncludeNames: Bool = false
+    @Published var wordCosmosCount: Int = 50 {
+        didSet {
+            if isBootstrapped {
+                UserDefaults.standard.set(wordCosmosCount, forKey: Self.wordCosmosCountKey)
+            }
+        }
+    }
+    /// Synchronized with global `includeNames` so the top-bar toggle and Word Cloud never drift apart.
+    var wordCosmosIncludeNames: Bool {
+        get { includeNames }
+        set { setNamesIncluded(newValue, userInitiated: true) }
+    }
     /// How cloud bubbles are tinted (prevalence / JLPT / grade). Defaults to JLPT
     /// so difficulty is visible at a glance; the user can switch to the
     /// historical prevalence palette or a grade ramp.
-    @Published var wordCosmosColorMode: WordCosmosColorMode = .jlpt
+    @Published var wordCosmosColorMode: WordCosmosColorMode = .jlpt {
+        didSet {
+            if isBootstrapped {
+                UserDefaults.standard.set(wordCosmosColorMode.rawValue, forKey: Self.wordCosmosColorModeKey)
+            }
+        }
+    }
 
     @Published var radicalSelectedIds: [UInt8] = []
     @Published var radicalTargetStrokes: Int = 0
@@ -1074,16 +1210,81 @@ final class DaiJishowEngine: ObservableObject {
     @Published var kanjiLookupResults: [KanjiIndexItem] = []
 
     init(dbPath: String) {
-        let savedCockpit = UserDefaults.standard.object(forKey: Self.cockpitDefaultsKey) as? Bool
+        let d = UserDefaults.standard
+        let savedCockpit = d.object(forKey: Self.cockpitDefaultsKey) as? Bool
         self.isWordCockpitExpanded = savedCockpit ?? true
-        if let savedMode = UserDefaults.standard.string(forKey: Self.kanjiRelatedModeKey),
+        if let savedMode = d.string(forKey: Self.kanjiRelatedModeKey),
            let mode = KanjiRelatedDisplayMode(rawValue: savedMode) {
             self.kanjiRelatedMode = mode
         }
+        if let savedRecall = d.string(forKey: Self.recallModeKey),
+           let rMode = RecallMode(rawValue: savedRecall) {
+            self.recallMode = rMode
+        }
+        if let savedNames = d.object(forKey: Self.includeNamesKey) as? Bool {
+            self.includeNames = savedNames
+        }
+        if let savedMaxPerSide = d.object(forKey: Self.maxFisheyePerSideKey) as? Int,
+           (4...30).contains(savedMaxPerSide) {
+            self.maxFisheyePerSide = savedMaxPerSide
+        }
+        if let savedShowPct = d.object(forKey: Self.showFisheyePercentagesKey) as? Bool {
+            self.showFisheyePercentages = savedShowPct
+        }
+        if let savedTier = d.string(forKey: Self.wordCosmosTierKey),
+           let tier = WordCosmosTier(rawValue: savedTier) {
+            self.wordCosmosTier = tier
+        }
+        if let savedLayout = d.string(forKey: Self.wordCosmosLayoutKey),
+           let layout = WordCosmosLayout(rawValue: savedLayout) {
+            self.wordCosmosLayout = layout
+        }
+        if let savedCount = d.object(forKey: Self.wordCosmosCountKey) as? Int,
+           (6...300).contains(savedCount) {
+            self.wordCosmosCount = savedCount
+        }
+        if let savedColorMode = d.string(forKey: Self.wordCosmosColorModeKey),
+           let colorMode = WordCosmosColorMode(rawValue: savedColorMode) {
+            self.wordCosmosColorMode = colorMode
+        }
+
+        self.studyStoreCancellable = studyStore.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         self.handle = dj_engine_create(dbPath)
+        self.isBootstrapped = true
+
         if self.handle != nil {
-            pushRecentKanji(0x5927) // 大
-            openFisheye(codepoint: 0x5927, recordHistory: true)
+            if let savedRecent = d.array(forKey: Self.recentKanjiKey) as? [Int], !savedRecent.isEmpty {
+                for cp in savedRecent.reversed() where cp > 0 {
+                    pushRecentKanji(UInt32(cp))
+                }
+            } else {
+                pushRecentKanji(0x5927) // 大
+            }
+
+            let restoredScreen = d.string(forKey: Self.lastScreenKey).flatMap(ActiveScreenKind.init(rawValue:))
+            let restoredTarget = UInt32(max(0, d.integer(forKey: Self.lastTargetIdKey)))
+            switch restoredScreen {
+            case .wordEntry where restoredTarget > 0:
+                openWordEntry(entryId: restoredTarget, recordHistory: true)
+            case .kanjiDetail where restoredTarget > 0:
+                openKanjiDetail(codepoint: restoredTarget, recordHistory: true)
+            case .fisheye where restoredTarget > 0:
+                openFisheye(codepoint: restoredTarget, recordHistory: true)
+            case .compoundKanji:
+                openCompoundKanji(seedEntryId: restoredTarget > 0 ? restoredTarget : nil, recordHistory: true)
+            case .wordCosmos:
+                openWordCosmos(recordHistory: true)
+            case .studyLibrary:
+                openStudyLibrary(recordHistory: true)
+            default:
+                let firstCp = recentKanji.first ?? 0x5927
+                openFisheye(codepoint: firstCp, recordHistory: true)
+            }
+            if history.isEmpty {
+                openFisheye(codepoint: 0x5927, recordHistory: true)
+            }
         }
     }
 
@@ -1122,6 +1323,115 @@ final class DaiJishowEngine: ObservableObject {
             return kanji.copyText
         }
         return nil
+    }
+
+    // MARK: - Study Library, Bookmarks & Anki Export
+
+    func studyItem(for entry: EntryDetail, insights: WordLexicalInsights? = nil) -> StudySavedItem {
+        let gloss = entry.senses.prefix(2).map(\.enGlosses).filter { !$0.isEmpty }.joined(separator: " | ")
+        var metaParts: [String] = []
+        if let jlpt = insights?.telemetry.jlptLabel { metaParts.append(jlpt) }
+        if let grade = insights?.telemetry.gradeLabel { metaParts.append(grade) }
+        if let tags = insights?.kanjiDNA.map({ "\($0.glyph)(\($0.meanings.split(separator: ";").first ?? ""))" }), !tags.isEmpty {
+            metaParts.append(tags.joined(separator: " "))
+        }
+        let ex = entry.sentences.first ?? insights?.fallbackSentences.first
+        return StudySavedItem(
+            kind: .word,
+            targetId: entry.header.id,
+            headword: entry.header.displayHeadword,
+            reading: entry.header.kanaHead,
+            gloss: gloss.isEmpty ? entry.header.primaryGloss : gloss,
+            pitchAccent: entry.header.pitchAccent < 255 ? entry.header.pitchAccent : nil,
+            metadata: metaParts.joined(separator: " • "),
+            exampleJp: ex?.jpText ?? "",
+            exampleEn: ex?.enText ?? ""
+        )
+    }
+
+    func studyItem(for hit: WordHit) -> StudySavedItem {
+        StudySavedItem(
+            kind: .word,
+            targetId: hit.id,
+            headword: hit.displayHeadword,
+            reading: hit.kanaHead,
+            gloss: hit.primaryGloss,
+            pitchAccent: hit.pitchAccent < 255 ? hit.pitchAccent : nil,
+            metadata: hit.isName ? "Proper Name" : (hit.freqRank < 999_999 ? "Freq #\(hit.freqRank)" : "")
+        )
+    }
+
+    func studyItem(for kanji: KanjiDetail) -> StudySavedItem {
+        let readings = [kanji.onReadings.joined(separator: ", "), kanji.kunReadings.joined(separator: ", ")]
+            .filter { !$0.isEmpty }
+            .joined(separator: " / ")
+        var meta: [String] = []
+        if kanji.strokes > 0 { meta.append("\(kanji.strokes) strokes") }
+        if kanji.jlpt > 0 { meta.append("N\(kanji.jlpt)") }
+        if (1...6).contains(kanji.grade) { meta.append("G\(kanji.grade)") }
+        else if kanji.grade == 8 { meta.append("Jōyō") }
+        let ex = kanji.standaloneEntries.first?.sentences.first
+        return StudySavedItem(
+            kind: .kanji,
+            targetId: kanji.codepoint,
+            headword: kanji.glyph,
+            reading: readings,
+            gloss: kanji.meanings,
+            pitchAccent: nil,
+            metadata: meta.joined(separator: " • "),
+            exampleJp: ex?.jpText ?? "",
+            exampleEn: ex?.enText ?? ""
+        )
+    }
+
+    func toggleSaveWord(_ entry: EntryDetail, insights: WordLexicalInsights? = nil) {
+        studyStore.toggleStar(studyItem(for: entry, insights: insights))
+    }
+
+    func toggleSaveWordHit(_ hit: WordHit) {
+        if let cached = entryDetailCache[hit.id] {
+            studyStore.toggleStar(studyItem(for: cached, insights: wordInsightsCache["\(hit.id)-\(hit.displayHeadword)-\(includeNames)"]))
+        } else {
+            studyStore.toggleStar(studyItem(for: hit))
+        }
+    }
+
+    func toggleSaveKanji(_ kanji: KanjiDetail) {
+        studyStore.toggleStar(studyItem(for: kanji))
+    }
+
+    func toggleSaveCurrentScreen() {
+        switch activeScreen {
+        case .wordEntry:
+            if let entry = activeEntry {
+                toggleSaveWord(entry, insights: activeWordInsights)
+            }
+        case .kanjiDetail, .fisheye:
+            if let kanji = activeKanji {
+                toggleSaveKanji(kanji)
+            }
+        default:
+            break
+        }
+    }
+
+    func openStudyLibrary(recordHistory: Bool = true) {
+        self.activeScreen = .studyLibrary
+        persistLastScreen(.studyLibrary, targetId: 0)
+        if recordHistory {
+            recordNavigation(NavBreadcrumb(
+                kind: .studyLibrary,
+                targetId: 0,
+                label: "Saved Decks",
+                subtitle: "\(studyStore.totalSavedCount) saved items"
+            ))
+        }
+    }
+
+    private func persistLastScreen(_ kind: ActiveScreenKind, targetId: UInt32) {
+        guard isBootstrapped else { return }
+        UserDefaults.standard.set(kind.rawValue, forKey: Self.lastScreenKey)
+        UserDefaults.standard.set(Int(targetId), forKey: Self.lastTargetIdKey)
     }
 
     // MARK: - Word Cockpit Lexical Insights Builder (<1ms from Indexed Data)
@@ -1382,6 +1692,7 @@ final class DaiJishowEngine: ObservableObject {
         // 5. Fallback Sentences (if direct entry has 0 sentences) & Corpus Collocations
         var activeSentences = entry.sentences
         var fallbackSource: String? = nil
+        var fallbackSourceId: UInt32? = nil
 
         if activeSentences.isEmpty, let h = handle {
             let relatedPool = (prefixList + suffixList).sorted { $0.freqRank < $1.freqRank }
@@ -1392,6 +1703,7 @@ final class DaiJishowEngine: ObservableObject {
                     if !parsed.sentences.isEmpty {
                         activeSentences = Array(parsed.sentences.prefix(5))
                         fallbackSource = candidate.displayHeadword
+                        fallbackSourceId = candidate.id
                         break
                     }
                 }
@@ -1413,6 +1725,9 @@ final class DaiJishowEngine: ObservableObject {
             posMask: entry.header.posMask
         )
 
+        // 7. Idioms, Yojijukugo, and Proverbs linked to this entry or its kanji
+        let idioms = fetchEntryIdioms(entryId: entry.header.id, limit: 10)
+
         return WordLexicalInsights(
             entryId: entry.header.id,
             telemetry: telemetry,
@@ -1424,9 +1739,43 @@ final class DaiJishowEngine: ObservableObject {
             collocations: collocations,
             fallbackSentences: entry.sentences.isEmpty ? activeSentences : [],
             fallbackSourceWord: fallbackSource,
+            fallbackSourceEntryId: fallbackSourceId,
             inflections: inflections,
-            inflectionHeader: inflectionHeader
+            inflectionHeader: inflectionHeader,
+            idioms: idioms
         )
+    }
+
+    private func parseIdiomList(_ ptr: UnsafePointer<dj_idiom_t>?, count: Int) -> [IdiomItem] {
+        guard let ptr, count > 0 else { return [] }
+        var out: [IdiomItem] = []
+        out.reserveCapacity(count)
+        for i in 0..<count {
+            let raw = ptr[i]
+            out.append(IdiomItem(
+                entryId: raw.entry_id,
+                idiomKind: raw.idiom_kind,
+                kanjiHead: String(cString: raw.kanji_head),
+                kanaHead: String(cString: raw.kana_head),
+                figurativeGloss: String(cString: raw.figurative_gloss),
+                anchorLemmas: String(cString: raw.anchor_lemmas)
+            ))
+        }
+        return out
+    }
+
+    private func fetchEntryIdioms(entryId: UInt32, limit: Int) -> [IdiomItem] {
+        guard let h = handle else { return [] }
+        var rawPtr: UnsafePointer<dj_idiom_t>?
+        let count = dj_dict_get_entry_idioms(h, entryId, limit, &rawPtr)
+        return parseIdiomList(rawPtr, count: count)
+    }
+
+    private func fetchKanjiIdioms(codepoint: UInt32, limit: Int) -> [IdiomItem] {
+        guard let h = handle else { return [] }
+        var rawPtr: UnsafePointer<dj_idiom_t>?
+        let count = dj_dict_get_kanji_idioms(h, codepoint, limit, &rawPtr)
+        return parseIdiomList(rawPtr, count: count)
     }
 
     private static func matchReadingToken(furigana: String, candidates: [String]) -> String? {
@@ -1762,15 +2111,23 @@ final class DaiJishowEngine: ObservableObject {
                 results: kanjiLookupResults
             )
         case .wordCosmos:
-            // The cosmos is a transient, re-sampled view; no state to snapshot.
-            break
+            historySnapshots[item.id] = .wordCosmos(
+                words: wordCosmosWords,
+                tier: wordCosmosTier,
+                layout: wordCosmosLayout,
+                colorMode: wordCosmosColorMode
+            )
         case .compoundKanji:
             // The screen's state is which word it is decomposing; record it so a
             // breadcrumb can restore the same decomposition.
             if let id = compoundEntry?.header.id {
                 historySnapshots[item.id] = .compoundWord(entryId: id)
             }
-            break
+        case .studyLibrary:
+            historySnapshots[item.id] = .studyLibrary(
+                deckCount: studyStore.decks.count,
+                itemCount: studyStore.totalSavedCount
+            )
         }
     }
 
@@ -1871,17 +2228,26 @@ final class DaiJishowEngine: ObservableObject {
                 results: kanjiLookupResults
             )
         case .wordCosmos:
-            // The cosmos is a transient, re-sampled view; no state to snapshot.
-            break
+            historySnapshots[item.id] = .wordCosmos(
+                words: wordCosmosWords,
+                tier: wordCosmosTier,
+                layout: wordCosmosLayout,
+                colorMode: wordCosmosColorMode
+            )
         case .compoundKanji:
             if let id = compoundEntry?.header.id {
                 historySnapshots[item.id] = .compoundWord(entryId: id)
             }
-            break
+        case .studyLibrary:
+            historySnapshots[item.id] = .studyLibrary(
+                deckCount: studyStore.decks.count,
+                itemCount: studyStore.totalSavedCount
+            )
         }
     }
 
     private func recordNavigation(_ item: NavBreadcrumb) {
+        persistLastScreen(item.kind, targetId: item.targetId)
         if historyIndex >= 0 && historyIndex < history.count {
             let current = history[historyIndex]
             if current.kind == item.kind && current.targetId == item.targetId {
@@ -1929,6 +2295,7 @@ final class DaiJishowEngine: ObservableObject {
     }
 
     private func restoreBreadcrumb(_ item: NavBreadcrumb) {
+        persistLastScreen(item.kind, targetId: item.targetId)
         switch item.kind {
         case .fisheye:
             openFisheye(codepoint: item.targetId, recordHistory: false)
@@ -1952,7 +2319,15 @@ final class DaiJishowEngine: ObservableObject {
             }
             activeScreen = .kanjiLookup
         case .wordCosmos:
-            openWordCosmos(recordHistory: false)
+            if case .wordCosmos(let words, let tier, let layout, let colorMode) = historySnapshots[item.id], !words.isEmpty {
+                self.wordCosmosTier = tier
+                self.wordCosmosLayout = layout
+                self.wordCosmosColorMode = colorMode
+                self.wordCosmosWords = words
+                activeScreen = .wordCosmos
+            } else {
+                openWordCosmos(recordHistory: false)
+            }
         case .compoundKanji:
             // Restore to the same decomposition: prefer the snapshot's entryId, fall
             // back to the breadcrumb's target, else the empty (example) state.
@@ -1963,6 +2338,8 @@ final class DaiJishowEngine: ObservableObject {
                 seed = (item.targetId == 0 ? nil : item.targetId)
             }
             openCompoundKanji(seedEntryId: seed, recordHistory: false)
+        case .studyLibrary:
+            openStudyLibrary(recordHistory: false)
         }
     }
 
@@ -2001,8 +2378,9 @@ final class DaiJishowEngine: ObservableObject {
         }
 
         var rawPtr: UnsafePointer<dj_word_hit_t>?
+        let mode: dj_search_mode_t = searchContainsMode ? DJ_SEARCH_ANY : DJ_SEARCH_AUTO
         let count = trimmed.withCString { cStr in
-            dj_dict_search(h, cStr, DJ_SEARCH_AUTO, includeNames, 40, &rawPtr)
+            dj_dict_search(h, cStr, mode, includeNames, 40, &rawPtr)
         }
 
         var hits: [WordHit] = []
@@ -2066,16 +2444,29 @@ final class DaiJishowEngine: ObservableObject {
         return out
     }
 
+    func moveSearchSelection(by delta: Int) {
+        let filtered = filteredSearchResults
+        let total = filtered.count + (searchFilters.isEmpty ? englishMatches.count : 0)
+        guard total > 0 else {
+            selectedSearchIndex = 0
+            return
+        }
+        selectedSearchIndex = max(0, min(total - 1, selectedSearchIndex + delta))
+    }
+
     func submitSearchQuery() {
         searchDebounceTask?.cancel()
         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         if searchResults.isEmpty && !trimmed.isEmpty {
             executeSearchNow(trimmed: trimmed)
         }
-        if let first = searchResults.first {
-            openWordEntry(entryId: first.id)
-            searchResults = []
-        }
+        let filtered = filteredSearchResults
+        let combined = filtered + (searchFilters.isEmpty ? englishMatches : [])
+        guard !combined.isEmpty else { return }
+        let idx = (0..<combined.count).contains(selectedSearchIndex) ? selectedSearchIndex : 0
+        openWordEntry(entryId: combined[idx].id)
+        searchResults = []
+        englishMatches = []
     }
 
     func openVariantForm(_ variant: String) {
@@ -2223,8 +2614,8 @@ final class DaiJishowEngine: ObservableObject {
     }
 
     /// Resolve an `EntryDetail` for `entryId`, memoised in `entryDetailCache`.
-    /// Shared by the word-detail and compound-kANJI screens so both fetch once.
-    private func fetchEntryDetail(_ entryId: UInt32) -> EntryDetail? {
+    /// Shared by the word-detail, compound-kanji, and Z-Stack snapshot views.
+    func fetchEntryDetail(_ entryId: UInt32) -> EntryDetail? {
         if let cached = entryDetailCache[entryId] {
             return cached
         }
@@ -2323,35 +2714,53 @@ final class DaiJishowEngine: ObservableObject {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let h = handle else { return }
 
-        var rawPtr: UnsafePointer<dj_word_hit_t>?
-        var count = trimmed.withCString { cStr in
-            dj_dict_search(h, cStr, DJ_SEARCH_EXACT, includeNames, 8, &rawPtr)
-        }
-        if count == 0 {
-            rawPtr = nil
-            count = trimmed.withCString { cStr in
-                dj_dict_search(h, cStr, DJ_SEARCH_EXACT, true, 8, &rawPtr)
+        let modes: [(dj_search_mode_t, Bool)] = [
+            (DJ_SEARCH_EXACT, includeNames),
+            (DJ_SEARCH_EXACT, true),
+            (DJ_SEARCH_AUTO, includeNames),
+            (DJ_SEARCH_AUTO, true),
+            (DJ_SEARCH_ENGLISH, includeNames)
+        ]
+
+        var matchedHits: [WordHit] = []
+        for (mode, allowNames) in modes {
+            var rawPtr: UnsafePointer<dj_word_hit_t>?
+            let count = trimmed.withCString { cStr in
+                dj_dict_search(h, cStr, mode, allowNames, 12, &rawPtr)
+            }
+            if let ptr = rawPtr, count > 0 {
+                var hits: [WordHit] = []
+                hits.reserveCapacity(count)
+                for i in 0..<count {
+                    hits.append(Self.wordHit(from: ptr[i]))
+                }
+                if hits.contains(where: { $0.kanjiHead.unicodeScalars.filter({ isKanjiScalar($0.value) }).count >= 2 }) {
+                    matchedHits = hits
+                    break
+                } else if matchedHits.isEmpty {
+                    matchedHits = hits
+                }
             }
         }
-        guard let ptr = rawPtr, count > 0 else {
-            // Nothing matched even with names forced on: clear any stale
-            // decomposition and tell the user, so the field never fails silently.
+
+        guard !matchedHits.isEmpty else {
+            // Nothing matched across exact, auto (romaji/kana prefix), or English FTS:
+            // clear any stale decomposition and inform the user cleanly.
             self.compoundEntry = nil
             self.compoundInsights = nil
-            self.compoundSearchNotice = "No compound found for “\(trimmed)”. Try another word, or flip on Names."
+            self.compoundSearchNotice = "No compound found for “\(trimmed)”. Try a kanji, kana, romaji, or English term."
             self.recentCompoundExamples = buildRecentCompoundExamples()
             self.activeScreen = .compoundKanji
             return
         }
 
         var resolvedId: UInt32?
-        for i in 0..<count {
-            let hit = Self.wordHit(from: ptr[i])
+        for hit in matchedHits {
             let kanjiCount = hit.kanjiHead.unicodeScalars.filter { isKanjiScalar($0.value) }.count
             if kanjiCount >= 2 { resolvedId = hit.id; break }
         }
         if resolvedId == nil {
-            resolvedId = ptr[0].entry_id
+            resolvedId = matchedHits.first?.id
         }
         if let id = resolvedId {
             openCompoundKanji(seedEntryId: id, recordHistory: true)
@@ -2504,7 +2913,7 @@ final class DaiJishowEngine: ObservableObject {
     ) {
         guard let h = handle else { return }
         let t = tier ?? wordCosmosTier
-        let names = includeNames ?? wordCosmosIncludeNames
+        let names = includeNames ?? self.includeNames
         let n = max(6, min(300, count ?? wordCosmosCount))
 
         var rawPtr: UnsafePointer<dj_word_hit_t>?
@@ -2521,7 +2930,9 @@ final class DaiJishowEngine: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.wordCosmosTier = t
-            self.wordCosmosIncludeNames = names
+            if let explicitNames = includeNames, explicitNames != self.includeNames {
+                self.setNamesIncluded(explicitNames, userInitiated: true)
+            }
             self.wordCosmosCount = n
             self.wordCosmosWords = words
             // A new seed per sample so the layout re-flows with a spring.
@@ -2711,6 +3122,12 @@ final class DaiJishowEngine: ObservableObject {
                 .map { $0 }
         }
 
+        let (sp, sp1, sp2) = Self.decodeSkipCode(raw.skip_code)
+        let skipLabel = sp > 0 ? "\(sp)-\(sp1)-\(sp2)" : ""
+        let fcLabel = Self.decodeFourCorner(raw.four_corner)
+        let kyujitai = raw.kyujitai_cp > 0 ? UnicodeScalar(raw.kyujitai_cp).map(String.init) : nil
+        let kanjiIdioms = includeLexicalLists ? fetchKanjiIdioms(codepoint: codepoint, limit: 16) : []
+
         return KanjiDetail(
             codepoint: codepoint,
             glyph: glyph,
@@ -2721,14 +3138,17 @@ final class DaiJishowEngine: ObservableObject {
             radicalId: Int(raw.radical_id),
             skipCode: raw.skip_code,
             fourCorner: raw.four_corner,
-            kyujitaiGlyph: nil,
+            skipCodeLabel: skipLabel,
+            fourCornerLabel: fcLabel,
+            kyujitaiGlyph: kyujitai,
             onReadings: String(cString: raw.on_readings).split(separator: ",").map(String.init),
             kunReadings: String(cString: raw.kun_readings).split(separator: ",").map(String.init),
             meanings: String(cString: raw.meanings),
             componentRadicals: String(cString: raw.component_radicals),
             strokePolylines: polylines,
             standaloneEntries: standaloneEntries,
-            relatedWords: relatedWords
+            relatedWords: relatedWords,
+            idioms: kanjiIdioms
         )
     }
 
@@ -2906,7 +3326,11 @@ final class DaiJishowEngine: ObservableObject {
         let cnt = buf.withUnsafeMutableBufferPointer { ptr in
             dj_state_get_recent_kanji(h, ptr.baseAddress)
         }
-        self.recentKanji = Array(buf.prefix(cnt))
+        let next = Array(buf.prefix(cnt))
+        self.recentKanji = next
+        if isBootstrapped {
+            UserDefaults.standard.set(next.map(Int.init), forKey: Self.recentKanjiKey)
+        }
     }
 
     func isKanjiScalar(_ cp: UInt32) -> Bool {

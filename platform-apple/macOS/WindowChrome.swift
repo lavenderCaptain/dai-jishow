@@ -32,8 +32,8 @@ final class WindowFrameCoordinator {
     /// The "typical" size the window falls back to when nothing sensible is saved.
     private let defaultSize = CGSize(width: 1320, height: 880)
     /// Smallest frame we will ever accept from a saved value; below this a save
-    /// is treated as corrupt and reset.
-    private let minSize = CGSize(width: 760, height: 520)
+    /// is treated as corrupt and reset. Matches DaiJishowMacApp's minimum window frame.
+    private let minSize = CGSize(width: 820, height: 560)
 
     private var window: NSWindow?
     private var observers: [NSObjectProtocol] = []

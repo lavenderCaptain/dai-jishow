@@ -39,7 +39,7 @@ mkdir -p build
 # Pure-logic translation units under test.
 CORE_SRC="core/dj_nlp/romaji.cpp core/dj_graph/fisheye.cpp"
 # Harness + test cases.
-TEST_SRC="core/test/dj_test_main.cpp core/test/test_romaji.cpp core/test/test_pair_head.cpp"
+TEST_SRC="core/test/dj_test_main.cpp core/test/test_romaji.cpp core/test/test_pair_head.cpp core/test/test_idioms.cpp"
 
 echo "==> compiling C++ core tests ($CXX -std=c++20 -Wall -Wextra -Wpedantic)"
 # -Icore        lets the test TUs #include "dj_internal.hpp"

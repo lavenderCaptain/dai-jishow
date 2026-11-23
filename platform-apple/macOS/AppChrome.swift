@@ -234,17 +234,30 @@ struct AboutView: View {
 struct SettingsView: View {
     @ObservedObject var engine: DaiJishowEngine
 
+    private var hasJapaneseGlossesInActiveEntry: Bool {
+        engine.activeEntry?.hasJapaneseGlosses ?? false
+    }
+
     var body: some View {
         Form {
             Section("Display") {
-                Picker("Gloss Language", selection: $engine.glossLanguageMode) {
-                    ForEach(GlossLanguageMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("Gloss Language", selection: $engine.glossLanguageMode) {
+                        ForEach(GlossLanguageMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .disabled(!hasJapaneseGlossesInActiveEntry && engine.glossLanguageMode == .english)
+                    .help("Which definition languages to show when Japanese-language glosses are available in the corpus.")
+
+                    if !hasJapaneseGlossesInActiveEntry {
+                        Text("Japanese definitions (国語) are shown automatically for entries whose corpus includes Japanese glosses.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .help("Which definition languages to show in entries.")
 
                 Picker("Recall Mode", selection: $engine.recallMode) {
                     ForEach(RecallMode.allCases) { mode in
@@ -269,6 +282,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 360)
+        .frame(width: 440, height: 390)
     }
 }

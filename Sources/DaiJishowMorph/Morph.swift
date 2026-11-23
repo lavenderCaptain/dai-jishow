@@ -262,9 +262,25 @@ public enum Morph {
         } else if mask & (1 << 6) != 0 {       // adj-i
             tags.append("i-Adj")
         } else if tags.isEmpty {
-            // Fallback when posMask carries no POS bits: keep the legacy kana
-            // heuristic for i-adjectives, otherwise treat as a noun / expression.
-            if mask == 0 && kana.hasSuffix("い") &&
+            // Check remaining primary POS bits (particles, adverbs, specialized registers)
+            // when the entry is not tagged as a noun/verb/adjective.
+            if (mask & (1 << 10)) != 0 && (mask & 1) == 0 {
+                tags.append("Particle")
+            } else if (mask & (1 << 8)) != 0 && (mask & 1) == 0 {
+                tags.append("Adverb")
+            } else if (mask & (1 << 11)) != 0 && (mask & 1) == 0 {
+                tags.append("Yojijukugo")
+            } else if (mask & (1 << 21)) != 0 && (mask & 1) == 0 {
+                tags.append("Proverb")
+            } else if (mask & (1 << 12)) != 0 && (mask & 1) == 0 {
+                tags.append("Idiom")
+            } else if (mask & (1 << 13)) != 0 && (mask & 1) == 0 {
+                tags.append("Onomatopoeia")
+            } else if (mask & (1 << 9)) != 0 && (mask & 1) == 0 {
+                tags.append("Expression")
+            } else if mask == 0 && kana.hasSuffix("い") &&
+                // Fallback when posMask carries no POS bits: keep the legacy kana
+                // heuristic for i-adjectives, otherwise treat as a noun / expression.
                 !kana.hasSuffix("たい") && !kana.hasSuffix("ない") &&
                 glossTokens.contains(where: { !$0.hasPrefix("to ") && !$0.contains(" ") }) {
                 tags.append("i-Adj")
@@ -273,5 +289,27 @@ public enum Morph {
             }
         }
         return Array(tags.prefix(2))
+    }
+
+    /// Surface grammatical register, style, and usage nuance badges carried by
+    /// the corpus `posMask` bits (honorific/humble/polite keigo, colloquial,
+    /// slang, archaic, onomatopoeia, yojijukugo, idioms, proverbs, adverbs).
+    public static func registerTags(posMask: UInt64) -> [String] {
+        var tags: [String] = []
+        if (posMask & (1 << 14)) != 0 { tags.append("Honorific • 尊敬語") }
+        if (posMask & (1 << 15)) != 0 { tags.append("Humble • 謙譲語") }
+        if (posMask & (1 << 16)) != 0 { tags.append("Polite • 丁寧語") }
+        if (posMask & (1 << 11)) != 0 { tags.append("Yojijukugo • 四字熟語") }
+        if (posMask & (1 << 21)) != 0 { tags.append("Proverb • 諺") }
+        if (posMask & (1 << 12)) != 0 { tags.append("Idiom • 慣用句") }
+        if (posMask & (1 << 13)) != 0 { tags.append("Onomatopoeia") }
+        if (posMask & (1 << 17)) != 0 { tags.append("Colloquial") }
+        if (posMask & (1 << 18)) != 0 { tags.append("Slang") }
+        if (posMask & (1 << 19)) != 0 { tags.append("Archaic") }
+        if (posMask & (1 << 20)) != 0 { tags.append("Kansai-ben") }
+        if (posMask & (1 << 8)) != 0  { tags.append("Adverb") }
+        if (posMask & (1 << 10)) != 0 { tags.append("Particle") }
+        if (posMask & (1 << 9)) != 0  { tags.append("Expression") }
+        return tags
     }
 }

@@ -117,6 +117,16 @@ struct OwnedFisheyeNode {
     float       opacity = 1.0f;
 };
 
+/// One owned idiom / yojijukugo / proverb row (C++ side of `dj_idiom_t`).
+struct OwnedIdiom {
+    uint32_t    entry_id = 0;
+    uint8_t     idiom_kind = 2;
+    std::string kanji_head;
+    std::string kana_head;
+    std::string figurative_gloss;
+    std::string anchor_lemmas;
+};
+
 /// @return `true` if `input` is purely ASCII and contains at least one letter
 ///         (i.e. it is plausibly romaji rather than kanji/kana/English).
 bool is_ascii_romaji(const std::string& input);
@@ -126,6 +136,9 @@ std::string romaji_to_kana(const std::string& input, bool to_katakana = false);
 
 /// Encode a single Unicode codepoint as up to 4 bytes of UTF-8 into `out[8]`.
 void encode_utf8(uint32_t cp, char out[8]);
+
+/// Exact comma-delimited token check against `idioms.anchor_lemmas`.
+bool anchor_lemmas_contains(const std::string& anchor_lemmas, const std::string& token);
 
 /// Choose the headword to *display* for a `(center, neighbor)` fisheye compound
 /// edge. Pure and deterministic, no DB: given the corpus-stored *primary* head
@@ -168,6 +181,18 @@ std::vector<uint32_t> db_search_radicals(
     size_t radical_count,
     int16_t target_strokes,
     int8_t stroke_tolerance);
+
+/// Fetch idioms anchored by a single kanji codepoint.
+std::vector<OwnedIdiom> db_get_kanji_idioms(
+    sqlite3* db,
+    uint32_t codepoint,
+    size_t limit);
+
+/// Fetch idioms directly matching or sharing kanji with a dictionary entry.
+std::vector<OwnedIdiom> db_get_entry_idioms(
+    sqlite3* db,
+    uint32_t entry_id,
+    size_t limit);
 
 /// Solve the fisheye graph (C++ side of `dj_graph_solve_fisheye`).
 std::vector<OwnedFisheyeNode> solve_fisheye_graph(
@@ -217,6 +242,10 @@ struct dj_engine {
     std::vector<uint32_t>             abi_radical_cps;
     std::vector<dj::OwnedFisheyeNode> owned_fisheye;
     std::vector<dj_fisheye_node_t>    abi_fisheye;
+
+    // Idioms / yojijukugo / proverbs.
+    std::vector<dj::OwnedIdiom>       owned_idioms;
+    std::vector<dj_idiom_t>           abi_idioms;
 
     // Session state: the 6-slot recent-kanji ring (most-recent first).
     std::array<uint32_t, 6> recent_kanji{};

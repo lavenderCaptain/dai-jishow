@@ -150,6 +150,8 @@ struct SpeakerButton: View {
     /// Optional extra tooltip shown when a voice *is* available.
     var extraHelp: String? = nil
 
+    @State private var showingVoiceSetupPopover: Bool = false
+
     enum Variant {
         case headword
         case compact
@@ -163,8 +165,7 @@ struct SpeakerButton: View {
         if engine.japaneseVoiceAvailable {
             return extraHelp ?? "Hear this read aloud in Japanese (ja-JP)."
         }
-        return "No Japanese voice installed. Add a ja-JP voice in "
-            + "System Settings ▸ Speech ▸ System Voice ▸ Manage Voices, then reopen DaiJiShow."
+        return "No Japanese voice installed. Click for setup steps in System Settings."
     }
 
     var body: some View {
@@ -173,19 +174,37 @@ struct SpeakerButton: View {
         let enabled = available && hasText
 
         Button {
-            SpeechEngine.shared.speak(text)
+            if !available {
+                showingVoiceSetupPopover.toggle()
+            } else if hasText {
+                SpeechEngine.shared.speak(text)
+            }
         } label: {
-            Image(systemName: "speaker.wave.2.fill")
+            Image(systemName: available ? "speaker.wave.2.fill" : "speaker.slash.fill")
                 .font(variant == .headword ? .title3 : .caption)
                 .fontWeight(.semibold)
-                .padding(.horizontal, variant == .headword ? 12 : 7)
-                .padding(.vertical, variant == .headword ? 8 : 4)
+                .padding(.horizontal, variant == .headword ? 12 : 9)
+                .padding(.vertical, variant == .headword ? 8 : 6)
                 .background(Capsule().fill(Color.accentColor.opacity(enabled ? 1 : 0.18)))
                 .foregroundStyle(enabled ? Color.white : Color.secondary)
+                .frame(minWidth: variant == .headword ? 42 : 34, minHeight: variant == .headword ? 38 : 32)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
+        .disabled(available && !hasText)
         .help(helpText)
         .fixedSize()
+        .popover(isPresented: $showingVoiceSetupPopover, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Japanese Voice Not Installed", systemImage: "speaker.slash.fill")
+                    .font(.headline)
+                Text("Add a Japanese (ja-JP) voice in System Settings → Accessibility → Spoken Content (or System Voice) → Manage Voices, then click Speak again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 270)
+            }
+            .padding(14)
+        }
     }
 }

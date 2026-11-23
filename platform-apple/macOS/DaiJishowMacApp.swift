@@ -44,7 +44,7 @@ struct DaiJishowMacApp: App {
         // all this app needs.
         Window("Dai-Jishow", id: "main") {
             MainWorkspaceView(engine: engine)
-                .frame(minWidth: 1020, minHeight: 700)
+                .frame(minWidth: 820, minHeight: 560)
                 .preferredColorScheme(.dark)
                 .sheet(isPresented: $engine.showAbout) {
                     AboutView(engine: engine)
@@ -82,6 +82,47 @@ struct DaiJishowMacApp: App {
                 }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(engine.activeScreen != .wordEntry)
+
+                Button("Focus Search") {
+                    NotificationCenter.default.post(name: .daiJishowFocusSearch, object: nil)
+                }
+                .keyboardShortcut("f", modifiers: [.command])
+
+                Button("Toggle Bookmark") {
+                    engine.toggleSaveCurrentScreen()
+                }
+                .keyboardShortcut("b", modifiers: [.command])
+                .disabled(engine.activeScreen != .wordEntry && engine.activeScreen != .kanjiDetail && engine.activeScreen != .fisheye)
+
+                Divider()
+
+                Button("Recall Mode: Full") {
+                    engine.recallMode = .full
+                }
+                .keyboardShortcut("1", modifiers: [.command])
+
+                Button("Recall Mode: Hide Kana") {
+                    engine.recallMode = .hideKana
+                }
+                .keyboardShortcut("2", modifiers: [.command])
+
+                Button("Recall Mode: Hide Defn.") {
+                    engine.recallMode = .hideGloss
+                }
+                .keyboardShortcut("3", modifiers: [.command])
+
+                Divider()
+
+                Button("Open Kanji Fisheye") {
+                    let cp = engine.activeKanji?.codepoint ?? engine.recentKanji.first ?? 0x5927
+                    engine.openFisheye(codepoint: cp)
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+
+                Button("Open Saved Decks") {
+                    engine.openStudyLibrary()
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
 
                 Button("Open Kanji Index") {
                     engine.openKanjiLookup()
@@ -159,20 +200,28 @@ struct DaiJishowMacApp: App {
     }
 }
 
+extension Notification.Name {
+    static let daiJishowFocusSearch = Notification.Name("DaiJishowFocusSearch")
+}
+
 // MARK: - Main Workspace & Persistent Glass Top Bar
 
 struct MainWorkspaceView: View {
     @ObservedObject var engine: DaiJishowEngine
     @FocusState private var isSearchFocused: Bool
 
-    /// Measured width of the top nav bar; drives `navCompact` so the four screen
-    /// buttons (Kanji Index / Radicals / Word Cloud / Compounds) drop to icon-only
-    /// when the window is too narrow to show their labels on one line.
+    /// Measured width of the top nav bar; drives `navCompact` so the screen
+    /// buttons drop to icon-only when the window is too narrow to show labels on one line.
     @State private var navBarWidth: CGFloat = 0
 
     /// Below this bar width the screen buttons crunch to icons (a tooltip keeps
-    /// each one self-documenting). Tunable; sized for the four screen buttons.
-    private var navCompact: Bool { isRowCompact(navBarWidth, threshold: 1180) }
+    /// each one self-documenting). Tunable; sized for the top-bar navigation buttons.
+    private var navCompact: Bool { isRowCompact(navBarWidth, threshold: 1320) }
+
+    private var isSearchDropdownOpen: Bool {
+        (!engine.searchResults.isEmpty || !engine.englishMatches.isEmpty)
+            && !engine.searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 
     var body: some View {
         ZStack {
@@ -214,10 +263,12 @@ struct MainWorkspaceView: View {
                             WordCosmosView(engine: engine)
                         case .compoundKanji:
                             CompoundKanjiView(engine: engine)
+                        case .studyLibrary:
+                            StudyLibraryView(engine: engine, studyStore: engine.studyStore)
                         }
                     }
 
-                    if !engine.searchResults.isEmpty && !engine.searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+                    if isSearchDropdownOpen {
                         searchResultsDropdown
                     }
                 }
@@ -243,6 +294,11 @@ struct MainWorkspaceView: View {
                 isSearchFocused = true
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .daiJishowFocusSearch)) { _ in
+            if engine.activeScreen != .compoundKanji {
+                isSearchFocused = true
+            }
+        }
         // The omni-search field's field editor swallows the Escape key while it
         // holds focus, so the Navigation Deck's ⌘\ / arrow handlers never see it.
         // Release search focus while the deck is open (so Esc / ← / → / Enter reach
@@ -257,8 +313,23 @@ struct MainWorkspaceView: View {
                 }
                 return .handled
             }
-            if !engine.searchResults.isEmpty {
+            if isSearchDropdownOpen {
                 engine.searchResults = []
+                engine.englishMatches = []
+                return .handled
+            }
+            return .ignored
+        }
+        .onKeyPress(.downArrow) {
+            if isSearchDropdownOpen && !engine.isZStackOpen {
+                engine.moveSearchSelection(by: 1)
+                return .handled
+            }
+            return .ignored
+        }
+        .onKeyPress(.upArrow) {
+            if isSearchDropdownOpen && !engine.isZStackOpen {
+                engine.moveSearchSelection(by: -1)
                 return .handled
             }
             return .ignored
@@ -351,7 +422,7 @@ struct MainWorkspaceView: View {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
 
-                    TextField("Search Kanji, Kana, Romaji, or English (press Enter)...", text: $engine.searchQuery)
+                    TextField("Search Kanji, Kana, Romaji, or English (⌘F)...", text: $engine.searchQuery)
                         .textFieldStyle(.plain)
                         .focused($isSearchFocused)
                         .onChange(of: engine.searchQuery) { _, _ in
@@ -361,10 +432,26 @@ struct MainWorkspaceView: View {
                             engine.submitSearchQuery()
                         }
 
+                    Button {
+                        engine.searchContainsMode.toggle()
+                    } label: {
+                        Text(engine.searchContainsMode ? "Contains" : "Prefix")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(engine.searchContainsMode ? Color.accentColor.opacity(0.28) : Color.white.opacity(0.08)))
+                            .foregroundStyle(engine.searchContainsMode ? Color.accentColor : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(engine.searchContainsMode
+                          ? "Contains mode: matching substrings anywhere in a headword or reading. Click for Prefix ranking."
+                          : "Prefix mode: matching exact and prefix forms first. Click to search anywhere inside a word (Contains).")
+
                     if !engine.searchQuery.isEmpty {
                         Button {
                             engine.searchQuery = ""
                             engine.searchResults = []
+                            engine.englishMatches = []
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.secondary)
@@ -381,15 +468,27 @@ struct MainWorkspaceView: View {
                         .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
                 }
                 .frame(maxWidth: 400)
-                .help("Search by kanji, kana, romaji, or English — results appear live; press Enter to open the top hit.")
+                .help("Search by kanji, kana, romaji, or English — results appear live; use ↑/↓ and Enter to open.")
             }
+
+            navScreenButton(
+                title: "Fisheye",
+                systemImage: "circle.hexagongrid.fill",
+                isActive: engine.activeScreen == .fisheye,
+                compact: navCompact,
+                help: "Open the Kanji Fisheye compound explorer (⌘⇧F)",
+                action: {
+                    let cp = engine.activeKanji?.codepoint ?? engine.recentKanji.first ?? 0x5927
+                    engine.openFisheye(codepoint: cp)
+                }
+            )
 
             navScreenButton(
                 title: "Kanji Index",
                 systemImage: "character.book.closed.fill",
                 isActive: engine.activeScreen == .kanjiLookup,
                 compact: navCompact,
-                help: "Open the Kanji Index — browse kanji by stroke count, radical, or reading",
+                help: "Open the Kanji Index — browse kanji by stroke count, radical, or reading (⌘⇧K)",
                 action: { engine.openKanjiLookup() }
             )
 
@@ -398,7 +497,7 @@ struct MainWorkspaceView: View {
                 systemImage: "puzzlepiece.extension.fill",
                 isActive: engine.activeScreen == .radicalBuilder,
                 compact: navCompact,
-                help: "Open the Radical Builder — assemble kanji from their component radicals",
+                help: "Open the Radical Builder — assemble kanji from their component radicals (⌘⇧R)",
                 action: { engine.openRadicalBuilder() }
             )
 
@@ -419,6 +518,30 @@ struct MainWorkspaceView: View {
                 help: "Open the Compound Kanji screen — decompose a word into its kanji, inspect each part's readings & meaning, and see how the compound reading assembles from them (⌘⇧D)",
                 action: { engine.openCompoundKanji() }
             )
+
+            Button {
+                engine.openStudyLibrary()
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "star.square.on.square.fill")
+                    if !navCompact {
+                        Text("Decks")
+                    }
+                    if engine.studyStore.totalSavedCount > 0 {
+                        Text("\(engine.studyStore.totalSavedCount)")
+                            .font(.caption2.monospacedDigit().weight(.bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.white.opacity(0.18)))
+                    }
+                }
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(Capsule().fill(engine.activeScreen == .studyLibrary ? Color.accentColor : Color.white.opacity(0.10)))
+            }
+            .buttonStyle(.plain)
+            .help("Open Saved Study Decks & Anki Export (⌘⇧L)")
 
             Toggle("Names", isOn: Binding(
                 get: { engine.includeNames },
@@ -442,6 +565,8 @@ struct MainWorkspaceView: View {
                     engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: 1.85)
                 } else if engine.activeScreen == .kanjiDetail {
                     engine.refreshActiveKanjiDetail()
+                } else if engine.activeScreen == .wordCosmos {
+                    engine.sampleWordCosmos(includeNames: engine.includeNames)
                 }
             }
 
@@ -631,17 +756,28 @@ struct MainWorkspaceView: View {
 
     @ViewBuilder
     private var mainResultsColumn: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 2) {
-                if engine.filteredSearchResults.isEmpty {
-                    noFilterMatchRow
-                } else {
-                    ForEach(engine.filteredSearchResults) { hit in
-                        searchResultRow(for: hit)
+        let filtered = engine.filteredSearchResults
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    if filtered.isEmpty {
+                        noFilterMatchRow
+                    } else {
+                        ForEach(Array(filtered.enumerated()), id: \.element.id) { idx, hit in
+                            searchResultRow(for: hit, isSelected: engine.selectedSearchIndex == idx)
+                                .id(idx)
+                        }
+                    }
+                }
+                .padding(8)
+            }
+            .onChange(of: engine.selectedSearchIndex) { _, newIdx in
+                if newIdx < filtered.count {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        proxy.scrollTo(newIdx)
                     }
                 }
             }
-            .padding(8)
         }
     }
 
@@ -649,23 +785,36 @@ struct MainWorkspaceView: View {
     /// English-gloss matches for the current romaji query.
     @ViewBuilder
     private var englishResultsColumn: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 2) {
-                englishMatchesHeader
-                ForEach(engine.englishMatches) { hit in
-                    searchResultRow(for: hit)
+        let baseIdx = engine.searchFilters.isEmpty ? engine.filteredSearchResults.count : Int.max
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    englishMatchesHeader
+                    ForEach(Array(engine.englishMatches.enumerated()), id: \.element.id) { offset, hit in
+                        let combinedIdx = baseIdx + offset
+                        searchResultRow(for: hit, isSelected: engine.selectedSearchIndex == combinedIdx)
+                            .id(combinedIdx)
+                    }
+                }
+                .padding(8)
+            }
+            .onChange(of: engine.selectedSearchIndex) { _, newIdx in
+                if newIdx >= baseIdx {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        proxy.scrollTo(newIdx)
+                    }
                 }
             }
-            .padding(8)
         }
     }
 
     // MARK: - Search result row + quick-filter chips
 
-    private func searchResultRow(for hit: WordHit) -> some View {
+    private func searchResultRow(for hit: WordHit, isSelected: Bool = false) -> some View {
         Button {
             engine.openWordEntry(entryId: hit.id)
             engine.searchResults = []
+            engine.englishMatches = []
             isSearchFocused = false
         } label: {
             HStack(spacing: 12) {
@@ -697,15 +846,32 @@ struct MainWorkspaceView: View {
                         .background(Capsule().fill(Color.purple.opacity(0.25)))
                         .foregroundStyle(.purple)
                 }
+
+                if isSelected {
+                    Image(systemName: "return")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Color.accentColor)
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(isSelected ? Color.accentColor.opacity(0.45) : Color.clear, lineWidth: 1)
+                    )
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .contextMenu {
             Button("Copy") {
                 engine.copyText("\(hit.displayHeadword)  \(hit.kanaHead)  \(hit.primaryGloss)")
+            }
+            Button(engine.studyStore.isWordSaved(hit.id) ? "Remove Bookmark" : "Save to Favorites") {
+                engine.toggleSaveWordHit(hit)
             }
         }
     }
@@ -789,20 +955,26 @@ struct MainWorkspaceView: View {
 
     private func searchFilterTooltip(for filter: SearchFilter) -> String {
         switch filter {
-        case .common:     return "Common only — overall frequency rank ≤ 12,000 (Jōyō-grade words)."
-        case .nouns:      return "Nouns."
-        case .verbs:      return "Verbs — ichidan, godan, and other verb forms."
-        case .adjectives: return "Adjectives — i- (keiyoushi) and na- (keiyogo / adjectival nouns)."
-        case .adverbs:    return "Adverbs."
-        case .particles:  return "Particles."
-        case .jlpt5:      return "JLPT N5 — \(DaiJishowEngine.jlptLevelDescription(5)) Filter matches words whose hardest head kanji is N5."
-        case .jlpt4:      return "JLPT N4 — \(DaiJishowEngine.jlptLevelDescription(4)) Filter matches words whose hardest head kanji is N4."
-        case .jlpt3:      return "JLPT N3 — \(DaiJishowEngine.jlptLevelDescription(3)) Filter matches words whose hardest head kanji is N3."
-        case .jlpt2:      return "JLPT N2 — \(DaiJishowEngine.jlptLevelDescription(2)) Filter matches words whose hardest head kanji is N2."
-        case .jlpt1:      return "JLPT N1 — \(DaiJishowEngine.jlptLevelDescription(1)) Filter matches words whose hardest head kanji is N1."
-        case .grade1:     return "Words whose highest school-grade head kanji is Grade 1 (小学 1年生)."
-        case .grade2:     return "Words whose highest school-grade head kanji is Grade 2 (小学 2年生)."
-        case .grade3:     return "Words whose highest school-grade head kanji is Grade 3 (小学 3年生)."
+        case .common:       return "Common only — overall frequency rank ≤ 12,000 (Jōyō-grade words)."
+        case .nouns:        return "Nouns."
+        case .verbs:        return "Verbs — ichidan, godan, and other verb forms."
+        case .adjectives:   return "Adjectives — i- (keiyoushi) and na- (keiyogo / adjectival nouns)."
+        case .adverbs:      return "Adverbs."
+        case .particles:    return "Particles."
+        case .onomatopoeia: return "Onomatopoeia & mimetic expressions (擬音語・擬態語)."
+        case .yojijukugo:   return "Yojijukugo — four-character idiomatic compounds (四字熟語)."
+        case .idioms:       return "Idiomatic expressions (慣用句)."
+        case .proverbs:     return "Proverbs & sayings (諺)."
+        case .keigo:        return "Honorific, humble, and polite language (敬語)."
+        case .colloquial:   return "Colloquial and slang expressions."
+        case .jlpt5:        return "JLPT N5 — \(DaiJishowEngine.jlptLevelDescription(5)) Filter matches words whose hardest head kanji is N5."
+        case .jlpt4:        return "JLPT N4 — \(DaiJishowEngine.jlptLevelDescription(4)) Filter matches words whose hardest head kanji is N4."
+        case .jlpt3:        return "JLPT N3 — \(DaiJishowEngine.jlptLevelDescription(3)) Filter matches words whose hardest head kanji is N3."
+        case .jlpt2:        return "JLPT N2 — \(DaiJishowEngine.jlptLevelDescription(2)) Filter matches words whose hardest head kanji is N2."
+        case .jlpt1:        return "JLPT N1 — \(DaiJishowEngine.jlptLevelDescription(1)) Filter matches words whose hardest head kanji is N1."
+        case .grade1:       return "Words whose highest school-grade head kanji is Grade 1 (小学 1年生)."
+        case .grade2:       return "Words whose highest school-grade head kanji is Grade 2 (小学 2年生)."
+        case .grade3:       return "Words whose highest school-grade head kanji is Grade 3 (小学 3年生)."
         }
     }
 
