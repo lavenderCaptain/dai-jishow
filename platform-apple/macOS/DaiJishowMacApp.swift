@@ -264,7 +264,7 @@ struct MainWorkspaceView: View {
                         }
 
                         if isSearchDropdownOpen {
-                            searchResultsDropdown
+                            searchResultsDropdown(availableWidth: windowWidth)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -642,9 +642,9 @@ struct MainWorkspaceView: View {
             }
             .fixedSize()
         }
-        .frame(width: max(1, availableWidth), alignment: .leading)
-        .padding(.horizontal, navCompact ? 14 : 20)
+        .padding(.horizontal, navCompact ? 16 : 22)
         .padding(.vertical, 10)
+        .frame(width: max(1, availableWidth), alignment: .leading)
         // The title bar is hidden, so this transparent handle re-installs the
         // usual macOS affordances on the (otherwise-dead) top band: drag the
         // window from empty space here, and double-click it to zoom/restore.
@@ -693,8 +693,9 @@ struct MainWorkspaceView: View {
         .help(help)
     }
 
-    private var searchResultsDropdown: some View {
-        VStack {
+    private func searchResultsDropdown(availableWidth: CGFloat) -> some View {
+        let leadingPad: CGFloat = availableWidth < 1000 ? 20 : 118
+        return VStack {
             HStack {
                 GlassCard(cornerRadius: 18, highlightOpacity: 0.35) {
                     VStack(spacing: 0) {
@@ -708,8 +709,9 @@ struct MainWorkspaceView: View {
                     }
                     .animation(.easeInOut(duration: 0.25), value: engine.nameNudge?.id)
                 }
-                .padding(.leading, 118)
-                Spacer()
+                .padding(.leading, leadingPad)
+                .padding(.trailing, 20)
+                Spacer(minLength: 0)
             }
             Spacer()
         }
