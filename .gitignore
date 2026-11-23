@@ -26,6 +26,10 @@ DerivedData/
 local.properties
 *.apk
 *.aab
+
+# Python (corpus-builder bytecode caches — version/platform specific, regenerable)
+__pycache__/
+*.pyc
 .build/
 .swiftpm/
 *.db
