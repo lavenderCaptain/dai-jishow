@@ -811,6 +811,7 @@ struct FisheyeGraphView: View {
     @State private var overflowPointerPos: CGPoint?
     @State private var hoveredOverflowPos: CGPoint?
     @State private var peekCenterGloss: Bool = false
+    @State private var controlsHeight: CGFloat = 46
 
     private var activeInspectorNode: FisheyeNode? {
         engine.hoveredFisheyeNode ?? engine.selectedFisheyeNode
@@ -976,7 +977,7 @@ struct FisheyeGraphView: View {
 
                 // Subtle center dividing guide line
                 Path { p in
-                    p.move(to: CGPoint(x: cx, y: 56))
+                    p.move(to: CGPoint(x: cx, y: controlsHeight + 26))
                     p.addLine(to: CGPoint(x: cx, y: h - 56))
                 }
                 .stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 6]))
@@ -993,7 +994,7 @@ struct FisheyeGraphView: View {
                         .foregroundStyle(Color.white.opacity(0.38))
                 }
                 .padding(.horizontal, 28)
-                .padding(.top, 56)
+                .padding(.top, controlsHeight + 24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
                 // Overflow Fan-out bubbles
@@ -1082,7 +1083,7 @@ struct FisheyeGraphView: View {
                 // Overlaid controls and bottom inspector card
                 VStack {
                     WrappingHStack(alignment: .center, horizontalSpacing: 12, verticalSpacing: 8) {
-                        Picker("Graph Mode", selection: $engine.fisheyeMode) {
+                        let modePicker = Picker("Graph Mode", selection: $engine.fisheyeMode) {
                             Text("Compounds").tag(DJ_EDGE_COMPOUNDS)
                             Text("Yojijukugo").tag(DJ_EDGE_YOJIJUKUGO)
                             Text("Components").tag(DJ_EDGE_COMPONENTS)
@@ -1094,6 +1095,12 @@ struct FisheyeGraphView: View {
                             if let cp = engine.activeKanji?.codepoint {
                                 engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: aspectRatio)
                             }
+                        }
+
+                        if w < 1100 {
+                            modePicker.labelsHidden()
+                        } else {
+                            modePicker
                         }
 
                         Menu {
@@ -1153,8 +1160,17 @@ struct FisheyeGraphView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(Capsule().fill(.ultraThinMaterial))
+                        .fixedSize()
                     }
-                    .padding(.horizontal, 24)
+                    .frame(maxWidth: max(1, w - 32))
+                    .background(
+                        GeometryReader { barGeo in
+                            Color.clear
+                                .onAppear { controlsHeight = barGeo.size.height }
+                                .onChange(of: barGeo.size.height) { _, newH in controlsHeight = newH }
+                        }
+                    )
+                    .padding(.horizontal, 16)
                     .padding(.top, 14)
 
                     Spacer()
@@ -1169,10 +1185,12 @@ struct FisheyeGraphView: View {
                                         HStack(spacing: 8) {
                                             Text(active.compoundWord.isEmpty ? active.glyph : active.compoundWord)
                                                 .font(.title3.weight(.bold))
+                                                .lineLimit(1)
                                             if !active.compoundKana.isEmpty && engine.recallMode != .hideKana {
                                                 Text("(\(active.compoundKana))")
                                                     .font(.subheadline)
                                                     .foregroundStyle(.secondary)
+                                                    .lineLimit(1)
                                             }
                                             Text("\(active.tierLabel) • \(active.shareText)")
                                                 .font(.caption2.weight(.bold))
@@ -1180,6 +1198,7 @@ struct FisheyeGraphView: View {
                                                 .padding(.vertical, 2)
                                                 .background(Capsule().fill(active.tierColor.opacity(0.22)))
                                                 .foregroundStyle(active.tierColor)
+                                                .fixedSize()
                                         }
                                         if engine.recallMode != .hideGloss {
                                             Text(active.compoundGloss.isEmpty ? "Tap to inspect kanji or word entry" : active.compoundGloss)
@@ -1191,6 +1210,7 @@ struct FisheyeGraphView: View {
 
                                     let speakTarget = active.compoundKana.isEmpty ? active.glyph : active.compoundKana
                                     SpeakerButton(text: speakTarget, variant: .compact, extraHelp: "Hear compound reading aloud")
+                                        .fixedSize()
 
                                     if active.topEntryId > 0 {
                                         Button {
@@ -1204,6 +1224,7 @@ struct FisheyeGraphView: View {
                                                 .foregroundStyle(.white)
                                         }
                                         .buttonStyle(.plain)
+                                        .fixedSize()
                                     }
 
                                     Button {
@@ -1216,6 +1237,7 @@ struct FisheyeGraphView: View {
                                             .background(Capsule().fill(Color.white.opacity(0.14)))
                                     }
                                     .buttonStyle(.plain)
+                                    .fixedSize()
 
                                     Button {
                                         engine.openFisheye(codepoint: active.codepoint)
@@ -1227,6 +1249,7 @@ struct FisheyeGraphView: View {
                                             .background(Capsule().fill(Color.white.opacity(0.14)))
                                     }
                                     .buttonStyle(.plain)
+                                    .fixedSize()
                                 }
                                 .padding(.horizontal, 18)
                                 .padding(.vertical, 11)
@@ -1582,11 +1605,11 @@ private func cosmosLayout(
     layout: WordCosmosLayout,
     colorFor: (WordHit) -> Color,
     w: CGFloat,
-    h: CGFloat
+    h: CGFloat,
+    topMargin: CGFloat = 78
 ) -> [CosmosBubble] {
     guard w > 0, h > 0, !words.isEmpty else { return [] }
 
-    let topMargin: CGFloat = 78      // clears the top control bar
     let bottomMargin: CGFloat = 96   // clears the bottom inspector ribbon
     let sideMargin: CGFloat = 56
     let minDim = min(w, h)
@@ -1670,30 +1693,28 @@ struct WordCosmosView: View {
     @State private var hoveredWord: WordHit?
     @State private var selectedWord: WordHit?
 
-    /// Measured width of the control bar; drives `cosmosCompact` so the Roll /
-    /// Sample / Color controls drop to icon-only when the window is too narrow
-    /// for their labels.
-    @State private var cosmosBarWidth: CGFloat = 0
-
-    /// Below this bar width the control-bar labels crunch to icons. Tunable.
-    private var cosmosCompact: Bool { isRowCompact(cosmosBarWidth, threshold: 1180) }
+    @State private var controlBarHeight: CGFloat = 62
 
     private var activeWord: WordHit? { hoveredWord ?? selectedWord }
 
     var body: some View {
-        ZStack {
-            if engine.wordCosmosMode == .ranked {
-                rankedListView
-            } else {
-                cosmosCloudView
+        GeometryReader { viewGeo in
+            let availableWidth = viewGeo.size.width
+            ZStack {
+                if engine.wordCosmosMode == .ranked {
+                    rankedListView
+                } else {
+                    cosmosCloudView
+                }
             }
-        }
-        .overlay(alignment: .top) {
-            controlBar
-        }
-        .overlay(alignment: .bottom) {
-            if engine.wordCosmosMode == .cosmos {
-                inspectorRibbon
+            .frame(width: viewGeo.size.width, height: viewGeo.size.height)
+            .overlay(alignment: .top) {
+                controlBar(availableWidth: availableWidth)
+            }
+            .overlay(alignment: .bottom) {
+                if engine.wordCosmosMode == .cosmos {
+                    inspectorRibbon(availableWidth: availableWidth)
+                }
             }
         }
     }
@@ -1703,18 +1724,20 @@ struct WordCosmosView: View {
     @ViewBuilder
     private var cosmosCloudView: some View {
         GeometryReader { geo in
+            let cloudTopMargin = max(78, controlBarHeight + 16)
             let bubbles = cosmosLayout(
                 words: engine.wordCosmosWords,
                 seed: engine.wordCosmosSeed,
                 layout: engine.wordCosmosLayout,
                 colorFor: { engine.cosmosColor(for: $0) },
                 w: geo.size.width,
-                h: geo.size.height
+                h: geo.size.height,
+                topMargin: cloudTopMargin
             )
 
             ZStack {
                 if engine.wordCosmosLayout == .constellation {
-                    constellationGuides(w: geo.size.width, h: geo.size.height)
+                    constellationGuides(w: geo.size.width, h: geo.size.height, topMargin: cloudTopMargin)
                 }
 
                 if bubbles.isEmpty {
@@ -1868,9 +1891,9 @@ struct WordCosmosView: View {
     }
 
     @ViewBuilder
-    private func constellationGuides(w: CGFloat, h: CGFloat) -> some View {
+    private func constellationGuides(w: CGFloat, h: CGFloat, topMargin: CGFloat) -> some View {
         let cx = w * 0.5
-        let cy = 78 + (h - 78 - 96) * 0.5
+        let cy = topMargin + (h - topMargin - 96) * 0.5
         let maxR = min(w, h) * 0.40
         ZStack {
             ForEach(0...5, id: \.self) { ring in
@@ -1930,7 +1953,7 @@ struct WordCosmosView: View {
             .padding(16)
             .textSelection(.enabled)
         }
-        .padding(.top, 64)   // clear the control bar
+        .padding(.top, controlBarHeight + 14)   // clear the control bar even when wrapped
         .padding(.horizontal, 16)
     }
 
@@ -2063,9 +2086,12 @@ struct WordCosmosView: View {
 
     // MARK: - Top control bar
 
-    private var controlBar: some View {
-        WrappingHStack(alignment: .center, horizontalSpacing: 10, verticalSpacing: 8) {
-            Picker("Layout", selection: $engine.wordCosmosLayout) {
+    private func controlBar(availableWidth: CGFloat) -> some View {
+        let cosmosCompact = availableWidth < 1180
+        let hidePickerLabels = availableWidth < 1280
+
+        return WrappingHStack(alignment: .center, horizontalSpacing: 10, verticalSpacing: 8) {
+            let layoutPicker = Picker("Layout", selection: $engine.wordCosmosLayout) {
                 ForEach(WordCosmosLayout.allCases) { l in
                     Text(l.label).tag(l)
                 }
@@ -2073,16 +2099,30 @@ struct WordCosmosView: View {
             .pickerStyle(.segmented)
             .fixedSize()
             .opacity(engine.wordCosmosMode == .cosmos ? 1 : 0.35)
+            .help("Layout: Constellation or Cloud")
 
-            Picker("View", selection: $engine.wordCosmosMode) {
+            if hidePickerLabels {
+                layoutPicker.labelsHidden()
+            } else {
+                layoutPicker
+            }
+
+            let viewPicker = Picker("View", selection: $engine.wordCosmosMode) {
                 ForEach(WordCosmosMode.allCases) { m in
                     Text(m == .cosmos ? "Cloud" : "Ranked").tag(m)
                 }
             }
             .pickerStyle(.segmented)
             .fixedSize()
+            .help("View: Cloud bubbles or Ranked frequency list")
 
-            Picker("Tier", selection: $engine.wordCosmosTier) {
+            if hidePickerLabels {
+                viewPicker.labelsHidden()
+            } else {
+                viewPicker
+            }
+
+            let tierPicker = Picker("Tier", selection: $engine.wordCosmosTier) {
                 ForEach(WordCosmosTier.allCases) { t in
                     Text(t.label).tag(t)
                 }
@@ -2091,6 +2131,13 @@ struct WordCosmosView: View {
             .fixedSize()
             .onChange(of: engine.wordCosmosTier) { _, new in
                 engine.setWordCosmosTier(new)
+            }
+            .help("Tier: Core, Common, or All corpus words")
+
+            if hidePickerLabels {
+                tierPicker.labelsHidden()
+            } else {
+                tierPicker
             }
 
             Menu {
@@ -2101,11 +2148,15 @@ struct WordCosmosView: View {
                 }
             } label: {
                 if cosmosCompact {
-                    Image(systemName: "number")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(.ultraThinMaterial))
+                    HStack(spacing: 4) {
+                        Image(systemName: "number")
+                        Text("\(engine.wordCosmosCount)")
+                            .monospacedDigit()
+                    }
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(.ultraThinMaterial))
                 } else {
                     Label("\(engine.wordCosmosCount) words", systemImage: "number")
                         .font(.caption.weight(.semibold))
@@ -2185,16 +2236,23 @@ struct WordCosmosView: View {
                 .background(Capsule().fill(.ultraThinMaterial))
                 .fixedSize()
         }
-        .padding(.horizontal, 18)
+        .frame(maxWidth: max(1, availableWidth - 68))
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(.ultraThinMaterial)
                 .opacity(0.65)
+                .background(
+                    GeometryReader { barGeo in
+                        Color.clear
+                            .onAppear { controlBarHeight = barGeo.size.height + 8 }
+                            .onChange(of: barGeo.size.height) { _, newH in controlBarHeight = newH + 8 }
+                    }
+                )
         )
         .padding(.horizontal, 16)
         .padding(.top, 8)
-        .measureWidth(into: $cosmosBarWidth)
     }
 
     /// The colour legend, matched to the active `wordCosmosColorMode`: the
@@ -2253,7 +2311,8 @@ struct WordCosmosView: View {
     // MARK: - Bottom inspector ribbon
 
     @ViewBuilder
-    private var inspectorRibbon: some View {
+    private func inspectorRibbon(availableWidth: CGFloat) -> some View {
+        let compactRibbon = availableWidth < 920
         HStack(alignment: .bottom, spacing: 14) {
             Spacer()
 
@@ -2266,15 +2325,17 @@ struct WordCosmosView: View {
                     ? "\(info.label) • \(info.rankStr)"
                     : engine.cosmosDifficultyLabel(for: word)
                 GlassCard(cornerRadius: 18) {
-                    HStack(spacing: 12) {
+                    HStack(spacing: compactRibbon ? 10 : 12) {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 8) {
                                 Text(word.displayHeadword)
                                     .font(.title3.weight(.bold))
+                                    .lineLimit(1)
                                 if engine.recallMode != .hideKana && !word.kanaHead.isEmpty {
                                     Text("(\(word.kanaHead))")
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
+                                        .lineLimit(1)
                                 }
                                 Text(pillText)
                                     .font(.caption2.weight(.bold))
@@ -2282,6 +2343,7 @@ struct WordCosmosView: View {
                                     .padding(.vertical, 2)
                                     .background(Capsule().fill(pillColor.opacity(0.22)))
                                     .foregroundStyle(pillColor)
+                                    .fixedSize()
                             }
                             if engine.recallMode != .hideGloss {
                                 Text(word.primaryGloss.isEmpty ? "Tap to open the Detailed view" : word.primaryGloss)
@@ -2296,6 +2358,7 @@ struct WordCosmosView: View {
                             variant: .compact,
                             extraHelp: "Hear pronunciation"
                         )
+                        .fixedSize()
 
                         BookmarkDeckControl(
                             engine: engine,
@@ -2303,6 +2366,7 @@ struct WordCosmosView: View {
                             item: engine.studyItem(for: word),
                             compact: true
                         )
+                        .fixedSize()
 
                         Button {
                             withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
@@ -2317,6 +2381,7 @@ struct WordCosmosView: View {
                                 .foregroundStyle(.white)
                         }
                         .buttonStyle(.plain)
+                        .fixedSize()
 
                         if word.firstKanjiCodepoint != nil {
                             Button {
@@ -2324,16 +2389,17 @@ struct WordCosmosView: View {
                                     engine.pivotCosmosToKanjiFisheye(word)
                                 }
                             } label: {
-                                Label("Kanji Fisheye", systemImage: "scope")
+                                Label(compactRibbon ? "Fisheye" : "Kanji Fisheye", systemImage: "scope")
                                     .font(.subheadline.weight(.semibold))
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 7)
                                     .background(Capsule().fill(Color.white.opacity(0.14)))
                             }
                             .buttonStyle(.plain)
+                            .fixedSize()
                         }
                     }
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, compactRibbon ? 14 : 18)
                     .padding(.vertical, 11)
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -2341,6 +2407,8 @@ struct WordCosmosView: View {
                 Text("Hover or drag to preview · Tap once to select · Tap again to open Detailed")
                     .font(.subheadline)
                     .foregroundStyle(Color.white.opacity(0.65))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(Capsule().fill(.ultraThinMaterial))
@@ -2348,7 +2416,7 @@ struct WordCosmosView: View {
 
             Spacer()
         }
-        .padding(.horizontal, 84)
+        .padding(.horizontal, availableWidth < 960 ? 20 : 64)
         .padding(.bottom, 16)
     }
 
@@ -5685,7 +5753,7 @@ struct KanjiLookupView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
-                .frame(minWidth: 260)
+                .frame(minWidth: 240, maxWidth: 420)
 
                 Picker("Scope", selection: $engine.kanjiLookupReadingScope) {
                     Text("All Readings").tag(0)

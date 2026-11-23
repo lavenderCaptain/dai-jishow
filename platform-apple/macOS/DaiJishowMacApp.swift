@@ -210,81 +210,79 @@ struct MainWorkspaceView: View {
     @ObservedObject var engine: DaiJishowEngine
     @FocusState private var isSearchFocused: Bool
 
-    /// Measured width of the top nav bar; drives `navCompact` so the screen
-    /// buttons drop to icon-only when the window is too narrow to show labels on one line.
-    @State private var navBarWidth: CGFloat = 0
-
-    /// Below this bar width the screen buttons crunch to icons (a tooltip keeps
-    /// each one self-documenting). Tunable; sized for the top-bar navigation buttons.
-    private var navCompact: Bool { isRowCompact(navBarWidth, threshold: 1560) }
-
     private var isSearchDropdownOpen: Bool {
         (!engine.searchResults.isEmpty || !engine.englishMatches.isEmpty)
             && !engine.searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.06, green: 0.08, blue: 0.12),
-                    Color(red: 0.10, green: 0.12, blue: 0.18),
-                    Color(red: 0.07, green: 0.09, blue: 0.14)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+        GeometryReader { rootGeo in
+            let windowWidth = rootGeo.size.width
 
-            VStack(spacing: 0) {
-                topNavigationBar
-                    .zIndex(20)
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.06, green: 0.08, blue: 0.12),
+                        Color(red: 0.10, green: 0.12, blue: 0.18),
+                        Color(red: 0.07, green: 0.09, blue: 0.14)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
 
-                ZStack {
-                    if !engine.isReady {
-                        databaseMissingBanner
-                    } else {
-                        switch engine.activeScreen {
-                        case .fisheye:
-                            FisheyeGraphView(engine: engine)
-                        case .wordEntry:
-                            if let entry = engine.activeEntry {
-                                WordEntryView(engine: engine, entry: entry)
+                VStack(spacing: 0) {
+                    topNavigationBar(availableWidth: windowWidth)
+                        .zIndex(20)
+
+                    ZStack {
+                        if !engine.isReady {
+                            databaseMissingBanner
+                        } else {
+                            switch engine.activeScreen {
+                            case .fisheye:
+                                FisheyeGraphView(engine: engine)
+                            case .wordEntry:
+                                if let entry = engine.activeEntry {
+                                    WordEntryView(engine: engine, entry: entry)
+                                }
+                            case .kanjiDetail:
+                                if let kanji = engine.activeKanji {
+                                    KanjiDetailView(engine: engine, kanji: kanji)
+                                }
+                            case .radicalBuilder:
+                                RadicalBuilderView(engine: engine)
+                            case .kanjiLookup:
+                                KanjiLookupView(engine: engine)
+                            case .wordCosmos:
+                                WordCosmosView(engine: engine)
+                            case .compoundKanji:
+                                CompoundKanjiView(engine: engine)
+                            case .studyLibrary:
+                                StudyLibraryView(engine: engine, studyStore: engine.studyStore)
                             }
-                        case .kanjiDetail:
-                            if let kanji = engine.activeKanji {
-                                KanjiDetailView(engine: engine, kanji: kanji)
-                            }
-                        case .radicalBuilder:
-                            RadicalBuilderView(engine: engine)
-                        case .kanjiLookup:
-                            KanjiLookupView(engine: engine)
-                        case .wordCosmos:
-                            WordCosmosView(engine: engine)
-                        case .compoundKanji:
-                            CompoundKanjiView(engine: engine)
-                        case .studyLibrary:
-                            StudyLibraryView(engine: engine, studyStore: engine.studyStore)
+                        }
+
+                        if isSearchDropdownOpen {
+                            searchResultsDropdown
                         }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    if isSearchDropdownOpen {
-                        searchResultsDropdown
+                    if !engine.history.isEmpty {
+                        breadcrumbViewer
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 8)
+                            .zIndex(10)
                     }
                 }
+                .frame(width: rootGeo.size.width, height: rootGeo.size.height)
 
-                if !engine.history.isEmpty {
-                    breadcrumbViewer
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 8)
-                        .zIndex(10)
+                if engine.isZStackOpen {
+                    ZStackHistoryOverlay(engine: engine)
+                        .zIndex(50)
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 }
-            }
-
-            if engine.isZStackOpen {
-                ZStackHistoryOverlay(engine: engine)
-                    .zIndex(50)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
         .preferredColorScheme(.dark)
@@ -364,8 +362,18 @@ struct MainWorkspaceView: View {
         #endif
     }
 
-    private var topNavigationBar: some View {
-        HStack(spacing: 12) {
+    private func topNavigationBar(availableWidth: CGFloat) -> some View {
+        let navCompact = availableWidth < 1640
+        let ultraCompact = availableWidth < 920
+        let showRecallSegmented = availableWidth >= 1120
+        let showRecallLabel = availableWidth >= 1340
+        let maxRecentKanji = availableWidth >= 1240 ? 6 : (availableWidth >= 980 ? 3 : (ultraCompact ? 1 : 2))
+        let showSearchPrefixBadge = availableWidth >= 900 || !engine.searchQuery.isEmpty
+        let searchPlaceholder = availableWidth >= 1120
+            ? "Search Kanji, Kana, Romaji, or English (⌘F)..."
+            : "Search (⌘F)..."
+
+        return HStack(spacing: ultraCompact ? 6 : (navCompact ? 8 : 11)) {
             HStack(spacing: 4) {
                 Button { engine.goBack() } label: {
                     Image(systemName: "chevron.left")
@@ -398,18 +406,17 @@ struct MainWorkspaceView: View {
                         if !engine.history.isEmpty {
                             Text("\(engine.history.count)")
                                 .font(.caption2.monospacedDigit().weight(.bold))
-                                .frame(minWidth: 18, alignment: .center)
+                                .frame(minWidth: 16, alignment: .center)
                         }
                     }
-                    // Reserve room for a 2-digit count so the badge doesn't squash
-                    // when the history ring fills past 9 entries.
-                    .frame(minWidth: 46, alignment: .center)
-                    .padding(.horizontal, 6)
+                    .frame(minWidth: 42, alignment: .center)
+                    .padding(.horizontal, 5)
                     .frame(height: 28)
                 }
                 .help("Open Z-Stack Navigation Deck (⌘\\)")
             }
             .buttonStyle(.plain)
+            .fixedSize()
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             .background(Capsule().fill(.ultraThinMaterial))
@@ -418,11 +425,11 @@ struct MainWorkspaceView: View {
             // field, so we hide this top omni-search there — the two are what the
             // user kept confusing, and showing only one removes the ambiguity.
             if engine.activeScreen != .compoundKanji {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
 
-                    TextField("Search Kanji, Kana, Romaji, or English (⌘F)...", text: $engine.searchQuery)
+                    TextField(searchPlaceholder, text: $engine.searchQuery)
                         .textFieldStyle(.plain)
                         .focused($isSearchFocused)
                         .onChange(of: engine.searchQuery) { _, _ in
@@ -432,20 +439,24 @@ struct MainWorkspaceView: View {
                             engine.submitSearchQuery()
                         }
 
-                    Button {
-                        engine.searchContainsMode.toggle()
-                    } label: {
-                        Text(engine.searchContainsMode ? "Contains" : "Prefix")
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(engine.searchContainsMode ? Color.accentColor.opacity(0.28) : Color.white.opacity(0.08)))
-                            .foregroundStyle(engine.searchContainsMode ? Color.accentColor : .secondary)
+                    if showSearchPrefixBadge {
+                        Button {
+                            engine.searchContainsMode.toggle()
+                        } label: {
+                            Text(engine.searchContainsMode ? "Contains" : "Prefix")
+                                .font(.caption2.weight(.semibold))
+                                .lineLimit(1)
+                                .fixedSize()
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(engine.searchContainsMode ? Color.accentColor.opacity(0.28) : Color.white.opacity(0.08)))
+                                .foregroundStyle(engine.searchContainsMode ? Color.accentColor : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(engine.searchContainsMode
+                              ? "Contains mode: matching substrings anywhere in a headword or reading. Click for Prefix ranking."
+                              : "Prefix mode: matching exact and prefix forms first. Click to search anywhere inside a word (Contains).")
                     }
-                    .buttonStyle(.plain)
-                    .help(engine.searchContainsMode
-                          ? "Contains mode: matching substrings anywhere in a headword or reading. Click for Prefix ranking."
-                          : "Prefix mode: matching exact and prefix forms first. Click to search anywhere inside a word (Contains).")
 
                     if !engine.searchQuery.isEmpty {
                         Button {
@@ -460,18 +471,19 @@ struct MainWorkspaceView: View {
                         .help("Clear the search")
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background {
                     Capsule()
                         .fill(.ultraThinMaterial)
                         .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
                 }
-                .frame(minWidth: 180, maxWidth: 320)
+                .frame(minWidth: ultraCompact ? 96 : 120, maxWidth: 320)
+                .layoutPriority(0)
                 .help("Search by kanji, kana, romaji, or English — results appear live; use ↑/↓ and Enter to open.")
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: ultraCompact ? 4 : (navCompact ? 5 : 6)) {
                 navScreenButton(
                     title: "Fisheye",
                     systemImage: "circle.hexagongrid.fill",
@@ -539,13 +551,14 @@ struct MainWorkspaceView: View {
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                     .fixedSize()
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, navCompact ? 9 : 10)
                     .padding(.vertical, 7)
                     .background(Capsule().fill(engine.activeScreen == .studyLibrary ? Color.accentColor : Color.white.opacity(0.10)))
                 }
                 .buttonStyle(.plain)
                 .help("Open Saved Study Decks & Anki Export (⌘⇧L)")
             }
+            .fixedSize()
 
             Toggle("Names", isOn: Binding(
                 get: { engine.includeNames },
@@ -574,25 +587,53 @@ struct MainWorkspaceView: View {
                 }
             }
 
-            Picker("Recall", selection: $engine.recallMode) {
-                ForEach(RecallMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+            if showRecallSegmented {
+                let recallPicker = Picker("Recall", selection: $engine.recallMode) {
+                    ForEach(RecallMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .help("Recall Mode — Full shows everything, Hide Kana hides readings, Hide Defn. hides the English (for self-quizzing)")
+
+                if showRecallLabel {
+                    recallPicker
+                } else {
+                    recallPicker.labelsHidden()
+                }
+            } else {
+                Menu {
+                    ForEach(RecallMode.allCases) { mode in
+                        Button {
+                            engine.recallMode = mode
+                        } label: {
+                            Label(mode.rawValue, systemImage: engine.recallMode == mode ? "checkmark" : "circle")
+                        }
+                    }
+                } label: {
+                    Label(engine.recallMode.rawValue, systemImage: "eye")
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(engine.recallMode == .full ? Color.white.opacity(0.10) : Color.accentColor.opacity(0.28)))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Recall Mode — Full shows everything, Hide Kana hides readings, Hide Defn. hides the English (for self-quizzing)")
             }
-            .pickerStyle(.segmented)
-            .fixedSize()
-            .help("Recall Mode — Full shows everything, Hide Kana hides readings, Hide Defn. hides the English (for self-quizzing)")
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
 
-            HStack(spacing: 6) {
-                ForEach(engine.recentKanji, id: \.self) { cp in
+            HStack(spacing: 5) {
+                ForEach(Array(engine.recentKanji.prefix(maxRecentKanji)), id: \.self) { cp in
                     Button {
                         engine.openFisheye(codepoint: cp)
                     } label: {
                         Text(String(UnicodeScalar(cp)!))
                             .font(.headline.weight(.bold))
-                            .frame(width: 30, height: 30)
+                            .frame(width: 28, height: 28)
                             .background(Circle().fill(Color.white.opacity(0.10)))
                     }
                     .buttonStyle(.plain)
@@ -601,7 +642,8 @@ struct MainWorkspaceView: View {
             }
             .fixedSize()
         }
-        .padding(.horizontal, 20)
+        .frame(width: max(1, availableWidth), alignment: .leading)
+        .padding(.horizontal, navCompact ? 14 : 20)
         .padding(.vertical, 10)
         // The title bar is hidden, so this transparent handle re-installs the
         // usual macOS affordances on the (otherwise-dead) top band: drag the
@@ -617,9 +659,6 @@ struct MainWorkspaceView: View {
                 .ignoresSafeArea(.container, edges: .top)
         }
         .help("Drag the window by its empty top bar; double-click it to zoom/restore between a typical size and your last size.")
-        // Measure the bar so the screen buttons can crunch to icon-only when the
-        // window is too narrow to show their labels on a single line.
-        .measureWidth(into: $navBarWidth)
     }
 
     /// A top-bar screen button that keeps its full `Label` when there is room
