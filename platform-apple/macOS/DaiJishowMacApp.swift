@@ -216,7 +216,7 @@ struct MainWorkspaceView: View {
 
     /// Below this bar width the screen buttons crunch to icons (a tooltip keeps
     /// each one self-documenting). Tunable; sized for the top-bar navigation buttons.
-    private var navCompact: Bool { isRowCompact(navBarWidth, threshold: 1320) }
+    private var navCompact: Bool { isRowCompact(navBarWidth, threshold: 1560) }
 
     private var isSearchDropdownOpen: Bool {
         (!engine.searchResults.isEmpty || !engine.englishMatches.isEmpty)
@@ -467,81 +467,85 @@ struct MainWorkspaceView: View {
                         .fill(.ultraThinMaterial)
                         .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
                 }
-                .frame(maxWidth: 400)
+                .frame(minWidth: 180, maxWidth: 320)
                 .help("Search by kanji, kana, romaji, or English — results appear live; use ↑/↓ and Enter to open.")
             }
 
-            navScreenButton(
-                title: "Fisheye",
-                systemImage: "circle.hexagongrid.fill",
-                isActive: engine.activeScreen == .fisheye,
-                compact: navCompact,
-                help: "Open the Kanji Fisheye compound explorer (⌘⇧F)",
-                action: {
-                    let cp = engine.activeKanji?.codepoint ?? engine.recentKanji.first ?? 0x5927
-                    engine.openFisheye(codepoint: cp)
-                }
-            )
-
-            navScreenButton(
-                title: "Kanji Index",
-                systemImage: "character.book.closed.fill",
-                isActive: engine.activeScreen == .kanjiLookup,
-                compact: navCompact,
-                help: "Open the Kanji Index — browse kanji by stroke count, radical, or reading (⌘⇧K)",
-                action: { engine.openKanjiLookup() }
-            )
-
-            navScreenButton(
-                title: "Radicals",
-                systemImage: "puzzlepiece.extension.fill",
-                isActive: engine.activeScreen == .radicalBuilder,
-                compact: navCompact,
-                help: "Open the Radical Builder — assemble kanji from their component radicals (⌘⇧R)",
-                action: { engine.openRadicalBuilder() }
-            )
-
-            navScreenButton(
-                title: "Word Cloud",
-                systemImage: "sparkles",
-                isActive: engine.activeScreen == .wordCosmos,
-                compact: navCompact,
-                help: "Open the Word Cloud — a randomized prevalence bubble cloud (⌘⇧W)",
-                action: { engine.openWordCosmos() }
-            )
-
-            navScreenButton(
-                title: "Compounds",
-                systemImage: "square.split.2x2.fill",
-                isActive: engine.activeScreen == .compoundKanji,
-                compact: navCompact,
-                help: "Open the Compound Kanji screen — decompose a word into its kanji, inspect each part's readings & meaning, and see how the compound reading assembles from them (⌘⇧D)",
-                action: { engine.openCompoundKanji() }
-            )
-
-            Button {
-                engine.openStudyLibrary()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "star.square.on.square.fill")
-                    if !navCompact {
-                        Text("Decks")
+            HStack(spacing: 6) {
+                navScreenButton(
+                    title: "Fisheye",
+                    systemImage: "circle.hexagongrid.fill",
+                    isActive: engine.activeScreen == .fisheye,
+                    compact: navCompact,
+                    help: "Open the Kanji Fisheye compound explorer (⌘⇧F)",
+                    action: {
+                        let cp = engine.activeKanji?.codepoint ?? engine.recentKanji.first ?? 0x5927
+                        engine.openFisheye(codepoint: cp)
                     }
-                    if engine.studyStore.totalSavedCount > 0 {
-                        Text("\(engine.studyStore.totalSavedCount)")
-                            .font(.caption2.monospacedDigit().weight(.bold))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.white.opacity(0.18)))
+                )
+
+                navScreenButton(
+                    title: "Kanji Index",
+                    systemImage: "character.book.closed.fill",
+                    isActive: engine.activeScreen == .kanjiLookup,
+                    compact: navCompact,
+                    help: "Open the Kanji Index — browse kanji by stroke count, radical, or reading (⌘⇧K)",
+                    action: { engine.openKanjiLookup() }
+                )
+
+                navScreenButton(
+                    title: "Radicals",
+                    systemImage: "puzzlepiece.extension.fill",
+                    isActive: engine.activeScreen == .radicalBuilder,
+                    compact: navCompact,
+                    help: "Open the Radical Builder — assemble kanji from their component radicals (⌘⇧R)",
+                    action: { engine.openRadicalBuilder() }
+                )
+
+                navScreenButton(
+                    title: "Word Cloud",
+                    systemImage: "sparkles",
+                    isActive: engine.activeScreen == .wordCosmos,
+                    compact: navCompact,
+                    help: "Open the Word Cloud — a randomized prevalence bubble cloud (⌘⇧W)",
+                    action: { engine.openWordCosmos() }
+                )
+
+                navScreenButton(
+                    title: "Compounds",
+                    systemImage: "square.split.2x2.fill",
+                    isActive: engine.activeScreen == .compoundKanji,
+                    compact: navCompact,
+                    help: "Open the Compound Kanji screen — decompose a word into its kanji, inspect each part's readings & meaning, and see how the compound reading assembles from them (⌘⇧D)",
+                    action: { engine.openCompoundKanji() }
+                )
+
+                Button {
+                    engine.openStudyLibrary()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "star.square.on.square.fill")
+                        if !navCompact {
+                            Text("Decks")
+                        }
+                        if engine.studyStore.totalSavedCount > 0 {
+                            Text("\(engine.studyStore.totalSavedCount)")
+                                .font(.caption2.monospacedDigit().weight(.bold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.white.opacity(0.18)))
+                        }
                     }
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Capsule().fill(engine.activeScreen == .studyLibrary ? Color.accentColor : Color.white.opacity(0.10)))
                 }
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 11)
-                .padding(.vertical, 7)
-                .background(Capsule().fill(engine.activeScreen == .studyLibrary ? Color.accentColor : Color.white.opacity(0.10)))
+                .buttonStyle(.plain)
+                .help("Open Saved Study Decks & Anki Export (⌘⇧L)")
             }
-            .buttonStyle(.plain)
-            .help("Open Saved Study Decks & Anki Export (⌘⇧L)")
 
             Toggle("Names", isOn: Binding(
                 get: { engine.includeNames },
@@ -579,7 +583,7 @@ struct MainWorkspaceView: View {
             .fixedSize()
             .help("Recall Mode — Full shows everything, Hide Kana hides readings, Hide Defn. hides the English (for self-quizzing)")
 
-            Spacer(minLength: 4)
+            Spacer(minLength: 8)
 
             HStack(spacing: 6) {
                 ForEach(engine.recentKanji, id: \.self) { cp in
@@ -595,6 +599,7 @@ struct MainWorkspaceView: View {
                     .help("Recently viewed kanji — open \(String(UnicodeScalar(cp)!))")
                 }
             }
+            .fixedSize()
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
@@ -639,7 +644,9 @@ struct MainWorkspaceView: View {
                 }
             }
             .font(.subheadline.weight(.semibold))
-            .padding(.horizontal, 12)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, compact ? 10 : 11)
             .padding(.vertical, 7)
             .background(Capsule().fill(isActive ? Color.accentColor : Color.white.opacity(0.10)))
         }

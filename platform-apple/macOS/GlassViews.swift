@@ -2381,6 +2381,7 @@ struct WordEntryView: View {
     @State private var peekedKana: Bool = false
     @State private var copiedInflectionId: String? = nil
     @State private var entryToast: String? = nil
+    @State private var heroWidth: CGFloat = 1000
 
     private var insights: WordLexicalInsights {
         if let active = engine.activeWordInsights, active.entryId == entry.header.id {
@@ -2532,168 +2533,196 @@ struct WordEntryView: View {
 
     // MARK: - 1. Hero Lexical Card (Headword + Pitch Contour + Telemetry + Mode Switch)
 
+    private var heroHeadwordCluster: some View {
+        HStack(alignment: .center, spacing: 14) {
+            RubyWordView(
+                cells: entry.rubyCells,
+                hideKana: hideKanaActive,
+                fontSize: 48
+            ) { cp in
+                engine.openKanjiDetail(codepoint: cp)
+            }
+
+            SpeakerButton(
+                text: entry.header.kanaHead,
+                variant: .headword,
+                extraHelp: "Hear '\(entry.header.kanaHead)' read aloud in Japanese."
+            )
+
+            if let primary = primaryTranslation {
+                Text(primary)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 440, alignment: .leading)
+                    .help("Primary meaning — the most common sense. See every sense in the Definitions card below.")
+            } else if hideGlossActive {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { peekedGloss = true }
+                } label: {
+                    Label("Reveal Meaning", systemImage: "eye")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.white.opacity(0.10)))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var heroControlsCluster: some View {
+        VStack(alignment: isRowCompact(heroWidth, threshold: 780) ? .leading : .trailing, spacing: 10) {
+            HStack(spacing: 8) {
+                BookmarkDeckControl(
+                    engine: engine,
+                    studyStore: engine.studyStore,
+                    item: engine.studyItem(for: entry, insights: insights),
+                    compact: false
+                )
+
+                Menu {
+                    Button {
+                        engine.copyText(entry.copyText)
+                        flashToast("Copied entry")
+                    } label: {
+                        Label("Copy Plain Entry", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        let tsv = engine.studyStore.exportSingleItemText(
+                            engine.studyItem(for: entry, insights: insights),
+                            format: .ankiTSV
+                        )
+                        engine.copyText(tsv)
+                        flashToast("Copied Anki TSV")
+                    } label: {
+                        Label("Copy Anki Card (TSV)", systemImage: "rectangle.stack")
+                    }
+                    Button {
+                        let item = engine.studyItem(for: entry, insights: insights)
+                        let tsv = engine.studyStore.exportSingleItemText(item, format: .ankiTSV)
+                        engine.studyStore.saveExportFile(
+                            content: tsv,
+                            suggestedName: entry.header.displayHeadword,
+                            format: .ankiTSV
+                        )
+                    } label: {
+                        Label("Save Anki .tsv…", systemImage: "square.and.arrow.down")
+                    }
+                    Button {
+                        let item = engine.studyItem(for: entry, insights: insights)
+                        let csv = engine.studyStore.exportSingleItemText(item, format: .csv)
+                        engine.studyStore.saveExportFile(
+                            content: csv,
+                            suggestedName: entry.header.displayHeadword,
+                            format: .csv
+                        )
+                    } label: {
+                        Label("Save CSV…", systemImage: "tablecells")
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .background(
+                            Circle()
+                                .fill(Color.white.opacity(0.08))
+                                .overlay(
+                                    Circle()
+                                        .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                                )
+                        )
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Copy or export this entry as Anki TSV / CSV")
+
+                // Reader vs. Detailed Toggle (Persisted in UserDefaults)
+                Picker("View Mode", selection: $engine.isWordCockpitExpanded) {
+                    Label("Reader", systemImage: "doc.plaintext")
+                        .tag(false)
+                    Label("Detailed", systemImage: "rectangle.3.group.fill")
+                        .tag(true)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .help("View Mode: Reader shows just the definitions; Detailed reveals the full analysis dashboard (homonyms, compounds, collocations, idioms, conjugations, …).")
+
+                if entry.hasJapaneseGlosses {
+                    Picker("Gloss Language", selection: $engine.glossLanguageMode) {
+                        ForEach(GlossLanguageMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .help("Show definitions in English, Japanese, or both.")
+                }
+            }
+
+            if let entryToast {
+                Text(entryToast)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.green)
+                    .transition(.opacity)
+            }
+
+            if engine.recallMode == .hideKana {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { peekedKana.toggle() }
+                } label: {
+                    Label(peekedKana ? "Hide Kana Peek" : "Peek Kana", systemImage: peekedKana ? "eye.slash" : "eye")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Telemetry Pills
+            WrappingHStack(alignment: .center, horizontalSpacing: 6, verticalSpacing: 6) {
+                telemetryPill(
+                    text: "\(insights.telemetry.frequencyTier) (\(insights.telemetry.frequencyRankText))",
+                    tint: insights.telemetry.tierColor
+                )
+                .help("Corpus frequency tier — how often this word appears, from the most common words down to rare ones.")
+                if let jlpt = insights.telemetry.jlptLabel {
+                    telemetryPill(text: jlpt, tint: .cyan)
+                        .help("JLPT level — the Japanese-Language Proficiency Test tier this word is associated with.")
+                }
+                if let grade = insights.telemetry.gradeLabel {
+                    telemetryPill(text: grade, tint: .green)
+                        .help("Grade — the Japanese school year in which this kanji is typically taught.")
+                }
+                if insights.telemetry.totalStrokes > 0 {
+                    telemetryPill(text: "\(insights.telemetry.totalStrokes)画", tint: .orange)
+                        .help("Total strokes — the number of strokes in the word's kanji (画 means 'stroke').")
+                }
+            }
+        }
+    }
+
     private var headerHeroCard: some View {
         GlassCard(cornerRadius: 22, surface: .content) {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 16) {
-                    // Kanji + its headline meaning, level with each other.
-                    HStack(alignment: .center, spacing: 16) {
-                        RubyWordView(
-                            cells: entry.rubyCells,
-                            hideKana: hideKanaActive,
-                            fontSize: 48
-                        ) { cp in
-                            engine.openKanjiDetail(codepoint: cp)
+                Group {
+                    if isRowCompact(heroWidth, threshold: 780) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            heroHeadwordCluster
+                            heroControlsCluster
                         }
-
-                        SpeakerButton(text: entry.header.kanaHead, variant: .headword,
-                                      extraHelp: "Hear '\(entry.header.kanaHead)' read aloud in Japanese.")
-
-                        if let primary = primaryTranslation {
-                            Text(primary)
-                                .font(.title3.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: 420, alignment: .leading)
-                                .help("Primary meaning — the most common sense. See every sense in the Definitions card below.")
-                        } else if hideGlossActive {
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.18)) { peekedGloss = true }
-                            } label: {
-                                Label("Reveal Meaning", systemImage: "eye")
-                                    .font(.caption.weight(.semibold))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(Capsule().fill(Color.white.opacity(0.10)))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-
-                    Spacer(minLength: 12)
-
-                    VStack(alignment: .trailing, spacing: 8) {
-                        HStack(spacing: 8) {
-                            BookmarkDeckControl(
-                                engine: engine,
-                                studyStore: engine.studyStore,
-                                item: engine.studyItem(for: entry, insights: insights),
-                                compact: false
-                            )
-
-                            Menu {
-                                Button {
-                                    engine.copyText(entry.copyText)
-                                    flashToast("Copied entry")
-                                } label: {
-                                    Label("Copy Plain Entry", systemImage: "doc.on.doc")
-                                }
-                                Button {
-                                    let tsv = engine.studyStore.exportSingleItemText(
-                                        engine.studyItem(for: entry, insights: insights),
-                                        format: .ankiTSV
-                                    )
-                                    engine.copyText(tsv)
-                                    flashToast("Copied Anki TSV")
-                                } label: {
-                                    Label("Copy Anki Card (TSV)", systemImage: "rectangle.stack")
-                                }
-                                Button {
-                                    let item = engine.studyItem(for: entry, insights: insights)
-                                    let tsv = engine.studyStore.exportSingleItemText(item, format: .ankiTSV)
-                                    engine.studyStore.saveExportFile(
-                                        content: tsv,
-                                        suggestedName: entry.header.displayHeadword,
-                                        format: .ankiTSV
-                                    )
-                                } label: {
-                                    Label("Save Anki .tsv…", systemImage: "square.and.arrow.down")
-                                }
-                                Button {
-                                    let item = engine.studyItem(for: entry, insights: insights)
-                                    let csv = engine.studyStore.exportSingleItemText(item, format: .csv)
-                                    engine.studyStore.saveExportFile(
-                                        content: csv,
-                                        suggestedName: entry.header.displayHeadword,
-                                        format: .csv
-                                    )
-                                } label: {
-                                    Label("Save CSV…", systemImage: "tablecells")
-                                }
-                            } label: {
-                                Image(systemName: "square.and.arrow.up")
-                                    .font(.subheadline.weight(.semibold))
-                                    .frame(width: 32, height: 32)
-                                    .background(Circle().fill(Color.white.opacity(0.08)))
-                            }
-                            .menuStyle(.borderlessButton)
-                            .fixedSize()
-                            .help("Copy or export this entry as Anki TSV / CSV")
-
-                            // Reader vs. Detailed Toggle (Persisted in UserDefaults)
-                            Picker("View Mode", selection: $engine.isWordCockpitExpanded) {
-                                Label("Reader", systemImage: "doc.plaintext")
-                                    .tag(false)
-                                Label("Detailed", systemImage: "rectangle.3.group.fill")
-                                    .tag(true)
-                            }
-                            .pickerStyle(.segmented)
-                            .frame(width: 196)
-                            .help("Reader shows just the definitions; Detailed reveals the full analysis dashboard (homonyms, compounds, collocations, idioms, conjugations, …).")
-
-                            if entry.hasJapaneseGlosses {
-                                Picker("Gloss Language", selection: $engine.glossLanguageMode) {
-                                    ForEach(GlossLanguageMode.allCases) { mode in
-                                        Text(mode.rawValue).tag(mode)
-                                    }
-                                }
-                                .pickerStyle(.segmented)
-                                .frame(width: 144)
-                                .help("Show the definition in English, Japanese, or both.")
-                            }
-                        }
-
-                        if let entryToast {
-                            Text(entryToast)
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.green)
-                                .transition(.opacity)
-                        }
-
-                        if engine.recallMode == .hideKana {
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.18)) { peekedKana.toggle() }
-                            } label: {
-                                Label(peekedKana ? "Hide Kana Peek" : "Peek Kana", systemImage: peekedKana ? "eye.slash" : "eye")
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(Color.accentColor)
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        // Telemetry Pills
-                        WrappingHStack(alignment: .center, horizontalSpacing: 6, verticalSpacing: 6) {
-                            telemetryPill(
-                                text: "\(insights.telemetry.frequencyTier) (\(insights.telemetry.frequencyRankText))",
-                                tint: insights.telemetry.tierColor
-                            )
-                            .help("Corpus frequency tier — how often this word appears, from the most common words down to rare ones.")
-                            if let jlpt = insights.telemetry.jlptLabel {
-                                telemetryPill(text: jlpt, tint: .cyan)
-                                    .help("JLPT level — the Japanese-Language Proficiency Test tier this word is associated with.")
-                            }
-                            if let grade = insights.telemetry.gradeLabel {
-                                telemetryPill(text: grade, tint: .green)
-                                    .help("Grade — the Japanese school year in which this kanji is typically taught.")
-                            }
-                            if insights.telemetry.totalStrokes > 0 {
-                                telemetryPill(text: "\(insights.telemetry.totalStrokes)画", tint: .orange)
-                                    .help("Total strokes — the number of strokes in the word's kanji (画 means 'stroke').")
-                            }
+                    } else {
+                        HStack(alignment: .top, spacing: 16) {
+                            heroHeadwordCluster
+                            Spacer(minLength: 12)
+                            heroControlsCluster
                         }
                     }
                 }
+                .measureWidth(into: $heroWidth)
 
                 // Pitch Accent Visual Contour & Popularity Meter
                 if pitchContour != nil || !entry.header.variantList.isEmpty {
@@ -3101,7 +3130,11 @@ struct WordEntryView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                WrappingHStack(alignment: .top, horizontalSpacing: 10, verticalSpacing: 10) {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 168, maximum: 240), spacing: 10, alignment: .top)],
+                    alignment: .leading,
+                    spacing: 10
+                ) {
                     ForEach(visible) { hit in
                         Button {
                             engine.openWordEntry(entryId: hit.id)
@@ -3110,6 +3143,7 @@ struct WordEntryView: View {
                                 HStack(spacing: 6) {
                                     Text(hit.displayHeadword)
                                         .font(.headline.weight(.bold))
+                                        .lineLimit(1)
                                     if hit.pitchAccent != 255 && !hideKanaActive {
                                         Text("[\(hit.pitchAccent)]")
                                             .font(.caption2.monospacedDigit().weight(.semibold))
@@ -3123,7 +3157,7 @@ struct WordEntryView: View {
                                         .lineLimit(2)
                                 }
                             }
-                            .frame(maxWidth: 176, alignment: .leading)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             .padding(12)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -3197,7 +3231,11 @@ struct WordEntryView: View {
                 }
             }
 
-            WrappingHStack(alignment: .top, horizontalSpacing: 10, verticalSpacing: 10) {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 164, maximum: 240), spacing: 10, alignment: .top)],
+                alignment: .leading,
+                spacing: 10
+            ) {
                 ForEach(visible) { hit in
                     Button {
                         engine.openWordEntry(entryId: hit.id)
@@ -3205,10 +3243,12 @@ struct WordEntryView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(hit.displayHeadword)
                                 .font(.headline.weight(.bold))
+                                .lineLimit(1)
                             if !hideKanaActive {
                                 Text(hit.kanaHead)
                                     .font(.caption)
                                     .foregroundStyle(Color.accentColor)
+                                    .lineLimit(1)
                             }
                             if !hideGlossActive {
                                 Text(hit.primaryGloss)
@@ -3217,7 +3257,7 @@ struct WordEntryView: View {
                                     .lineLimit(1)
                             }
                         }
-                        .frame(maxWidth: 164, alignment: .leading)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .padding(10)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -3260,7 +3300,11 @@ struct WordEntryView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                WrappingHStack(alignment: .top, horizontalSpacing: 10, verticalSpacing: 10) {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: 10, alignment: .top)],
+                    alignment: .leading,
+                    spacing: 10
+                ) {
                     ForEach(insights.idioms) { idiom in
                         Button {
                             engine.openWordEntry(entryId: idiom.entryId)
@@ -3269,17 +3313,20 @@ struct WordEntryView: View {
                                 HStack(spacing: 6) {
                                     Text(idiom.displayHeadword)
                                         .font(.headline.weight(.bold))
+                                        .lineLimit(1)
                                     Text(idiom.shortKindLabel)
                                         .font(.caption2.weight(.bold))
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 2)
                                         .background(Capsule().fill(Color.orange.opacity(0.18)))
                                         .foregroundStyle(.orange)
+                                        .fixedSize()
                                 }
                                 if !hideKanaActive && !idiom.kanaHead.isEmpty {
                                     Text(idiom.kanaHead)
                                         .font(.caption)
                                         .foregroundStyle(Color.accentColor)
+                                        .lineLimit(1)
                                 }
                                 if !hideGlossActive && !idiom.figurativeGloss.isEmpty {
                                     Text(idiom.figurativeGloss)
@@ -3288,7 +3335,7 @@ struct WordEntryView: View {
                                         .lineLimit(2)
                                 }
                             }
-                            .frame(maxWidth: 230, alignment: .leading)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             .padding(12)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -3707,14 +3754,17 @@ struct WrappingHStack: Layout {
     var verticalSpacing: CGFloat = 6
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? 600
+        let proposed = proposal.width
+        let effectiveLimit = (proposed != nil && proposed!.isFinite && proposed! > 0) ? proposed! : 10_000
         var currentX: CGFloat = 0
         var currentY: CGFloat = 0
         var rowHeight: CGFloat = 0
+        var maxRowWidth: CGFloat = 0
 
         for sub in subviews {
             let size = sub.sizeThatFits(.unspecified)
-            if currentX + size.width > maxWidth && currentX > 0 {
+            if currentX + size.width > effectiveLimit && currentX > 0 {
+                maxRowWidth = max(maxRowWidth, currentX - horizontalSpacing)
                 currentX = 0
                 currentY += rowHeight + verticalSpacing
                 rowHeight = 0
@@ -3722,7 +3772,11 @@ struct WrappingHStack: Layout {
             currentX += size.width + horizontalSpacing
             rowHeight = max(rowHeight, size.height)
         }
-        return CGSize(width: maxWidth, height: currentY + rowHeight)
+        if currentX > 0 {
+            maxRowWidth = max(maxRowWidth, currentX - horizontalSpacing)
+        }
+        let finalWidth = (proposed != nil && proposed!.isFinite) ? min(proposed!, maxRowWidth) : maxRowWidth
+        return CGSize(width: max(0, finalWidth), height: currentY + rowHeight)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -3732,7 +3786,7 @@ struct WrappingHStack: Layout {
 
         for sub in subviews {
             let size = sub.sizeThatFits(.unspecified)
-            if currentX + size.width > bounds.maxX && currentX > bounds.minX {
+            if currentX + size.width > bounds.maxX + 0.5 && currentX > bounds.minX {
                 currentX = bounds.minX
                 currentY += rowHeight + verticalSpacing
                 rowHeight = 0
@@ -3850,7 +3904,11 @@ struct KanjiDetailView: View {
                                     .foregroundStyle(.secondary)
                             }
 
-                            WrappingHStack(alignment: .top, horizontalSpacing: 10, verticalSpacing: 10) {
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: 10, alignment: .top)],
+                                alignment: .leading,
+                                spacing: 10
+                            ) {
                                 ForEach(kanji.idioms) { idiom in
                                     Button {
                                         engine.openWordEntry(entryId: idiom.entryId)
@@ -3859,17 +3917,20 @@ struct KanjiDetailView: View {
                                             HStack(spacing: 6) {
                                                 Text(idiom.displayHeadword)
                                                     .font(.headline.weight(.bold))
+                                                    .lineLimit(1)
                                                 Text(idiom.shortKindLabel)
                                                     .font(.caption2.weight(.bold))
                                                     .padding(.horizontal, 6)
                                                     .padding(.vertical, 2)
                                                     .background(Capsule().fill(Color.orange.opacity(0.18)))
                                                     .foregroundStyle(.orange)
+                                                    .fixedSize()
                                             }
                                             if !hideKanaActive && !idiom.kanaHead.isEmpty {
                                                 Text(idiom.kanaHead)
                                                     .font(.caption)
                                                     .foregroundStyle(Color.accentColor)
+                                                    .lineLimit(1)
                                             }
                                             if !hideGlossActive && !idiom.figurativeGloss.isEmpty {
                                                 Text(idiom.figurativeGloss)
@@ -3878,7 +3939,7 @@ struct KanjiDetailView: View {
                                                     .lineLimit(2)
                                             }
                                         }
-                                        .frame(maxWidth: 230, alignment: .leading)
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                                         .padding(12)
                                         .background(
                                             RoundedRectangle(cornerRadius: 12, style: .continuous)

@@ -42,6 +42,10 @@ struct BookmarkDeckControl: View {
             .buttonStyle(.plain)
             .help(isSaved ? "Remove from saved decks (⌘B)" : "Save to Favorites deck (⌘B)")
 
+            Divider()
+                .frame(height: 16)
+                .opacity(0.22)
+
             Menu {
                 Section("Add or Remove from Deck") {
                     ForEach(studyStore.decks) { deck in
@@ -64,13 +68,15 @@ struct BookmarkDeckControl: View {
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 32)
+                    .frame(width: 26, height: 32)
                     .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .fixedSize()
             .help("Choose which study decks contain this item")
         }
+        .fixedSize()
         .background(
             Capsule()
                 .fill(isSaved ? Color.yellow.opacity(0.16) : Color.white.opacity(0.08))
