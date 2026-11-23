@@ -163,8 +163,10 @@ vision, no tab bar). Layout:
   書いて` and `行った / 行って`, not the all-kana `かいた / いった` (a rendering
   the regression suite caught and fixed). The whole matrix lives in the
   `DaiJishowMorph` library and is locked by `swift test`
-  (`Tests/DaiJishowMorphTests/ConjugationTests.swift`) so a future edit that
-  regresses a form fails the build gate before a DMG.
+  (`Tests/DaiJishowMorphTests/ConjugationTests.swift`) — and the pure C++ core
+  (romaji, fisheye pair-head) by the C++ gate (`tools/build_cpp_tests.sh`,
+  `core/test/`) — so a future edit that regresses a form fails the build gate
+  before a DMG.
 * **Pills that would clip off-screen** (the Kanji DNA strip, Homonyms,
   Compounds, Collocations) now **wrap to multiple rows** — no horizontal
   scroll, nothing cut off — and show the **top 10** with a **"Show more / Show

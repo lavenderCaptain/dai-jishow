@@ -16,7 +16,8 @@
 #   ./tools/build_app_bundle.sh --no-db    # skip bundling the ~221 MB corpus
 #   ./tools/build_app_bundle.sh --symlink-db  # link the DB instead of copying
 #   ./tools/build_app_bundle.sh --no-dmg   # skip the drag-to-Applications .dmg
-#   ./tools/build_app_bundle.sh --skip-tests  # skip the swift-test gate (dev only)
+#   ./tools/build_app_bundle.sh --skip-tests      # skip the swift-test gate (dev only)
+#   ./tools/build_app_bundle.sh --skip-cpp-tests  # skip the C++ core tests (dev only)
 #
 # The DMG (build/Dai-Jishow-<version>.dmg) is the standard "drag the app into the
 # Applications folder" installer: it contains the .app plus a symlink to
@@ -66,6 +67,7 @@ BUNDLE_DB=1
 LINK_DB=0
 MAKE_DMG=1
 SKIP_TESTS=0
+SKIP_CPP_TESTS=0
 for arg in "$@"; do
   case "$arg" in
     --release)      CONFIG="release" ;;
@@ -73,6 +75,7 @@ for arg in "$@"; do
     --symlink-db)   BUNDLE_DB=1; LINK_DB=1 ;;
     --no-dmg)       MAKE_DMG=0 ;;
     --skip-tests)   SKIP_TESTS=1 ;;
+    --skip-cpp-tests) SKIP_CPP_TESTS=1 ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown flag: $arg" >&2; exit 1 ;;
@@ -98,6 +101,19 @@ if [[ "$SKIP_TESTS" == "1" ]]; then
 else
   echo "==> swift test"
   swift test
+fi
+
+# --- C++ core regression tests (gate) --------------------------------------
+# Run the native C++ regression suite after the Swift tests. These lock the pure,
+# no-DB logic of core/dj_nlp + core/dj_graph that `swift test` (which builds only
+# the Swift DaiJishowMorph library) never compiles, so a broken romaji
+# transliteration or fisheye pair-head choice cannot ship a DMG. The runner exits
+# non-zero on any failed CHECK, and with `set -e` (line 24) that aborts the build.
+# Bypass for fast local iteration with --skip-cpp-tests.
+if [[ "$SKIP_CPP_TESTS" == "1" ]]; then
+  echo "==> skipping C++ core tests (--skip-cpp-tests)"
+else
+  ./tools/build_cpp_tests.sh
 fi
 
 # --- icon ---------------------------------------------------------------

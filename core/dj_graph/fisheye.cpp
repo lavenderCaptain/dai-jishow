@@ -103,44 +103,6 @@ bool is_kanji_cp_local(uint32_t cp) {
     return (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF);
 }
 
-/// Pick the headword to *display* for a `(center, neighbor)` compound edge.
-///
-/// JMdict bundles a word's alternate kanji spellings into one entry (e.g. entry
-/// 2194790 has `kanji_head` 海星 but also the alt forms 人手 | 海盤車 | ヒトデ;
-/// 2572910 has 獄 with 人屋 | 囚獄 | ひとや). The corpus stores only the *primary*
-/// head, so a fisheye edge (人, 手) that resolves to that entry would render 海星 —
-/// the wrong word for the pair the user hovered. When the primary head contains
-/// *neither* kanji of the pair, substitute the alt form that contains *both*
-/// (the shortest such form wins, so 人手 beats the longer 海盤車). The entry's
-/// senses/glosses are shared across all its spellings, so only the displayed
-/// head changes. Returns the primary head unchanged when it already fits or when
-/// no alt form matches (a small population with no alt form at all).
-std::string select_pair_head(const std::string& primary, const std::string& alt_forms,
-                             uint32_t center_cp, uint32_t neighbor_cp) {
-    auto contains_both = [&](const std::string& s) {
-        auto cps = utf8_to_cps_local(s);
-        bool has_center = false, has_neighbor = false;
-        for (uint32_t cp : cps) {
-            if (cp == center_cp) has_center = true;
-            if (cp == neighbor_cp) has_neighbor = true;
-        }
-        return has_center && has_neighbor;
-    };
-    if (contains_both(primary)) return primary;
-    std::string best;
-    size_t start = 0;
-    for (size_t i = 0; i <= alt_forms.size(); ++i) {
-        if (i == alt_forms.size() || alt_forms[i] == '|') {
-            std::string form = alt_forms.substr(start, i - start);
-            start = i + 1;
-            if (!form.empty() && contains_both(form) && (best.empty() || form.size() < best.size())) {
-                best = form;
-            }
-        }
-    }
-    return best.empty() ? primary : best;
-}
-
 /// The detected column layout of the `kanji_edges` table. Column names vary
 /// across corpus schema versions, so they are resolved once at runtime.
 struct KanjiEdgesSchema {
@@ -640,6 +602,47 @@ void populate_fisheye_batch_cache(sqlite3* db, uint32_t center_cp, dj_fisheye_mo
     }
 }
 } // namespace
+
+/// Pick the headword to *display* for a `(center, neighbor)` compound edge.
+///
+/// JMdict bundles a word's alternate kanji spellings into one entry (e.g. entry
+/// 2194790 has `kanji_head` 海星 but also the alt forms 人手 | 海盤車 | ヒトデ;
+/// 2572910 has 獄 with 人屋 | 囚獄 | ひとや). The corpus stores only the *primary*
+/// head, so a fisheye edge (人, 手) that resolves to that entry would render 海星 —
+/// the wrong word for the pair the user hovered. When the primary head contains
+/// *neither* kanji of the pair, substitute the alt form that contains *both*
+/// (the shortest such form wins, so 人手 beats the longer 海盤車). The entry's
+/// senses/glosses are shared across all its spellings, so only the displayed
+/// head changes. Returns the primary head unchanged when it already fits or when
+/// no alt form matches (a small population with no alt form at all).
+///
+/// (Promoted out of the anonymous namespace to external linkage so the C++
+/// regression suite can lock it — see `core/dj_internal.hpp`.)
+std::string select_pair_head(const std::string& primary, const std::string& alt_forms,
+                             uint32_t center_cp, uint32_t neighbor_cp) {
+    auto contains_both = [&](const std::string& s) {
+        auto cps = utf8_to_cps_local(s);
+        bool has_center = false, has_neighbor = false;
+        for (uint32_t cp : cps) {
+            if (cp == center_cp) has_center = true;
+            if (cp == neighbor_cp) has_neighbor = true;
+        }
+        return has_center && has_neighbor;
+    };
+    if (contains_both(primary)) return primary;
+    std::string best;
+    size_t start = 0;
+    for (size_t i = 0; i <= alt_forms.size(); ++i) {
+        if (i == alt_forms.size() || alt_forms[i] == '|') {
+            std::string form = alt_forms.substr(start, i - start);
+            start = i + 1;
+            if (!form.empty() && contains_both(form) && (best.empty() || form.size() < best.size())) {
+                best = form;
+            }
+        }
+    }
+    return best.empty() ? primary : best;
+}
 
 /// Lay out the fisheye bubbles for one center kanji and return them.
 ///

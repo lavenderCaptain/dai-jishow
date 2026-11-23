@@ -127,6 +127,19 @@ std::string romaji_to_kana(const std::string& input, bool to_katakana = false);
 /// Encode a single Unicode codepoint as up to 4 bytes of UTF-8 into `out[8]`.
 void encode_utf8(uint32_t cp, char out[8]);
 
+/// Choose the headword to *display* for a `(center, neighbor)` fisheye compound
+/// edge. Pure and deterministic, no DB: given the corpus-stored *primary* head
+/// and a `|`-separated list of alternate kanji spellings, return the primary if
+/// it already contains both kanji of the pair, otherwise the *shortest* alt form
+/// that contains both (so the pair renders its true head rather than an
+/// unrelated primary), or the primary if no alt form fits.
+///
+/// Promoted from the anonymous namespace in `dj_graph/fisheye.cpp` to external
+/// linkage so the C++ regression suite (`core/test/test_pair_head.cpp`) can lock
+/// the pair-head selection a hovered (center, neighbor) edge shows.
+std::string select_pair_head(const std::string& primary, const std::string& alt_forms,
+                             uint32_t center_cp, uint32_t neighbor_cp);
+
 /// Search the dictionary (C++ side of `dj_dict_search`).
 std::vector<OwnedWordHit> db_search_words(
     sqlite3* db,

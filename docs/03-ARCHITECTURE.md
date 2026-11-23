@@ -82,7 +82,7 @@ Dai-Jishow uses a **shared C++20 core** exposed through a **flat C11 ABI (`dj_ca
   `Info.plist`), applies an **ad-hoc code signature**, and produces a
   **drag-to-Applications DMG** (`Dai-Jishow-<version>.dmg`: the app plus an
   `/Applications` symlink). Flags: `--release`, `--no-db`, `--symlink-db`,
-  `--no-dmg`, `--skip-tests` (bypass the regression gate for fast local iteration).
+  `--no-dmg`, `--skip-tests` (bypass the Swift regression gate for fast local iteration), `--skip-cpp-tests` (bypass the C++ core regression gate).
 * **Morphology library & regression gate:** The pure conjugation / part-of-speech
   / pitch-accent logic — `Morph.inflections`, `Morph.senseTags`,
   `PitchAccentContour` (its `build` factory), `KanaNormalizer`, and the
@@ -102,6 +102,29 @@ Dai-Jishow uses a **shared C++20 core** exposed through a **flat C11 ABI (`dj_ca
   ~221 MB corpus, no engine). `tools/build_app_bundle.sh` runs `swift test` as a
   **gate before `.app` / DMG assembly**, so a broken conjugation, POS verdict, or
   pitch contour can never ship.
+   * **C++ core regression tests:** `core/test/` mirrors that gate on the *native*
+     side, locking the pure, DB-free logic of `core/dj_nlp` and `core/dj_graph`
+     that `swift test` (which builds only the Swift `DaiJishowMorph` library)
+     **never compiles** — so without it a broken romaji transliteration or fisheye
+     pair-head choice could ship a DMG. It is a hand-rolled, dependency-free C++
+     harness in the spirit of `tools/dj_cli.cpp` (`dj_test.hpp`: a `TEST`
+     registry + `CHECK` / `CHECK_EQ_STR` macros; `dj_test_main.cpp`: a `main()`
+     that runs every registered thunk and exits non-zero on any failed `CHECK`):
+     `test_romaji.cpp` pins the wa-puro state machine (morae, alternate spellings,
+     youon glides, geminate / `t-`, syllabic-n, the katakana sweep, pass-through,
+     `is_ascii_romaji`, `encode_utf8`), and `test_pair_head.cpp` pins
+     `dj::select_pair_head` (the substitution of a hovered `(center, neighbor)`
+     compound edge's *displayed* headword — shortest matching alt form wins). Both
+     are pure, so they run without the ~221 MB corpus. `tools/build_cpp_tests.sh`
+     compiles them (`clang++ -std=c++20 -Wall -Wextra -Wpedantic`, linking the
+     two production translation units `romaji.cpp` + `fisheye.cpp` against system
+     `sqlite3`) and runs the binary; `build_app_bundle.sh` invokes it as a
+     **second gate**, right after `swift test`, so a regression aborts the build
+     (proven: a deliberately-failing `CHECK` aborts *before* assembly). To make
+     `select_pair_head` unit-testable it was promoted from the anonymous namespace
+     in `fisheye.cpp` to **external** linkage (declared in `dj_internal.hpp`);
+     its definition now sits after the `} // namespace` close so it still sees
+     `utf8_to_cps_local`. Bypass for fast iteration with `--skip-cpp-tests`.
 * **Naming:** The *code stem* — `DaiJishow`, `DaiJishowCore`, `DaiJishowMac`, and
   the `daijishow.db` bundle — is written fused on purpose: Swift / C++ / CMake
   identifiers and the compiled binary cannot carry a hyphen. The hyphenated
