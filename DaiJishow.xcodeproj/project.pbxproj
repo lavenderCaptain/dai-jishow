@@ -42,6 +42,8 @@
 		BCE9E6004A92E4E34184271D = {isa = PBXBuildFile; fileRef = 803490D9D90902973E691E54; };
 		B4C8D9E0F1A2B3C4D5E6F704 = {isa = PBXBuildFile; fileRef = B4C8D9E0F1A2B3C4D5E6F702; };
 		50D389464C0DAB9EB517A729 = {isa = PBXBuildFile; fileRef = 294CF4D3A45F05F35EF58E4D; };
+		E1F2A3B4C5D6E7F809010001 = {isa = PBXBuildFile; fileRef = E1F2A3B4C5D6E7F809010011; };
+		E1F2A3B4C5D6E7F809010002 = {isa = PBXBuildFile; fileRef = 294CF4D3A45F05F35EF58E4D; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -65,6 +67,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 8B0ECFA29B022C4A8EA6A87B;
 			remoteInfo = DaiJishowMorph;
+		};
+		E1F2A3B4C5D6E7F809010003 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3BA39E0C2E44CE79075FB8BD;
+			proxyType = 1;
+			remoteGlobalIDString = 64AF879D865BBCFB4C5E4A2A;
+			remoteInfo = "Dai-Jishow";
 		};
 /* End PBXContainerItemProxy section */
 
@@ -125,6 +134,8 @@
 		294CF4D3A45F05F35EF58E4D = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DaiJishowMorph.framework; path = DaiJishowMorph.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		679578CE01A46F106A612CE5 = {isa = PBXFileReference; lastKnownFileType = wrapper.application; name = "Dai-Jishow.app"; path = "Dai-Jishow.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		D33C270E14141608E041686E = {isa = PBXFileReference; lastKnownFileType = wrapper.cfbundle; name = DaiJishowMorphTests.xctest; path = DaiJishowMorphTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E1F2A3B4C5D6E7F809010011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DaiJishowAppTests.swift; path = Tests/DaiJishowAppTests/DaiJishowAppTests.swift; sourceTree = SOURCE_ROOT; };
+		E1F2A3B4C5D6E7F809010012 = {isa = PBXFileReference; lastKnownFileType = wrapper.cfbundle; name = DaiJishowAppTests.xctest; path = DaiJishowAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -142,6 +153,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				50D389464C0DAB9EB517A729,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E1F2A3B4C5D6E7F809010004 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E1F2A3B4C5D6E7F809010002,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -221,6 +240,7 @@
 				0ED6723CDB7B484AF3BB2777,
 				803490D9D90902973E691E54,
 				B4C8D9E0F1A2B3C4D5E6F702,
+				E1F2A3B4C5D6E7F809010011,
 			);
 			name = Tests;
 			sourceTree = "<group>";
@@ -240,6 +260,7 @@
 				294CF4D3A45F05F35EF58E4D,
 				74E4D8317DB65544032DE753,
 				D33C270E14141608E041686E,
+				E1F2A3B4C5D6E7F809010012,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -309,6 +330,22 @@
 			productReference = D33C270E14141608E041686E;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		E1F2A3B4C5D6E7F809010005 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E1F2A3B4C5D6E7F80901000A;
+			buildPhases = (
+				E1F2A3B4C5D6E7F809010006,
+				E1F2A3B4C5D6E7F809010004,
+			);
+			buildRules = ();
+			dependencies = (
+				E1F2A3B4C5D6E7F809010007,
+			);
+			name = DaiJishowAppTests;
+			productName = DaiJishowAppTests;
+			productReference = E1F2A3B4C5D6E7F809010012;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -332,6 +369,7 @@
 				8B0ECFA29B022C4A8EA6A87B,
 				D6D12E602DD267EEA61A5D31,
 				8CFC618062B24D2A92D8C13C,
+				E1F2A3B4C5D6E7F809010005,
 			);
 		};
 /* End PBXProject section */
@@ -421,6 +459,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E1F2A3B4C5D6E7F809010006 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E1F2A3B4C5D6E7F809010001,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -438,6 +484,11 @@
 			isa = PBXTargetDependency;
 			target = 8B0ECFA29B022C4A8EA6A87B;
 			targetProxy = 87CBAC0D5B86FEBF706B34D2;
+		};
+		E1F2A3B4C5D6E7F809010007 = {
+			isa = PBXTargetDependency;
+			target = 64AF879D865BBCFB4C5E4A2A;
+			targetProxy = E1F2A3B4C5D6E7F809010003;
 		};
 /* End PBXTargetDependency section */
 
@@ -658,6 +709,54 @@
 			};
 			name = Release;
 		};
+		E1F2A3B4C5D6E7F809010008 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/core/include",
+				);
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.mac.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/core/include",
+				);
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Dai-Jishow.app/Contents/MacOS/Dai-Jishow";
+			};
+			name = Debug;
+		};
+		E1F2A3B4C5D6E7F809010009 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/core/include",
+				);
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.mac.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/core/include",
+				);
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Dai-Jishow.app/Contents/MacOS/Dai-Jishow";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -702,6 +801,15 @@
 			buildConfigurations = (
 				3289AD4E3ED5427B9D34E8B1,
 				B923B3A62F2C586FDF96884F,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E1F2A3B4C5D6E7F80901000A = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E1F2A3B4C5D6E7F809010008,
+				E1F2A3B4C5D6E7F809010009,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

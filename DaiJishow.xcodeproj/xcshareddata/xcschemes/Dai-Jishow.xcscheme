@@ -41,6 +41,17 @@
                ReferencedContainer = "container:DaiJishow.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E1F2A3B4C5D6E7F809010005"
+               BuildableName = "DaiJishowAppTests.xctest"
+               BlueprintName = "DaiJishowAppTests"
+               ReferencedContainer = "container:DaiJishow.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction
