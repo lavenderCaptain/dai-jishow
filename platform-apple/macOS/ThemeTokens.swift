@@ -47,15 +47,17 @@ enum DJTheme {
                 endPoint: .bottomTrailing
             )
         } else {
+            // Shaded cool slate-grey canvas in Light Mode so cards stand out clearly
+            // without harsh, retina-glaring pure white backgrounds.
             if reduceTransparency || highContrast {
-                let c = Color(red: 0.96, green: 0.96, blue: 0.98)
+                let c = Color(red: 0.77, green: 0.80, blue: 0.85)
                 return LinearGradient(colors: [c, c], startPoint: .topLeading, endPoint: .bottomTrailing)
             }
             return LinearGradient(
                 colors: [
-                    Color(red: 0.95, green: 0.96, blue: 0.99),
-                    Color(red: 0.91, green: 0.93, blue: 0.97),
-                    Color(red: 0.94, green: 0.95, blue: 0.98)
+                    Color(red: 0.79, green: 0.82, blue: 0.87),
+                    Color(red: 0.74, green: 0.78, blue: 0.84),
+                    Color(red: 0.77, green: 0.80, blue: 0.86)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -72,15 +74,22 @@ enum DJTheme {
             let base = Color(red: 0.11, green: 0.13, blue: 0.19)
             return base.opacity(reduceTransparency || highContrast ? 1.0 : 0.92)
         } else {
-            let base = Color.white
-            return base.opacity(reduceTransparency || highContrast ? 1.0 : 0.88)
+            // Soft off-white / warm paper surface rather than pure #FFFFFF glare.
+            let base = Color(red: 0.945, green: 0.955, blue: 0.97)
+            return base.opacity(reduceTransparency || highContrast ? 1.0 : 0.96)
         }
     }
 
     static func solidGlassFallbackFill(for scheme: ColorScheme) -> Color {
         scheme == .dark
             ? Color(red: 0.12, green: 0.14, blue: 0.21)
-            : Color(red: 0.98, green: 0.985, blue: 1.0)
+            : Color(red: 0.90, green: 0.92, blue: 0.95)
+    }
+
+    static func topBarFrostTint(for scheme: ColorScheme) -> Color {
+        scheme == .dark
+            ? Color(red: 0.09, green: 0.11, blue: 0.16).opacity(0.65)
+            : Color(red: 0.84, green: 0.865, blue: 0.905).opacity(0.72)
     }
 
     static func hairlineColor(
@@ -91,7 +100,7 @@ enum DJTheme {
         let boosted = highContrast ? min(0.75, baseOpacity * 2.2) : baseOpacity
         return scheme == .dark
             ? Color.white.opacity(boosted)
-            : Color.black.opacity(boosted * 0.9)
+            : Color.black.opacity(min(0.45, boosted * 1.15))
     }
 
     static func pillFill(
@@ -100,7 +109,7 @@ enum DJTheme {
         highContrast: Bool = false
     ) -> Color {
         if active { return Color.accentColor }
-        let op = highContrast ? 0.16 : (scheme == .dark ? 0.10 : 0.07)
+        let op = highContrast ? 0.16 : (scheme == .dark ? 0.10 : 0.08)
         return Color.primary.opacity(op)
     }
 
@@ -118,9 +127,9 @@ enum DJTheme {
         } else {
             return LinearGradient(
                 colors: [
-                    Color.white.opacity(0.55),
-                    Color.white.opacity(0.18),
-                    Color.black.opacity(0.03)
+                    Color.white.opacity(0.42),
+                    Color.white.opacity(0.14),
+                    Color.black.opacity(0.04)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing

@@ -1167,7 +1167,7 @@ struct FisheyeGraphView: View {
                                 Label("Top \(engine.maxFisheyePerSide)/side", systemImage: "slider.horizontal.3")
                                     .font(.caption.weight(.semibold))
                                     .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
+                                    .frame(height: 26)
                                     .djGlassCapsule(interactive: true)
                             }
                             .menuStyle(.borderlessButton)
@@ -1180,7 +1180,7 @@ struct FisheyeGraphView: View {
                                 Label("% Share", systemImage: engine.showFisheyePercentages ? "percent" : "circle")
                                     .font(.caption.weight(.semibold))
                                     .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
+                                    .frame(height: 26)
                                     .djGlassCapsule(
                                         interactive: true,
                                         tint: engine.showFisheyePercentages ? Color.accentColor : nil
@@ -1216,7 +1216,7 @@ struct FisheyeGraphView: View {
                             }
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
+                            .frame(height: 26)
                             .djGlassCapsule()
                             .fixedSize()
                         }

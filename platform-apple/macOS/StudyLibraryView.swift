@@ -20,77 +20,22 @@ struct BookmarkDeckControl: View {
         !containingDecks.isEmpty
     }
 
+    private var controlHeight: CGFloat { compact ? 26 : 30 }
+    private var iconFont: Font { compact ? .caption.weight(.semibold) : .subheadline.weight(.semibold) }
+
     var body: some View {
         HStack(spacing: 2) {
-            Button {
-                studyStore.toggleStar(item)
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: isSaved ? "star.fill" : "star")
-                        .font(compact ? .subheadline.weight(.semibold) : .subheadline.weight(.semibold))
-                    if !compact {
-                        Text(isSaved ? "Saved" : "Save")
-                            .font(.caption.weight(.semibold))
-                    }
-                }
-                .foregroundStyle(isSaved ? Color.yellow : .primary)
-                .padding(.horizontal, compact ? 9 : 11)
-                .padding(.vertical, 6)
-                .frame(minWidth: 34, minHeight: 32)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(isSaved ? "Remove from saved decks (⌘B)" : "Save to Favorites deck (⌘B)")
-            .djAccessibleControl(
-                label: isSaved ? "Saved in study decks" : "Save to Favorites deck",
-                hint: "Toggle Favorites bookmark (⌘B)",
-                selected: isSaved
-            )
+            starButton
 
             Divider()
-                .frame(height: 16)
+                .frame(height: compact ? 13 : 16)
                 .opacity(0.22)
 
-            Menu {
-                Section("Add or Remove from Deck") {
-                    ForEach(studyStore.decks) { deck in
-                        let inDeck = containingDecks.contains(deck.id)
-                        Button {
-                            studyStore.toggleItem(item, inDeck: deck.id)
-                        } label: {
-                            Label(deck.name, systemImage: inDeck ? "checkmark.circle.fill" : "circle")
-                        }
-                    }
-                }
-                Divider()
-                Button {
-                    newDeckName = ""
-                    showingNewDeckPrompt = true
-                } label: {
-                    Label("New Deck…", systemImage: "folder.badge.plus")
-                }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 26, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Choose which study decks contain this item")
-            .djAccessibleControl(label: "Choose study decks", hint: "Add or remove this item from study decks")
+            deckMenuButton
         }
+        .frame(height: controlHeight)
         .fixedSize()
-        .background(
-            Capsule()
-                .fill(isSaved ? Color.yellow.opacity(0.16) : Color.primary.opacity(0.08))
-                .overlay(
-                    Capsule()
-                        .strokeBorder(isSaved ? Color.yellow.opacity(0.45) : Color.primary.opacity(0.14), lineWidth: 1)
-                )
-        )
+        .background(pillBackground)
         .popover(isPresented: $showingNewDeckPrompt, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Create Study Deck")
@@ -109,6 +54,77 @@ struct BookmarkDeckControl: View {
             }
             .padding(14)
         }
+    }
+
+    @ViewBuilder
+    private var starButton: some View {
+        Button {
+            studyStore.toggleStar(item)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: isSaved ? "star.fill" : "star")
+                    .font(iconFont)
+                if !compact {
+                    Text(isSaved ? "Saved" : "Save")
+                        .font(.caption.weight(.semibold))
+                }
+            }
+            .foregroundStyle(isSaved ? Color.yellow : .primary)
+            .padding(.horizontal, compact ? 8 : 11)
+            .frame(minWidth: compact ? 28 : 34)
+            .frame(height: controlHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(isSaved ? "Remove from saved decks (⌘B)" : "Save to Favorites deck (⌘B)")
+        .djAccessibleControl(
+            label: isSaved ? "Saved in study decks" : "Save to Favorites deck",
+            hint: "Toggle Favorites bookmark (⌘B)",
+            selected: isSaved
+        )
+    }
+
+    @ViewBuilder
+    private var deckMenuButton: some View {
+        Menu {
+            Section("Add or Remove from Deck") {
+                ForEach(studyStore.decks) { deck in
+                    let inDeck = containingDecks.contains(deck.id)
+                    Button {
+                        studyStore.toggleItem(item, inDeck: deck.id)
+                    } label: {
+                        Label(deck.name, systemImage: inDeck ? "checkmark.circle.fill" : "circle")
+                    }
+                }
+            }
+            Divider()
+            Button {
+                newDeckName = ""
+                showingNewDeckPrompt = true
+            } label: {
+                Label("New Deck…", systemImage: "folder.badge.plus")
+            }
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: compact ? 22 : 26, height: controlHeight)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Choose which study decks contain this item")
+        .djAccessibleControl(label: "Choose study decks", hint: "Add or remove this item from study decks")
+    }
+
+    private var pillBackground: some View {
+        Capsule()
+            .fill(isSaved ? Color.yellow.opacity(0.16) : Color.primary.opacity(0.08))
+            .overlay(
+                Capsule()
+                    .strokeBorder(isSaved ? Color.yellow.opacity(0.45) : Color.primary.opacity(0.14), lineWidth: 1)
+            )
     }
 
     private func createAndAdd() {

@@ -244,60 +244,64 @@ struct MainWorkspaceView: View {
         GeometryReader { rootGeo in
             let currentWidth = rootGeo.size.width
 
-            ZStack {
+            VStack(spacing: 0) {
+                frostedScreenSwitcherBar(availableWidth: currentWidth, highContrast: highContrast)
+
+                ZStack {
+                    if !engine.isReady {
+                        databaseMissingBanner
+                    } else {
+                        switch engine.activeScreen {
+                        case .fisheye:
+                            FisheyeGraphView(engine: engine)
+                        case .wordEntry:
+                            if let entry = engine.activeEntry {
+                                WordEntryView(engine: engine, entry: entry)
+                            }
+                        case .kanjiDetail:
+                            if let kanji = engine.activeKanji {
+                                KanjiDetailView(engine: engine, kanji: kanji)
+                            }
+                        case .radicalBuilder:
+                            RadicalBuilderView(engine: engine)
+                        case .kanjiLookup:
+                            KanjiLookupView(engine: engine)
+                        case .wordCosmos:
+                            WordCosmosView(engine: engine)
+                        case .compoundKanji:
+                            CompoundKanjiView(engine: engine)
+                        case .studyLibrary:
+                            StudyLibraryView(engine: engine, studyStore: engine.studyStore)
+                        }
+                    }
+
+                    if isSearchDropdownOpen {
+                        searchResultsDropdown(availableWidth: currentWidth)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+
+                if !engine.history.isEmpty {
+                    breadcrumbViewer
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
+                        .zIndex(10)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
                 DJTheme.workspaceBackground(
                     for: colorScheme,
                     reduceTransparency: reduceTransparency,
                     highContrast: highContrast
                 )
                 .ignoresSafeArea()
-
-                VStack(spacing: 0) {
-                    ZStack {
-                        if !engine.isReady {
-                            databaseMissingBanner
-                        } else {
-                            switch engine.activeScreen {
-                            case .fisheye:
-                                FisheyeGraphView(engine: engine)
-                            case .wordEntry:
-                                if let entry = engine.activeEntry {
-                                    WordEntryView(engine: engine, entry: entry)
-                                }
-                            case .kanjiDetail:
-                                if let kanji = engine.activeKanji {
-                                    KanjiDetailView(engine: engine, kanji: kanji)
-                                }
-                            case .radicalBuilder:
-                                RadicalBuilderView(engine: engine)
-                            case .kanjiLookup:
-                                KanjiLookupView(engine: engine)
-                            case .wordCosmos:
-                                WordCosmosView(engine: engine)
-                            case .compoundKanji:
-                                CompoundKanjiView(engine: engine)
-                            case .studyLibrary:
-                                StudyLibraryView(engine: engine, studyStore: engine.studyStore)
-                            }
-                        }
-
-                        if isSearchDropdownOpen {
-                            searchResultsDropdown(availableWidth: currentWidth)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    if !engine.history.isEmpty {
-                        breadcrumbViewer
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 8)
-                            .zIndex(10)
-                    }
-                }
-                .frame(width: rootGeo.size.width, height: rootGeo.size.height)
-
+            }
+            .overlay {
                 if engine.isZStackOpen {
                     ZStackHistoryOverlay(engine: engine)
+                        .ignoresSafeArea()
                         .zIndex(50)
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
                 }
@@ -312,9 +316,15 @@ struct MainWorkspaceView: View {
         .preferredColorScheme(engine.appearanceMode.colorScheme)
         #if os(macOS)
         .background(WindowFrameAccessor())
-        .toolbarBackground(.hidden, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
+        .toolbarBackground(
+            reduceTransparency
+                ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme))
+                : AnyShapeStyle(.regularMaterial),
+            for: .windowToolbar
+        )
         .toolbar {
-            workspaceToolbarContent(availableWidth: windowWidth)
+            workspaceToolbarContent(availableWidth: windowWidth, highContrast: highContrast)
         }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
@@ -392,12 +402,12 @@ struct MainWorkspaceView: View {
     }
 
     @ToolbarContentBuilder
-    private func workspaceToolbarContent(availableWidth: CGFloat) -> some ToolbarContent {
-        let navCompact = availableWidth < 1640
+    private func workspaceToolbarContent(availableWidth: CGFloat, highContrast: Bool) -> some ToolbarContent {
         let ultraCompact = availableWidth < 920
-        let showRecallSegmented = availableWidth >= 1220
-        let maxRecentKanji = availableWidth >= 1340 ? 5 : (availableWidth >= 1040 ? 3 : (ultraCompact ? 1 : 2))
-        let showSearchPrefixBadge = availableWidth >= 900 || !engine.searchQuery.isEmpty
+        let showRecallSegmented = availableWidth >= 960
+        let maxRecentKanji = availableWidth >= 1220 ? 5 : (availableWidth >= 1020 ? 3 : (ultraCompact ? 1 : 2))
+        let showSearchPrefixBadge = availableWidth >= 880 || !engine.searchQuery.isEmpty
+        let searchWidth: CGFloat = availableWidth >= 1200 ? 320 : (availableWidth >= 1000 ? 250 : 190)
         let searchPlaceholder = availableWidth >= 1120
             ? "Search Kanji, Kana, Romaji, or English (⌘F)..."
             : "Search (⌘F)..."
@@ -445,12 +455,12 @@ struct MainWorkspaceView: View {
                 value: engine.history.isEmpty ? "Empty" : "\(engine.history.count) items",
                 selected: engine.isZStackOpen
             )
-        }
 
-        // The Compound Kanji screen owns its own (autofocused, prominent) search
-        // field, so we hide this top omni-search there — removing the two-search ambiguity.
-        if engine.activeScreen != .compoundKanji {
-            ToolbarItem(placement: .principal) {
+            // Search sits right beside the History button on the left side of the
+            // toolbar so it stays grounded next to navigation controls instead of
+            // floating in the center. (Hidden on Compound Kanji, which owns its
+            // own autofocused search field.)
+            if engine.activeScreen != .compoundKanji {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
@@ -513,89 +523,24 @@ struct MainWorkspaceView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .frame(minWidth: ultraCompact ? 130 : 180, idealWidth: navCompact ? 240 : 300, maxWidth: 340)
+                .frame(width: searchWidth)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.07))
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .strokeBorder(
+                                    DJTheme.hairlineColor(
+                                        for: colorScheme,
+                                        baseOpacity: isSearchFocused ? 0.36 : 0.16,
+                                        highContrast: highContrast
+                                    ),
+                                    lineWidth: isSearchFocused ? 1.25 : 1
+                                )
+                        )
+                )
                 .help("Search by kanji, kana, romaji, or English — results appear live; use ↑/↓ and Enter to open.")
             }
-        }
-
-        ToolbarItemGroup(placement: .primaryAction) {
-            navScreenButton(
-                title: "Fisheye",
-                systemImage: "circle.hexagongrid.fill",
-                isActive: engine.activeScreen == .fisheye,
-                compact: navCompact,
-                help: "Open the Kanji Fisheye compound explorer (⌘⇧F)",
-                action: {
-                    let cp = engine.activeKanji?.codepoint ?? engine.recentKanji.first ?? 0x5927
-                    engine.openFisheye(codepoint: cp)
-                }
-            )
-
-            navScreenButton(
-                title: "Kanji Index",
-                systemImage: "character.book.closed.fill",
-                isActive: engine.activeScreen == .kanjiLookup,
-                compact: navCompact,
-                help: "Open the Kanji Index — browse kanji by stroke count, radical, or reading (⌘⇧K)",
-                action: { engine.openKanjiLookup() }
-            )
-
-            navScreenButton(
-                title: "Radicals",
-                systemImage: "puzzlepiece.extension.fill",
-                isActive: engine.activeScreen == .radicalBuilder,
-                compact: navCompact,
-                help: "Open the Radical Builder — assemble kanji from their component radicals (⌘⇧R)",
-                action: { engine.openRadicalBuilder() }
-            )
-
-            navScreenButton(
-                title: "Word Cloud",
-                systemImage: "sparkles",
-                isActive: engine.activeScreen == .wordCosmos,
-                compact: navCompact,
-                help: "Open the Word Cloud — a randomized prevalence bubble cloud (⌘⇧W)",
-                action: { engine.openWordCosmos() }
-            )
-
-            navScreenButton(
-                title: "Compounds",
-                systemImage: "square.split.2x2.fill",
-                isActive: engine.activeScreen == .compoundKanji,
-                compact: navCompact,
-                help: "Open the Compound Kanji screen — decompose a word into its kanji, inspect each part's readings & meaning, and see how the compound reading assembles from them (⌘⇧D)",
-                action: { engine.openCompoundKanji() }
-            )
-
-            Button {
-                engine.openStudyLibrary()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "star.square.on.square.fill")
-                    if !navCompact {
-                        Text("Decks")
-                    }
-                    if engine.studyStore.totalSavedCount > 0 {
-                        Text("\(engine.studyStore.totalSavedCount)")
-                            .font(.caption2.monospacedDigit().weight(.bold))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.primary.opacity(0.16)))
-                    }
-                }
-                .foregroundStyle(engine.activeScreen == .studyLibrary ? Color.accentColor : Color.primary)
-            }
-            .help("Open Saved Study Decks & Anki Export (⌘⇧L)")
-            .djAccessibleControl(
-                label: "Study Decks",
-                hint: "Open Saved Study Decks & Anki Export (⌘⇧L)",
-                value: "\(engine.studyStore.totalSavedCount) saved",
-                selected: engine.activeScreen == .studyLibrary
-            )
-        }
-
-        if #available(macOS 26, *) {
-            ToolbarSpacer(.fixed, placement: .primaryAction)
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
@@ -681,27 +626,174 @@ struct MainWorkspaceView: View {
         }
     }
 
-    /// A toolbar screen button that keeps its full `Label` when there is room
-    /// and drops to an icon-only `Image` when `compact`, so the toolbar stays tidy.
+    @ViewBuilder
+    private func frostedScreenSwitcherBar(availableWidth: CGFloat, highContrast: Bool) -> some View {
+        let iconOnly = availableWidth < 740
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                navScreenButton(
+                    title: "Fisheye",
+                    systemImage: "circle.hexagongrid.fill",
+                    isActive: engine.activeScreen == .fisheye,
+                    compact: iconOnly,
+                    highContrast: highContrast,
+                    help: "Open the Kanji Fisheye compound explorer (⌘⇧F)",
+                    action: {
+                        let cp = engine.activeKanji?.codepoint ?? engine.recentKanji.first ?? 0x5927
+                        engine.openFisheye(codepoint: cp)
+                    }
+                )
+
+                navScreenButton(
+                    title: "Kanji Index",
+                    systemImage: "character.book.closed.fill",
+                    isActive: engine.activeScreen == .kanjiLookup,
+                    compact: iconOnly,
+                    highContrast: highContrast,
+                    help: "Open the Kanji Index — browse kanji by stroke count, radical, or reading (⌘⇧K)",
+                    action: { engine.openKanjiLookup() }
+                )
+
+                navScreenButton(
+                    title: "Radicals",
+                    systemImage: "puzzlepiece.extension.fill",
+                    isActive: engine.activeScreen == .radicalBuilder,
+                    compact: iconOnly,
+                    highContrast: highContrast,
+                    help: "Open the Radical Builder — assemble kanji from their component radicals (⌘⇧R)",
+                    action: { engine.openRadicalBuilder() }
+                )
+
+                navScreenButton(
+                    title: "Word Cloud",
+                    systemImage: "sparkles",
+                    isActive: engine.activeScreen == .wordCosmos,
+                    compact: iconOnly,
+                    highContrast: highContrast,
+                    help: "Open the Word Cloud — a randomized prevalence bubble cloud (⌘⇧W)",
+                    action: { engine.openWordCosmos() }
+                )
+
+                navScreenButton(
+                    title: "Compounds",
+                    systemImage: "square.split.2x2.fill",
+                    isActive: engine.activeScreen == .compoundKanji,
+                    compact: iconOnly,
+                    highContrast: highContrast,
+                    help: "Open the Compound Kanji screen — decompose a word into its kanji, inspect each part's readings & meaning, and see how the compound reading assembles from them (⌘⇧D)",
+                    action: { engine.openCompoundKanji() }
+                )
+
+                Button {
+                    engine.openStudyLibrary()
+                } label: {
+                    let isActive = engine.activeScreen == .studyLibrary
+                    HStack(spacing: 5) {
+                        Image(systemName: "star.square.on.square.fill")
+                        if !iconOnly {
+                            Text("Decks")
+                        }
+                        if engine.studyStore.totalSavedCount > 0 {
+                            Text("\(engine.studyStore.totalSavedCount)")
+                                .font(.caption2.monospacedDigit().weight(.bold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(
+                                    Capsule().fill(
+                                        isActive ? Color.white.opacity(0.25) : Color.primary.opacity(0.14)
+                                    )
+                                )
+                        }
+                    }
+                    .font(.subheadline.weight(isActive ? .semibold : .medium))
+                    .foregroundStyle(isActive ? .white : .primary)
+                    .padding(.horizontal, 11)
+                    .frame(height: 28)
+                    .background(
+                        Capsule().fill(
+                            isActive
+                                ? Color.accentColor
+                                : Color.primary.opacity(colorScheme == .dark ? 0.07 : 0.06)
+                        )
+                    )
+                    .overlay(
+                        Capsule().strokeBorder(
+                            isActive
+                                ? Color.accentColor.opacity(0.4)
+                                : DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.14, highContrast: highContrast),
+                            lineWidth: highContrast ? 1.25 : 1
+                        )
+                    )
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Open Saved Study Decks & Anki Export (⌘⇧L)")
+                .djAccessibleControl(
+                    label: "Study Decks",
+                    hint: "Open Saved Study Decks & Anki Export (⌘⇧L)",
+                    value: "\(engine.studyStore.totalSavedCount) saved",
+                    selected: engine.activeScreen == .studyLibrary
+                )
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 7)
+
+            Rectangle()
+                .fill(DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.18, highContrast: highContrast))
+                .frame(height: 1)
+        }
+        .background {
+            if reduceTransparency {
+                DJTheme.solidGlassFallbackFill(for: colorScheme)
+            } else {
+                Rectangle()
+                    .fill(.regularMaterial)
+                    .overlay(DJTheme.topBarFrostTint(for: colorScheme))
+            }
+        }
+    }
+
     @ViewBuilder
     private func navScreenButton(
         title: String,
         systemImage: String,
         isActive: Bool,
         compact: Bool,
+        highContrast: Bool,
         help: String,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Group {
-                if compact {
-                    Image(systemName: systemImage)
-                } else {
-                    Label(title, systemImage: systemImage)
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                if !compact {
+                    Text(title)
                 }
             }
-            .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+            .font(.subheadline.weight(isActive ? .semibold : .medium))
+            .foregroundStyle(isActive ? .white : .primary)
+            .padding(.horizontal, 11)
+            .frame(height: 28)
+            .background(
+                Capsule().fill(
+                    isActive
+                        ? Color.accentColor
+                        : Color.primary.opacity(colorScheme == .dark ? 0.07 : 0.06)
+                )
+            )
+            .overlay(
+                Capsule().strokeBorder(
+                    isActive
+                        ? Color.accentColor.opacity(0.4)
+                        : DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.14, highContrast: highContrast),
+                    lineWidth: highContrast ? 1.25 : 1
+                )
+            )
+            .contentShape(Capsule())
         }
+        .buttonStyle(.plain)
         .help(help)
         .djAccessibleControl(
             label: title,
@@ -711,7 +803,7 @@ struct MainWorkspaceView: View {
     }
 
     private func searchResultsDropdown(availableWidth: CGFloat) -> some View {
-        let leadingPad: CGFloat = availableWidth < 1000 ? 20 : 180
+        let leadingPad: CGFloat = availableWidth < 920 ? 20 : 176
         return VStack {
             HStack {
                 GlassCard(cornerRadius: 18, highlightOpacity: 0.35) {
