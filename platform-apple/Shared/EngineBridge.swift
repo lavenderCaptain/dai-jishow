@@ -2925,6 +2925,22 @@ final class DaiJishowEngine: ObservableObject {
         )
     }
 
+    /// Synchronously sample random words bounded by `maxFreqRank` (without
+    /// mutating the desktop/iPad Word Cosmos state).
+    func fetchRandomWords(count: Int = 1, maxFreqRank: UInt32 = 12_000) -> [WordHit] {
+        guard let h = handle else { return [] }
+        let n = max(1, min(60, count))
+        var rawPtr: UnsafePointer<dj_word_hit_t>?
+        let actual = dj_dict_get_random_words(h, maxFreqRank, includeNames, n, &rawPtr)
+        guard let ptr = rawPtr, actual > 0 else { return [] }
+        var out: [WordHit] = []
+        out.reserveCapacity(actual)
+        for i in 0..<actual {
+            out.append(Self.wordHit(from: ptr[i]))
+        }
+        return out
+    }
+
     /// Draw a fresh randomized sample of words bounded by a prevalence-tier
     /// ceiling. Replaces the current sample and rolls a new layout seed so the
     /// cloud re-flows with a spring rather than snapping to new positions.
