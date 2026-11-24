@@ -500,21 +500,22 @@ private struct WatchWordDetailView: View {
                 let isNoun = (entry.header.posMask & (1 << 0)) != 0
                 let exampleSentence = entry.sentences.first ?? insights?.fallbackSentences.first
 
-                VStack(alignment: .leading, spacing: 10) {
-                    if !entry.header.kanaHead.isEmpty && entry.header.kanaHead != entry.header.displayHeadword {
-                        Text(entry.header.kanaHead)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        if !entry.header.kanaHead.isEmpty && entry.header.kanaHead != entry.header.displayHeadword {
+                            Text(entry.header.kanaHead)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(entry.header.displayHeadword)
+                            .font(.title2.bold())
                     }
-                    Text(entry.header.displayHeadword)
-                        .font(.title2.bold())
 
-                    if let contour = PitchAccentContour.build(
-                        kana: entry.header.kanaHead,
-                        pitchAccent: entry.header.pitchAccent,
-                        showParticle: isNoun
-                    ) {
-                        WatchPitchSparkline(contour: contour)
+                    ForEach(Array(entry.senses.prefix(4).enumerated()), id: \.element.id) { idx, sense in
+                        if !sense.enGlosses.isEmpty {
+                            Text("\(idx + 1). \(sense.enGlosses)")
+                                .font(.footnote)
+                        }
                     }
 
                     HStack(spacing: 8) {
@@ -524,6 +525,7 @@ private struct WatchWordDetailView: View {
                         } label: {
                             Image(systemName: "speaker.wave.2.fill")
                         }
+                        .controlSize(.small)
                         .disabled(!SpeechEngine.shared.japaneseVoiceAvailable)
 
                         Button {
@@ -532,13 +534,7 @@ private struct WatchWordDetailView: View {
                             Image(systemName: isSaved ? "star.fill" : "star")
                                 .foregroundStyle(isSaved ? .yellow : .primary)
                         }
-                    }
-
-                    ForEach(Array(entry.senses.prefix(4).enumerated()), id: \.element.id) { idx, sense in
-                        if !sense.enGlosses.isEmpty {
-                            Text("\(idx + 1). \(sense.enGlosses)")
-                                .font(.footnote)
-                        }
+                        .controlSize(.small)
                     }
 
                     if let sentence = exampleSentence {
@@ -612,6 +608,15 @@ private struct WatchWordDetailView: View {
                                 }
                             }
                         }
+                    }
+
+                    if let contour = PitchAccentContour.build(
+                        kana: entry.header.kanaHead,
+                        pitchAccent: entry.header.pitchAccent,
+                        showParticle: isNoun
+                    ) {
+                        Divider()
+                        WatchPitchSparkline(contour: contour)
                     }
 
                     if let insights, !insights.inflections.isEmpty {
