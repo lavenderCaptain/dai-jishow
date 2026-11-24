@@ -955,6 +955,73 @@ private struct WatchKanjiDetailView: View {
 
 
 
+private struct WatchMarqueeText: View {
+    let text: String
+    let font: Font
+
+    @State private var containerWidth: CGFloat = 0
+    @State private var textWidth: CGFloat = 0
+    @State private var offsetX: CGFloat = 0
+
+    private struct TaskKey: Equatable {
+        let text: String
+        let overflowRounded: Int
+    }
+
+    private var overflow: CGFloat {
+        max(0, textWidth - containerWidth)
+    }
+
+    var body: some View {
+        Text(" ")
+            .font(font)
+            .lineLimit(1)
+            .hidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                GeometryReader { containerGeo in
+                    Color.clear
+                        .onAppear { containerWidth = containerGeo.size.width }
+                        .onChange(of: containerGeo.size.width) { _, w in containerWidth = w }
+                }
+            )
+            .overlay(alignment: .leading) {
+                Text(text)
+                    .font(font)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .background(
+                        GeometryReader { textGeo in
+                            Color.clear
+                                .onAppear { textWidth = textGeo.size.width }
+                                .onChange(of: textGeo.size.width) { _, w in textWidth = w }
+                        }
+                    )
+                    .offset(x: overflow > 1 ? offsetX : 0)
+            }
+            .clipped()
+            .contentShape(Rectangle())
+            .task(id: TaskKey(text: text, overflowRounded: Int(overflow.rounded()))) {
+                offsetX = 0
+                guard overflow > 1 else { return }
+                let duration = max(1.6, Double(overflow) / 26.0)
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(1.2))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeInOut(duration: duration)) {
+                        offsetX = -overflow
+                    }
+                    try? await Task.sleep(for: .seconds(duration + 1.2))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeInOut(duration: duration)) {
+                        offsetX = 0
+                    }
+                    try? await Task.sleep(for: .seconds(duration))
+                }
+            }
+    }
+}
+
 private struct WatchCrownFisheyeView: View {
     @ObservedObject var engine: DaiJishowEngine
     @Binding var path: [WatchDestination]
@@ -1159,16 +1226,18 @@ private struct WatchCrownFisheyeView: View {
                                     .font(.caption.bold())
                                     .fixedSize()
                                 if !center.meanings.isEmpty {
-                                    Text(center.meanings)
-                                        .font(.system(size: isCompactWatch ? 11 : 12))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
+                                    WatchMarqueeText(
+                                        text: center.meanings,
+                                        font: .system(size: isCompactWatch ? 11 : 12)
+                                    )
+                                    .foregroundStyle(.secondary)
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .contentShape(Rectangle())
                         .layoutPriority(0)
                     } else {
                         Spacer(minLength: 0)
