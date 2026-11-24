@@ -1131,40 +1131,25 @@ private struct WatchCrownFisheyeView: View {
                             engine.openKanjiDetail(codepoint: center.codepoint)
                             path.append(.kanji(center.codepoint))
                         } label: {
-                            HStack(spacing: 3) {
+                            HStack(spacing: 4) {
                                 Text(center.glyph)
                                     .font(.caption.bold())
                                     .fixedSize()
                                 if !center.meanings.isEmpty {
                                     Text(center.meanings)
-                                        .font(.system(size: isCompactWatch ? 10 : 11))
+                                        .font(.system(size: isCompactWatch ? 11 : 12))
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
                                         .truncationMode(.tail)
                                 }
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(.plain)
                         .layoutPriority(0)
+                    } else {
+                        Spacer(minLength: 0)
                     }
-
-                    Spacer(minLength: 2)
-
-                    Button {
-                        cycleFisheyeMode()
-                    } label: {
-                        Text(fisheyeModeLabel)
-                            .font(.system(size: isCompactWatch ? 9.5 : 10, weight: .semibold))
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .padding(.horizontal, isCompactWatch ? 5 : 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.accentColor.opacity(0.22)))
-                    }
-                    .buttonStyle(.plain)
-                    .fixedSize()
-                    .accessibilityLabel("Fisheye mode: \(fisheyeModeLabel)")
-                    .accessibilityHint("Tap to switch between Compounds, Parts, and Idioms")
 
                     if totalPages > 1 {
                         Button {
@@ -1191,7 +1176,7 @@ private struct WatchCrownFisheyeView: View {
                             .fixedSize()
                     }
                 }
-                .padding(.horizontal, isCompactWatch ? 4 : 6)
+                .padding(.horizontal, isCompactWatch ? 5 : 7)
 
                 if nodes.isEmpty {
                     Spacer()
@@ -1401,7 +1386,21 @@ private struct WatchCrownFisheyeView: View {
                     }
                 }
             }
-            .toolbar(.hidden, for: .navigationBar)
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        cycleFisheyeMode()
+                    } label: {
+                        Text(fisheyeModeLabel)
+                            .font(.system(size: isCompactWatch ? 10 : 11, weight: .semibold))
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                    .accessibilityLabel("Fisheye mode: \(fisheyeModeLabel)")
+                    .accessibilityHint("Tap to switch between Compounds, Parts, and Idioms")
+                }
+            }
             .onAppear {
                 syncFisheyeIfNeeded()
             }
