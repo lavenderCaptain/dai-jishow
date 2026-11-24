@@ -54,8 +54,7 @@ struct DaiJishowMacApp: App {
                 }
         }
         #if os(macOS)
-        .windowStyle(.automatic)
-        .windowToolbarStyle(.unified(showsTitle: false))
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1320, height: 880)
         #endif
         .commands {
@@ -244,8 +243,13 @@ struct MainWorkspaceView: View {
         GeometryReader { rootGeo in
             let currentWidth = rootGeo.size.width
 
-            VStack(spacing: 0) {
-                frostedScreenSwitcherBar(availableWidth: currentWidth, highContrast: highContrast)
+            ZStack {
+                DJTheme.workspaceBackground(
+                    for: colorScheme,
+                    reduceTransparency: reduceTransparency,
+                    highContrast: highContrast
+                )
+                .ignoresSafeArea()
 
                 ZStack {
                     if !engine.isReady {
@@ -280,25 +284,18 @@ struct MainWorkspaceView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
-
-                if !engine.history.isEmpty {
-                    breadcrumbViewer
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 8)
-                        .zIndex(10)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    frostedTopBar(availableWidth: currentWidth, highContrast: highContrast)
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background {
-                DJTheme.workspaceBackground(
-                    for: colorScheme,
-                    reduceTransparency: reduceTransparency,
-                    highContrast: highContrast
-                )
-                .ignoresSafeArea()
-            }
-            .overlay {
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if !engine.history.isEmpty {
+                        breadcrumbViewer
+                            .padding(.horizontal, 20)
+                            .padding(.top, 4)
+                            .padding(.bottom, 8)
+                    }
+                }
+
                 if engine.isZStackOpen {
                     ZStackHistoryOverlay(engine: engine)
                         .ignoresSafeArea()
@@ -313,19 +310,10 @@ struct MainWorkspaceView: View {
                 windowWidth = newW
             }
         }
+        .ignoresSafeArea(.container, edges: .top)
         .preferredColorScheme(engine.appearanceMode.colorScheme)
         #if os(macOS)
         .background(WindowFrameAccessor())
-        .toolbarBackground(.visible, for: .windowToolbar)
-        .toolbarBackground(
-            reduceTransparency
-                ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme))
-                : AnyShapeStyle(.regularMaterial),
-            for: .windowToolbar
-        )
-        .toolbar {
-            workspaceToolbarContent(availableWidth: windowWidth, highContrast: highContrast)
-        }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                 isSearchFocused = true
@@ -401,356 +389,406 @@ struct MainWorkspaceView: View {
         #endif
     }
 
-    @ToolbarContentBuilder
-    private func workspaceToolbarContent(availableWidth: CGFloat, highContrast: Bool) -> some ToolbarContent {
-        let ultraCompact = availableWidth < 920
-        let showRecallSegmented = availableWidth >= 960
-        let maxRecentKanji = availableWidth >= 1220 ? 5 : (availableWidth >= 1020 ? 3 : (ultraCompact ? 1 : 2))
-        let showSearchPrefixBadge = availableWidth >= 880 || !engine.searchQuery.isEmpty
-        let searchWidth: CGFloat = availableWidth >= 1200 ? 320 : (availableWidth >= 1000 ? 250 : 190)
-        let searchPlaceholder = availableWidth >= 1120
-            ? "Search Kanji, Kana, Romaji, or English (⌘F)..."
-            : "Search (⌘F)..."
-
-        ToolbarItemGroup(placement: .navigation) {
-            Button {
-                engine.goBack()
-            } label: {
-                Image(systemName: "chevron.left")
-            }
-            .disabled(!engine.canGoBack)
-            .help("Go back to the previous lookup (⌘[)")
-            .djAccessibleControl(label: "Back", hint: "Go back to the previous lookup")
-
-            Button {
-                engine.goForward()
-            } label: {
-                Image(systemName: "chevron.right")
-            }
-            .disabled(!engine.canGoForward)
-            .help("Go forward in your lookup history (⌘])")
-            .djAccessibleControl(label: "Forward", hint: "Go forward in your lookup history")
-
-            Button {
-                djWithAnimation(reduceMotion, .spring(response: 0.30, dampingFraction: 0.85)) {
-                    if engine.isZStackOpen {
-                        engine.isZStackOpen = false
-                    } else {
-                        engine.openHistoryStack()
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "square.stack.3d.down.right")
-                    if !engine.history.isEmpty {
-                        Text("\(engine.history.count)")
-                            .font(.caption2.monospacedDigit().weight(.bold))
-                    }
-                }
-            }
-            .help("Open Z-Stack Navigation Deck (⌘\\)")
-            .djAccessibleControl(
-                label: "Navigation Deck",
-                hint: "Open visual history snapshots (⌘\\)",
-                value: engine.history.isEmpty ? "Empty" : "\(engine.history.count) items",
-                selected: engine.isZStackOpen
-            )
-
-            // Search sits right beside the History button on the left side of the
-            // toolbar so it stays grounded next to navigation controls instead of
-            // floating in the center. (Hidden on Compound Kanji, which owns its
-            // own autofocused search field.)
-            if engine.activeScreen != .compoundKanji {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-
-                    TextField(searchPlaceholder, text: $engine.searchQuery)
-                        .textFieldStyle(.plain)
-                        .focused($isSearchFocused)
-                        .onChange(of: engine.searchQuery) { _, _ in
-                            engine.performSearch()
-                        }
-                        .onSubmit {
-                            engine.submitSearchQuery()
-                        }
-
-                    if showSearchPrefixBadge {
-                        Button {
-                            engine.searchContainsMode.toggle()
-                        } label: {
-                            Text(engine.searchContainsMode ? "Contains" : "Prefix")
-                                .font(.caption2.weight(.semibold))
-                                .lineLimit(1)
-                                .fixedSize()
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(
-                                    Capsule().fill(
-                                        engine.searchContainsMode
-                                            ? Color.accentColor.opacity(0.26)
-                                            : Color.primary.opacity(0.08)
-                                    )
-                                )
-                                .foregroundStyle(engine.searchContainsMode ? Color.accentColor : .secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help(engine.searchContainsMode
-                              ? "Contains mode: matching substrings anywhere in a headword or reading. Click for Prefix ranking."
-                              : "Prefix mode: matching exact and prefix forms first. Click to search anywhere inside a word (Contains).")
-                        .djAccessibleControl(
-                            label: "Search match mode",
-                            hint: "Switch between Prefix and Contains search ranking",
-                            value: engine.searchContainsMode ? "Contains" : "Prefix",
-                            selected: engine.searchContainsMode
-                        )
-                    }
-
-                    if !engine.searchQuery.isEmpty {
-                        Button {
-                            engine.searchQuery = ""
-                            engine.searchResults = []
-                            engine.englishMatches = []
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Clear the search")
-                        .djAccessibleControl(label: "Clear search")
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .frame(width: searchWidth)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.07))
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .strokeBorder(
-                                    DJTheme.hairlineColor(
-                                        for: colorScheme,
-                                        baseOpacity: isSearchFocused ? 0.36 : 0.16,
-                                        highContrast: highContrast
-                                    ),
-                                    lineWidth: isSearchFocused ? 1.25 : 1
-                                )
-                        )
-                )
-                .help("Search by kanji, kana, romaji, or English — results appear live; use ↑/↓ and Enter to open.")
-            }
-        }
-
-        ToolbarItemGroup(placement: .primaryAction) {
-            Toggle("Names", isOn: Binding(
-                get: { engine.includeNames },
-                set: { engine.setNamesIncluded($0, userInitiated: true) }
-            ))
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .fixedSize()
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(engine.namesToggleFlash ? Color.accentColor.opacity(0.28) : Color.clear)
-            )
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: engine.namesToggleFlash)
-            .help("Include proper names (人名) in search and related-word lists. Auto-turned on when a proper name is the best match for your search — the toggle flashes and you can undo it from the results.")
-            .djAccessibleControl(
-                label: "Include Proper Names",
-                hint: "Include proper names in search and related-word lists",
-                value: engine.includeNames ? "On" : "Off"
-            )
-            .onChange(of: engine.includeNames) { _, _ in
-                engine.performSearch()
-                engine.invalidateFisheyeSnapshots()
-                if engine.activeScreen == .fisheye, let cp = engine.activeKanji?.codepoint {
-                    engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: 1.85)
-                } else if engine.activeScreen == .kanjiDetail {
-                    engine.refreshActiveKanjiDetail()
-                } else if engine.activeScreen == .wordCosmos {
-                    engine.sampleWordCosmos(includeNames: engine.includeNames)
-                }
-            }
-
-            if showRecallSegmented {
-                Picker("Recall", selection: $engine.recallMode) {
-                    ForEach(RecallMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .help("Recall Mode — Full shows everything, Hide Kana hides readings, Hide Defn. hides the English (for self-quizzing)")
-                .djAccessibleControl(label: "Recall Mode", value: engine.recallMode.rawValue)
-            } else {
-                Menu {
-                    ForEach(RecallMode.allCases) { mode in
-                        Button {
-                            engine.recallMode = mode
-                        } label: {
-                            Label(mode.rawValue, systemImage: engine.recallMode == mode ? "checkmark" : "circle")
-                        }
-                    }
-                } label: {
-                    Label(engine.recallMode.rawValue, systemImage: "eye")
-                }
-                .help("Recall Mode — Full shows everything, Hide Kana hides readings, Hide Defn. hides the English (for self-quizzing)")
-                .djAccessibleControl(label: "Recall Mode", value: engine.recallMode.rawValue)
-            }
-        }
-
-        if !engine.recentKanji.isEmpty {
-            if #available(macOS 26, *) {
-                ToolbarSpacer(.fixed, placement: .primaryAction)
-            }
-            ToolbarItemGroup(placement: .primaryAction) {
-                ForEach(Array(engine.recentKanji.prefix(maxRecentKanji)), id: \.self) { cp in
-                    let glyph = String(UnicodeScalar(cp)!)
-                    Button {
-                        engine.openFisheye(codepoint: cp)
-                    } label: {
-                        Text(glyph)
-                            .font(.headline.weight(.bold))
-                            .frame(minWidth: 24)
-                    }
-                    .help("Recently viewed kanji — open \(glyph)")
-                    .djAccessibleControl(
-                        label: "Recent kanji \(glyph)",
-                        hint: "Open \(glyph) in Kanji Fisheye"
-                    )
-                }
-            }
-        }
-    }
-
     @ViewBuilder
-    private func frostedScreenSwitcherBar(availableWidth: CGFloat, highContrast: Bool) -> some View {
-        let iconOnly = availableWidth < 740
+    private func frostedTopBar(availableWidth: CGFloat, highContrast: Bool) -> some View {
+        let navCompact = availableWidth < 1040
+        let showRecallSegmented = availableWidth >= 1120
+        let maxRecentKanji = availableWidth >= 1420 ? 5 : (availableWidth >= 1260 ? 4 : (availableWidth >= 1000 ? 3 : 2))
+        let showSearchPrefixBadge = availableWidth >= 960 || !engine.searchQuery.isEmpty
+        let searchPlaceholder = availableWidth >= 1380
+            ? "Search Kanji, Kana, Romaji (⌘F)..."
+            : "Search (⌘F)..."
+        let pillFill = Color.primary.opacity(colorScheme == .dark ? 0.085 : 0.065)
+        let pillBorder = DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.14, highContrast: highContrast)
+
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                navScreenButton(
-                    title: "Fisheye",
-                    systemImage: "circle.hexagongrid.fill",
-                    isActive: engine.activeScreen == .fisheye,
-                    compact: iconOnly,
-                    highContrast: highContrast,
-                    help: "Open the Kanji Fisheye compound explorer (⌘⇧F)",
-                    action: {
-                        let cp = engine.activeKanji?.codepoint ?? engine.recentKanji.first ?? 0x5927
-                        engine.openFisheye(codepoint: cp)
+            HStack(spacing: 6) {
+                // Back / Forward / History glass pill
+                HStack(spacing: 2) {
+                    Button {
+                        engine.goBack()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
                     }
-                )
+                    .disabled(!engine.canGoBack)
+                    .help("Go back to the previous lookup (⌘[)")
+                    .djAccessibleControl(label: "Back", hint: "Go back to the previous lookup")
 
-                navScreenButton(
-                    title: "Kanji Index",
-                    systemImage: "character.book.closed.fill",
-                    isActive: engine.activeScreen == .kanjiLookup,
-                    compact: iconOnly,
-                    highContrast: highContrast,
-                    help: "Open the Kanji Index — browse kanji by stroke count, radical, or reading (⌘⇧K)",
-                    action: { engine.openKanjiLookup() }
-                )
-
-                navScreenButton(
-                    title: "Radicals",
-                    systemImage: "puzzlepiece.extension.fill",
-                    isActive: engine.activeScreen == .radicalBuilder,
-                    compact: iconOnly,
-                    highContrast: highContrast,
-                    help: "Open the Radical Builder — assemble kanji from their component radicals (⌘⇧R)",
-                    action: { engine.openRadicalBuilder() }
-                )
-
-                navScreenButton(
-                    title: "Word Cloud",
-                    systemImage: "sparkles",
-                    isActive: engine.activeScreen == .wordCosmos,
-                    compact: iconOnly,
-                    highContrast: highContrast,
-                    help: "Open the Word Cloud — a randomized prevalence bubble cloud (⌘⇧W)",
-                    action: { engine.openWordCosmos() }
-                )
-
-                navScreenButton(
-                    title: "Compounds",
-                    systemImage: "square.split.2x2.fill",
-                    isActive: engine.activeScreen == .compoundKanji,
-                    compact: iconOnly,
-                    highContrast: highContrast,
-                    help: "Open the Compound Kanji screen — decompose a word into its kanji, inspect each part's readings & meaning, and see how the compound reading assembles from them (⌘⇧D)",
-                    action: { engine.openCompoundKanji() }
-                )
-
-                Button {
-                    engine.openStudyLibrary()
-                } label: {
-                    let isActive = engine.activeScreen == .studyLibrary
-                    HStack(spacing: 5) {
-                        Image(systemName: "star.square.on.square.fill")
-                        if !iconOnly {
-                            Text("Decks")
-                        }
-                        if engine.studyStore.totalSavedCount > 0 {
-                            Text("\(engine.studyStore.totalSavedCount)")
-                                .font(.caption2.monospacedDigit().weight(.bold))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(
-                                    Capsule().fill(
-                                        isActive ? Color.white.opacity(0.25) : Color.primary.opacity(0.14)
-                                    )
-                                )
-                        }
+                    Button {
+                        engine.goForward()
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
                     }
-                    .font(.subheadline.weight(isActive ? .semibold : .medium))
-                    .foregroundStyle(isActive ? .white : .primary)
-                    .padding(.horizontal, 11)
-                    .frame(height: 28)
-                    .background(
-                        Capsule().fill(
-                            isActive
-                                ? Color.accentColor
-                                : Color.primary.opacity(colorScheme == .dark ? 0.07 : 0.06)
-                        )
+                    .disabled(!engine.canGoForward)
+                    .help("Go forward in your lookup history (⌘])")
+                    .djAccessibleControl(label: "Forward", hint: "Go forward in your lookup history")
+
+                    Button {
+                        djWithAnimation(reduceMotion, .spring(response: 0.30, dampingFraction: 0.85)) {
+                            if engine.isZStackOpen {
+                                engine.isZStackOpen = false
+                            } else {
+                                engine.openHistoryStack()
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "square.stack.3d.down.right")
+                                .font(.caption.weight(.semibold))
+                            if !engine.history.isEmpty {
+                                Text("\(engine.history.count)")
+                                    .font(.caption2.monospacedDigit().weight(.bold))
+                            }
+                        }
+                        .padding(.horizontal, 6)
+                        .frame(height: 24)
+                        .contentShape(Rectangle())
+                    }
+                    .help("Open Z-Stack Navigation Deck (⌘\\)")
+                    .djAccessibleControl(
+                        label: "Navigation Deck",
+                        hint: "Open visual history snapshots (⌘\\)",
+                        value: engine.history.isEmpty ? "Empty" : "\(engine.history.count) items",
+                        selected: engine.isZStackOpen
                     )
-                    .overlay(
-                        Capsule().strokeBorder(
-                            isActive
-                                ? Color.accentColor.opacity(0.4)
-                                : DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.14, highContrast: highContrast),
-                            lineWidth: highContrast ? 1.25 : 1
-                        )
-                    )
-                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .help("Open Saved Study Decks & Anki Export (⌘⇧L)")
-                .djAccessibleControl(
-                    label: "Study Decks",
-                    hint: "Open Saved Study Decks & Anki Export (⌘⇧L)",
-                    value: "\(engine.studyStore.totalSavedCount) saved",
-                    selected: engine.activeScreen == .studyLibrary
-                )
+                .padding(.horizontal, 3)
+                .frame(height: 26)
+                .background(Capsule().fill(pillFill))
+                .overlay(Capsule().strokeBorder(pillBorder, lineWidth: highContrast ? 1.25 : 1))
+                .fixedSize()
 
-                Spacer(minLength: 0)
+                // Omni-search immediately beside History (hidden on Compound Kanji,
+                // which owns its own autofocused search box).
+                if engine.activeScreen != .compoundKanji {
+                    HStack(spacing: 5) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+
+                        TextField(searchPlaceholder, text: $engine.searchQuery)
+                            .font(.callout)
+                            .textFieldStyle(.plain)
+                            .focused($isSearchFocused)
+                            .onChange(of: engine.searchQuery) { _, _ in
+                                engine.performSearch()
+                            }
+                            .onSubmit {
+                                engine.submitSearchQuery()
+                            }
+
+                        if showSearchPrefixBadge {
+                            Button {
+                                engine.searchContainsMode.toggle()
+                            } label: {
+                                Text(engine.searchContainsMode ? "Contains" : "Prefix")
+                                    .font(.caption2.weight(.semibold))
+                                    .lineLimit(1)
+                                    .fixedSize()
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule().fill(
+                                            engine.searchContainsMode
+                                                ? Color.accentColor.opacity(0.24)
+                                                : Color.primary.opacity(0.08)
+                                        )
+                                    )
+                                    .foregroundStyle(engine.searchContainsMode ? Color.accentColor : .secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help(engine.searchContainsMode
+                                  ? "Contains mode: matching substrings anywhere in a headword or reading. Click for Prefix ranking."
+                                  : "Prefix mode: matching exact and prefix forms first. Click to search anywhere inside a word (Contains).")
+                            .djAccessibleControl(
+                                label: "Search match mode",
+                                hint: "Switch between Prefix and Contains search ranking",
+                                value: engine.searchContainsMode ? "Contains" : "Prefix",
+                                selected: engine.searchContainsMode
+                            )
+                        }
+
+                        if !engine.searchQuery.isEmpty {
+                            Button {
+                                engine.searchQuery = ""
+                                engine.searchResults = []
+                                engine.englishMatches = []
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Clear the search")
+                            .djAccessibleControl(label: "Clear search")
+                        }
+                    }
+                    .padding(.horizontal, 9)
+                    .frame(height: 26)
+                    .frame(minWidth: 138, idealWidth: 185, maxWidth: 250)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(pillFill)
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .strokeBorder(
+                                        DJTheme.hairlineColor(
+                                            for: colorScheme,
+                                            baseOpacity: isSearchFocused ? 0.42 : 0.16,
+                                            highContrast: highContrast
+                                        ),
+                                        lineWidth: isSearchFocused ? 1.25 : 1
+                                    )
+                            )
+                    )
+                    .layoutPriority(0)
+                    .help("Search by kanji, kana, romaji, or English — results appear live; use ↑/↓ and Enter to open.")
+                }
+
+                // Screen switcher pills with visible text labels
+                HStack(spacing: 3) {
+                    navScreenButton(
+                        title: "Fisheye",
+                        systemImage: "circle.hexagongrid.fill",
+                        isActive: engine.activeScreen == .fisheye,
+                        compact: navCompact,
+                        highContrast: highContrast,
+                        help: "Open the Kanji Fisheye compound explorer (⌘⇧F)",
+                        action: {
+                            let cp = engine.activeKanji?.codepoint ?? engine.recentKanji.first ?? 0x5927
+                            engine.openFisheye(codepoint: cp)
+                        }
+                    )
+
+                    navScreenButton(
+                        title: "Kanji Index",
+                        systemImage: "character.book.closed.fill",
+                        isActive: engine.activeScreen == .kanjiLookup,
+                        compact: navCompact,
+                        highContrast: highContrast,
+                        help: "Open the Kanji Index — browse kanji by stroke count, radical, or reading (⌘⇧K)",
+                        action: { engine.openKanjiLookup() }
+                    )
+
+                    navScreenButton(
+                        title: "Radicals",
+                        systemImage: "puzzlepiece.extension.fill",
+                        isActive: engine.activeScreen == .radicalBuilder,
+                        compact: navCompact,
+                        highContrast: highContrast,
+                        help: "Open the Radical Builder — assemble kanji from their component radicals (⌘⇧R)",
+                        action: { engine.openRadicalBuilder() }
+                    )
+
+                    navScreenButton(
+                        title: "Word Cloud",
+                        systemImage: "sparkles",
+                        isActive: engine.activeScreen == .wordCosmos,
+                        compact: navCompact,
+                        highContrast: highContrast,
+                        help: "Open the Word Cloud — a randomized prevalence bubble cloud (⌘⇧W)",
+                        action: { engine.openWordCosmos() }
+                    )
+
+                    navScreenButton(
+                        title: "Compounds",
+                        systemImage: "square.split.2x2.fill",
+                        isActive: engine.activeScreen == .compoundKanji,
+                        compact: navCompact,
+                        highContrast: highContrast,
+                        help: "Open the Compound Kanji screen — decompose a word into its kanji, inspect each part's readings & meaning, and see how the compound reading assembles from them (⌘⇧D)",
+                        action: { engine.openCompoundKanji() }
+                    )
+
+                    Button {
+                        engine.openStudyLibrary()
+                    } label: {
+                        let isActive = engine.activeScreen == .studyLibrary
+                        HStack(spacing: 4) {
+                            Image(systemName: "star.square.on.square.fill")
+                            if !navCompact {
+                                Text("Decks")
+                            }
+                            if engine.studyStore.totalSavedCount > 0 {
+                                Text("\(engine.studyStore.totalSavedCount)")
+                                    .font(.caption2.monospacedDigit().weight(.bold))
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(
+                                        Capsule().fill(
+                                            isActive ? Color.white.opacity(0.25) : Color.primary.opacity(0.14)
+                                        )
+                                    )
+                            }
+                        }
+                        .font(.caption.weight(isActive ? .semibold : .medium))
+                        .lineLimit(1)
+                        .foregroundStyle(isActive ? .white : .primary)
+                        .padding(.horizontal, navCompact ? 7 : 8)
+                        .frame(height: 26)
+                        .background(Capsule().fill(isActive ? Color.accentColor : pillFill))
+                        .overlay(
+                            Capsule().strokeBorder(
+                                isActive ? Color.accentColor.opacity(0.45) : pillBorder,
+                                lineWidth: highContrast ? 1.25 : 1
+                            )
+                        )
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open Saved Study Decks & Anki Export (⌘⇧L)")
+                    .djAccessibleControl(
+                        label: "Study Decks",
+                        hint: "Open Saved Study Decks & Anki Export (⌘⇧L)",
+                        value: "\(engine.studyStore.totalSavedCount) saved",
+                        selected: engine.activeScreen == .studyLibrary
+                    )
+                }
+                .fixedSize()
+
+                // Proper Names toggle with explicit visible "Names" label
+                HStack(spacing: 4) {
+                    Button {
+                        engine.setNamesIncluded(!engine.includeNames, userInitiated: true)
+                    } label: {
+                        Text("Names")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.primary)
+                    }
+                    .buttonStyle(.plain)
+
+                    Toggle(isOn: Binding(
+                        get: { engine.includeNames },
+                        set: { engine.setNamesIncluded($0, userInitiated: true) }
+                    )) {
+                        EmptyView()
+                    }
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                }
+                .padding(.horizontal, 7)
+                .frame(height: 26)
+                .background(
+                    Capsule().fill(
+                        engine.namesToggleFlash
+                            ? Color.accentColor.opacity(0.28)
+                            : pillFill
+                    )
+                )
+                .overlay(Capsule().strokeBorder(pillBorder, lineWidth: highContrast ? 1.25 : 1))
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: engine.namesToggleFlash)
+                .fixedSize()
+                .help("Include proper names (人名) in search and related-word lists. Auto-turned on when a proper name is the best match for your search — the toggle flashes and you can undo it from the results.")
+                .djAccessibleControl(
+                    label: "Include Proper Names",
+                    hint: "Include proper names in search and related-word lists",
+                    value: engine.includeNames ? "On" : "Off"
+                )
+                .onChange(of: engine.includeNames) { _, _ in
+                    engine.performSearch()
+                    engine.invalidateFisheyeSnapshots()
+                    if engine.activeScreen == .fisheye, let cp = engine.activeKanji?.codepoint {
+                        engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: 1.85)
+                    } else if engine.activeScreen == .kanjiDetail {
+                        engine.refreshActiveKanjiDetail()
+                    } else if engine.activeScreen == .wordCosmos {
+                        engine.sampleWordCosmos(includeNames: engine.includeNames)
+                    }
+                }
+
+                // Recall mode picker
+                if showRecallSegmented {
+                    Picker("Recall", selection: $engine.recallMode) {
+                        ForEach(RecallMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .fixedSize()
+                    .help("Recall Mode — Full shows everything, Hide Kana hides readings, Hide Defn. hides the English (for self-quizzing)")
+                    .djAccessibleControl(label: "Recall Mode", value: engine.recallMode.rawValue)
+                } else {
+                    Menu {
+                        ForEach(RecallMode.allCases) { mode in
+                            Button {
+                                engine.recallMode = mode
+                            } label: {
+                                Label(mode.rawValue, systemImage: engine.recallMode == mode ? "checkmark" : "circle")
+                            }
+                        }
+                    } label: {
+                        Label(engine.recallMode.rawValue, systemImage: "eye")
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 8)
+                            .frame(height: 26)
+                            .background(Capsule().fill(pillFill))
+                            .overlay(Capsule().strokeBorder(pillBorder, lineWidth: highContrast ? 1.25 : 1))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Recall Mode — Full shows everything, Hide Kana hides readings, Hide Defn. hides the English (for self-quizzing)")
+                    .djAccessibleControl(label: "Recall Mode", value: engine.recallMode.rawValue)
+                }
+
+                Spacer(minLength: 4)
+
+                // Recent kanji pills flush-aligned to the trailing right edge
+                if !engine.recentKanji.isEmpty {
+                    HStack(spacing: 3) {
+                        ForEach(Array(engine.recentKanji.prefix(maxRecentKanji)), id: \.self) { cp in
+                            let glyph = String(UnicodeScalar(cp)!)
+                            Button {
+                                engine.openFisheye(codepoint: cp)
+                            } label: {
+                                Text(glyph)
+                                    .font(.callout.weight(.bold))
+                                    .frame(width: 26, height: 26)
+                                    .background(Circle().fill(pillFill))
+                                    .overlay(Circle().strokeBorder(pillBorder, lineWidth: highContrast ? 1.25 : 1))
+                                    .contentShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Recently viewed kanji — open \(glyph)")
+                            .djAccessibleControl(
+                                label: "Recent kanji \(glyph)",
+                                hint: "Open \(glyph) in Kanji Fisheye"
+                            )
+                        }
+                    }
+                    .fixedSize()
+                }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 7)
+            .padding(.leading, 76)
+            .padding(.trailing, 12)
+            .padding(.top, 4)
+            .padding(.bottom, 6)
+            .frame(width: max(1, availableWidth), alignment: .leading)
 
             Rectangle()
                 .fill(DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.18, highContrast: highContrast))
                 .frame(height: 1)
         }
         .background {
-            if reduceTransparency {
-                DJTheme.solidGlassFallbackFill(for: colorScheme)
-            } else {
-                Rectangle()
-                    .fill(.regularMaterial)
-                    .overlay(DJTheme.topBarFrostTint(for: colorScheme))
+            ZStack {
+                if reduceTransparency {
+                    DJTheme.solidGlassFallbackFill(for: colorScheme)
+                } else {
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .overlay(DJTheme.topBarFrostTint(for: colorScheme))
+                }
+                WindowZoomHandle()
             }
         }
     }
@@ -765,29 +803,24 @@ struct MainWorkspaceView: View {
         help: String,
         action: @escaping () -> Void
     ) -> some View {
+        let pillFill = Color.primary.opacity(colorScheme == .dark ? 0.085 : 0.065)
+        let pillBorder = DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.14, highContrast: highContrast)
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 Image(systemName: systemImage)
                 if !compact {
                     Text(title)
                 }
             }
-            .font(.subheadline.weight(isActive ? .semibold : .medium))
+            .font(.caption.weight(isActive ? .semibold : .medium))
+            .lineLimit(1)
             .foregroundStyle(isActive ? .white : .primary)
-            .padding(.horizontal, 11)
-            .frame(height: 28)
-            .background(
-                Capsule().fill(
-                    isActive
-                        ? Color.accentColor
-                        : Color.primary.opacity(colorScheme == .dark ? 0.07 : 0.06)
-                )
-            )
+            .padding(.horizontal, compact ? 7 : 8)
+            .frame(height: 26)
+            .background(Capsule().fill(isActive ? Color.accentColor : pillFill))
             .overlay(
                 Capsule().strokeBorder(
-                    isActive
-                        ? Color.accentColor.opacity(0.4)
-                        : DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.14, highContrast: highContrast),
+                    isActive ? Color.accentColor.opacity(0.45) : pillBorder,
                     lineWidth: highContrast ? 1.25 : 1
                 )
             )
@@ -803,7 +836,7 @@ struct MainWorkspaceView: View {
     }
 
     private func searchResultsDropdown(availableWidth: CGFloat) -> some View {
-        let leadingPad: CGFloat = availableWidth < 920 ? 20 : 176
+        let leadingPad: CGFloat = availableWidth < 900 ? 20 : 164
         return VStack {
             HStack {
                 GlassCard(cornerRadius: 18, highlightOpacity: 0.35) {

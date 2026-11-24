@@ -88,8 +88,8 @@ enum DJTheme {
 
     static func topBarFrostTint(for scheme: ColorScheme) -> Color {
         scheme == .dark
-            ? Color(red: 0.09, green: 0.11, blue: 0.16).opacity(0.65)
-            : Color(red: 0.84, green: 0.865, blue: 0.905).opacity(0.72)
+            ? Color(red: 0.09, green: 0.11, blue: 0.16).opacity(0.22)
+            : Color.white.opacity(0.18)
     }
 
     static func hairlineColor(
