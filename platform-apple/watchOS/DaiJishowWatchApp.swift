@@ -136,6 +136,26 @@ private func watchDestinationView(
 
 // MARK: - Search & Detail Stack
 
+private struct WatchCornerBadge: View {
+    let title: String
+    let isCompactWatch: Bool
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: isCompactWatch ? 9.5 : 10, weight: .semibold))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(.primary.opacity(0.88))
+            .padding(.horizontal, isCompactWatch ? 6 : 7)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+            .padding(.leading, isCompactWatch ? 14 : 16)
+            .padding(.top, isCompactWatch ? 10 : 12)
+            .ignoresSafeArea(.container, edges: .top)
+            .allowsHitTesting(false)
+    }
+}
+
 private struct WatchSearchView: View {
     @ObservedObject var engine: DaiJishowEngine
     @Binding var path: [WatchDestination]
@@ -392,18 +412,7 @@ private struct WatchSearchView: View {
             .toolbarTitleDisplayMode(.inline)
             .overlay(alignment: .topLeading) {
                 if path.isEmpty {
-                    Text("Dai-Jishow")
-                        .font(.system(size: isCompactWatch ? 9.5 : 10, weight: .semibold))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .foregroundStyle(.primary.opacity(0.88))
-                        .padding(.horizontal, isCompactWatch ? 6 : 7)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.18)))
-                        .padding(.leading, isCompactWatch ? 14 : 16)
-                        .padding(.top, isCompactWatch ? 10 : 12)
-                        .ignoresSafeArea(.container, edges: .top)
-                        .allowsHitTesting(false)
+                    WatchCornerBadge(title: "Dai-Jishow", isCompactWatch: isCompactWatch)
                 }
             }
             .searchable(text: $engine.searchQuery, prompt: "Search")
@@ -918,7 +927,8 @@ private struct WatchKanjiDetailView: View {
                                 path.append(.word(hit.id))
                             } label: {
                                 VStack(alignment: .leading, spacing: 1) {
-                                    Text("\(hit.displayHeadword) (\(hit.kanaHead))")
+                                    let showKana = !hit.kanaHead.isEmpty && hit.kanaHead != hit.displayHeadword
+                                    Text(showKana ? "\(hit.displayHeadword) (\(hit.kanaHead))" : hit.displayHeadword)
                                         .font(.caption.weight(.semibold))
                                     Text(hit.primaryGloss)
                                         .font(.caption2)
@@ -1538,6 +1548,10 @@ private struct WatchDecksView: View {
     @Binding var path: [WatchDestination]
     let onFocusInFisheye: (UInt32) -> Void
 
+    private var isCompactWatch: Bool {
+        WKInterfaceDevice.current().screenBounds.width < 175
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             List {
@@ -1601,7 +1615,13 @@ private struct WatchDecksView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("Decks")
+            .navigationTitle("")
+            .toolbarTitleDisplayMode(.inline)
+            .overlay(alignment: .topLeading) {
+                if path.isEmpty {
+                    WatchCornerBadge(title: "Decks", isCompactWatch: isCompactWatch)
+                }
+            }
             .navigationDestination(for: WatchDestination.self) { dest in
                 watchDestinationView(
                     for: dest,
