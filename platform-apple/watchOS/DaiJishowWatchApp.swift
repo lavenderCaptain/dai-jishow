@@ -409,6 +409,8 @@ private struct WatchPitchSparkline: View {
             Text("\(contour.patternName) • \(contour.patternSublabel)")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(Color.accentColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
 
             Canvas { ctx, size in
                 let totalCount = contour.morae.count + (contour.showParticle ? 1 : 0)
@@ -664,6 +666,7 @@ private struct WatchKanjiStrokeDiagram: View {
     let activeStrokeIndex: Int?
     let activeStrokeProgress: CGFloat
     let isAnimating: Bool
+    var boxSize: CGFloat = 74
 
     var body: some View {
         ZStack {
@@ -763,7 +766,7 @@ private struct WatchKanjiStrokeDiagram: View {
                 .padding(3)
             }
         }
-        .frame(width: 74, height: 74)
+        .frame(width: boxSize, height: boxSize)
     }
 }
 
@@ -806,7 +809,8 @@ private struct WatchKanjiDetailView: View {
                                 completedStrokes: completedStrokes,
                                 activeStrokeIndex: activeStrokeIndex,
                                 activeStrokeProgress: activeStrokeProgress,
-                                isAnimating: isAnimatingStrokes
+                                isAnimating: isAnimatingStrokes,
+                                boxSize: WKInterfaceDevice.current().screenBounds.width < 175 ? 64 : 74
                             )
                         }
                         .buttonStyle(.plain)
@@ -1036,14 +1040,43 @@ private struct WatchCrownFisheyeView: View {
         }
     }
 
+    private var isCompactWatch: Bool {
+        WKInterfaceDevice.current().screenBounds.width < 175
+    }
+
+    private func layoutMetrics(in size: CGSize) -> (
+        rx: CGFloat,
+        ry: CGFloat,
+        centerDiameter: CGFloat,
+        baseNodeDiameter: CGFloat,
+        hitMinDiameter: CGFloat,
+        isCompactCanvas: Bool
+    ) {
+        let isCompactCanvas = size.height < 98 || size.width < 175
+        let minDim = min(size.width, size.height)
+        let centerDiameter = isCompactCanvas
+            ? min(36, max(28, size.height * 0.38))
+            : min(46, max(36, minDim * 0.30))
+        let baseNodeDiameter = isCompactCanvas
+            ? min(24, max(19, size.height * 0.25))
+            : min(29, max(23, minDim * 0.19))
+        let hitMinDiameter: CGFloat = isCompactCanvas ? 26 : 32
+        let maxFocusedDiameter = baseNodeDiameter * 1.24
+        let safeMaxRx = max(30, ((size.width - maxFocusedDiameter) * 0.5 - 2) / 1.06)
+        let safeMaxRy = max(18, ((size.height - maxFocusedDiameter) * 0.5 - 1) / 1.06)
+        let rx = min(safeMaxRx, max(isCompactCanvas ? 48 : 44, size.width * 0.38))
+        let ry = min(safeMaxRy, max(isCompactCanvas ? 22 : 34, size.height * 0.36))
+        return (rx, ry, centerDiameter, baseNodeDiameter, hitMinDiameter, isCompactCanvas)
+    }
+
     private func nodeLayoutPositions(
         in size: CGSize,
+        rx: CGFloat,
+        ry: CGFloat,
         nodes: [FisheyeNode],
         focusedIndex: Int
     ) -> [CGPoint] {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
-        let rx = max(44, size.width * 0.375)
-        let ry = max(34, size.height * 0.36)
 
         let rightIndices = nodes.indices.filter { nodes[$0].side == 1 }
         let leftIndices = nodes.indices.filter { nodes[$0].side == 0 }
@@ -1091,39 +1124,45 @@ private struct WatchCrownFisheyeView: View {
             let focusedIdx = normalizedFocusIndex(count: nodes.count)
             let focusedNode: FisheyeNode? = nodes.isEmpty ? nil : nodes[focusedIdx]
 
-            VStack(spacing: 4) {
+            VStack(spacing: isCompactWatch ? 2 : 4) {
                 HStack(spacing: 4) {
                     if let center = engine.activeKanji {
                         Button {
                             engine.openKanjiDetail(codepoint: center.codepoint)
                             path.append(.kanji(center.codepoint))
                         } label: {
-                            HStack(spacing: 4) {
+                            HStack(spacing: 3) {
                                 Text(center.glyph)
                                     .font(.caption.bold())
+                                    .fixedSize()
                                 if !center.meanings.isEmpty {
                                     Text(center.meanings)
-                                        .font(.system(size: 11))
+                                        .font(.system(size: isCompactWatch ? 10 : 11))
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
+                                        .truncationMode(.tail)
                                 }
                             }
                         }
                         .buttonStyle(.plain)
+                        .layoutPriority(0)
                     }
 
-                    Spacer(minLength: 4)
+                    Spacer(minLength: 2)
 
                     Button {
                         cycleFisheyeMode()
                     } label: {
                         Text(fisheyeModeLabel)
-                            .font(.system(size: 10, weight: .semibold))
-                            .padding(.horizontal, 6)
+                            .font(.system(size: isCompactWatch ? 9.5 : 10, weight: .semibold))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .padding(.horizontal, isCompactWatch ? 5 : 6)
                             .padding(.vertical, 2)
                             .background(Capsule().fill(Color.accentColor.opacity(0.22)))
                     }
                     .buttonStyle(.plain)
+                    .fixedSize()
                     .accessibilityLabel("Fisheye mode: \(fisheyeModeLabel)")
                     .accessibilityHint("Tap to switch between Compounds, Parts, and Idioms")
 
@@ -1134,20 +1173,25 @@ private struct WatchCrownFisheyeView: View {
                             crownIndex = 0
                         } label: {
                             Text("P\(safePageIndex + 1)/\(totalPages)")
-                                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                                .font(.system(size: isCompactWatch ? 9.5 : 10, weight: .medium).monospacedDigit())
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
                                 .background(Capsule().fill(Color.primary.opacity(0.14)))
                         }
                         .buttonStyle(.plain)
+                        .fixedSize()
                         .accessibilityLabel("Page \(safePageIndex + 1) of \(totalPages)")
                     } else if !nodes.isEmpty {
                         Text("\(focusedIdx + 1)/\(nodes.count)")
-                            .font(.system(size: 10, weight: .medium).monospacedDigit())
+                            .font(.system(size: isCompactWatch ? 9.5 : 10, weight: .medium).monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
                     }
                 }
-                .padding(.horizontal, 6)
+                .padding(.horizontal, isCompactWatch ? 4 : 6)
 
                 if nodes.isEmpty {
                     Spacer()
@@ -1164,23 +1208,25 @@ private struct WatchCrownFisheyeView: View {
                     Spacer()
                 } else {
                     GeometryReader { geo in
+                        let metrics = layoutMetrics(in: geo.size)
                         let centerPt = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
                         let positions = nodeLayoutPositions(
                             in: geo.size,
+                            rx: metrics.rx,
+                            ry: metrics.ry,
                             nodes: nodes,
                             focusedIndex: focusedIdx
                         )
-                        let minDim = min(geo.size.width, geo.size.height)
-                        let centerDiameter = min(46, max(36, minDim * 0.30))
-                        let baseNodeDiameter = min(29, max(23, minDim * 0.19))
+                        let centerDiameter = metrics.centerDiameter
+                        let baseNodeDiameter = metrics.baseNodeDiameter
 
                         ZStack {
-                            Canvas { ctx, size in
+                            Canvas { ctx, _ in
                                 let ovalRect = CGRect(
-                                    x: centerPt.x - max(44, size.width * 0.375),
-                                    y: centerPt.y - max(34, size.height * 0.36),
-                                    width: max(88, size.width * 0.75),
-                                    height: max(68, size.height * 0.72)
+                                    x: centerPt.x - metrics.rx,
+                                    y: centerPt.y - metrics.ry,
+                                    width: metrics.rx * 2,
+                                    height: metrics.ry * 2
                                 )
                                 ctx.stroke(
                                     Path(ellipseIn: ovalRect),
@@ -1204,6 +1250,10 @@ private struct WatchCrownFisheyeView: View {
                             ForEach(Array(nodes.enumerated()), id: \.element.id) { idx, node in
                                 let isFocused = (idx == focusedIdx)
                                 let diameter = isFocused ? baseNodeDiameter * 1.24 : baseNodeDiameter * 0.92
+                                let glyphSize: CGFloat = metrics.isCompactCanvas
+                                    ? (isFocused ? 14 : 11)
+                                    : (isFocused ? 17 : 13)
+                                let hitSize = max(diameter, metrics.hitMinDiameter)
                                 Button {
                                     WKInterfaceDevice.current().play(.click)
                                     if isFocused {
@@ -1218,7 +1268,7 @@ private struct WatchCrownFisheyeView: View {
                                     }
                                 } label: {
                                     Text(node.glyph)
-                                        .font(.system(size: isFocused ? 17 : 13, weight: isFocused ? .bold : .semibold))
+                                        .font(.system(size: glyphSize, weight: isFocused ? .bold : .semibold))
                                         .foregroundStyle(.primary)
                                         .frame(width: diameter, height: diameter)
                                         .background(
@@ -1235,7 +1285,7 @@ private struct WatchCrownFisheyeView: View {
                                             color: isFocused ? node.tierColor.opacity(0.45) : .clear,
                                             radius: isFocused ? 5 : 0
                                         )
-                                        .frame(width: max(diameter, 32), height: max(diameter, 32))
+                                        .frame(width: hitSize, height: hitSize)
                                         .contentShape(Circle())
                                 }
                                 .buttonStyle(.plain)
@@ -1253,7 +1303,7 @@ private struct WatchCrownFisheyeView: View {
                                     path.append(.kanji(centerKanji.codepoint))
                                 } label: {
                                     Text(centerKanji.glyph)
-                                        .font(.system(size: 22, weight: .bold))
+                                        .font(.system(size: centerDiameter < 34 ? 17 : 22, weight: .bold))
                                         .frame(width: centerDiameter, height: centerDiameter)
                                         .background(
                                             Circle()
@@ -1319,8 +1369,8 @@ private struct WatchCrownFisheyeView: View {
                                     }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
+                                .padding(.horizontal, isCompactWatch ? 7 : 8)
+                                .padding(.vertical, isCompactWatch ? 4 : 5)
                                 .background(
                                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                                         .fill(node.tierColor.opacity(0.16))
@@ -1338,7 +1388,7 @@ private struct WatchCrownFisheyeView: View {
                                 Image(systemName: "scope")
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(node.tierColor)
-                                    .frame(width: 30, height: 36)
+                                    .frame(width: isCompactWatch ? 28 : 30, height: isCompactWatch ? 32 : 36)
                                     .background(
                                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                                             .fill(node.tierColor.opacity(0.20))
@@ -1592,23 +1642,33 @@ private struct WatchDeckFlashcardsView: View {
                 .buttonStyle(.plain)
 
                 if isRevealed {
-                    HStack(spacing: 8) {
-                        Button("Again") {
+                    HStack(spacing: 6) {
+                        Button {
                             WKInterfaceDevice.current().play(.directionDown)
                             queue.append(item)
                             againCount += 1
                             reviewedCount += 1
                             currentIndex += 1
                             isRevealed = false
+                        } label: {
+                            Text("Again")
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
+                                .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
 
-                        Button("Got It") {
+                        Button {
                             WKInterfaceDevice.current().play(.success)
                             reviewedCount += 1
                             currentIndex += 1
                             isRevealed = false
+                        } label: {
+                            Text("Got It")
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
+                                .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
