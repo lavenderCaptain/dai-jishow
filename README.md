@@ -46,9 +46,10 @@ one glass surface that reframes as you drill in.
 - **Z-Stack navigation** — every lookup pushes a glass frame forward; the history
   deck (⌘\\) scrubs the trail.
 - **Recall modes** — *Full / Hide Kana / Hide Gloss* for self-quizzing.
-- **Tooltips** on every control; **text selection + copy** (⌘C, plus a
-  ⌘⌥C "Copy Entry" command); **About** (with source/license credits) and
-  **Preferences**.
+- **Adaptive macOS UI** — Native unified toolbar with Liquid Glass on macOS 26+
+  (material fallbacks on macOS 14–15), **System / Dark / Light** appearance mode,
+  VoiceOver/keyboard navigation, Reduce Transparency / Motion / Increase Contrast
+  adaptation, **Edit / View / Navigate / Help (⌘/)** menus, **About**, and **Preferences**.
 
 All of the above runs **100% offline** against a single read-only, memory-mapped
 SQLite corpus bundled with the app.
@@ -93,7 +94,11 @@ idiom triggers) exist in the schema but are not yet populated by the ETL.
   (`build_corpus.py`, with `fetch_sources.py` and `pack_kanjivg.py`).
 * `platform-apple/macOS/` — The native SwiftUI glass-material macOS shell
   (`DaiJishowMac`): `EngineBridge` (C11 bridge + app state), `GlassViews`,
-  `DaiJishowMacApp`, `AppChrome`, `RadicalCatalog`.
+  `DaiJishowMacApp`, `AppChrome`, `ThemeTokens`, `RadicalCatalog`,
+  `SpeechEngine`, `StudyStore`, `StudyLibraryView`, `WindowChrome`.
+* `DaiJishow.xcodeproj/` — Native Xcode project defining `Dai-Jishow`,
+  `DaiJishowMorph`, `DaiJishowCore`, and `DaiJishowMorphTests` targets
+  (with shared `Dai-Jishow` scheme and `icons/DaiJishow.icon`).
 * `platform-android/` — Placeholder (`.gitkeep`); the Android/Wear OS shell is
   not yet built.
 * `tools/` — `build_app_bundle.sh` (assembles `Dai-Jishow.app` + a
@@ -101,7 +106,7 @@ idiom triggers) exist in the schema but are not yet populated by the ETL.
 
 ## Build & Run
 
-The project builds with the Swift Package Manager (there is no `.xcodeproj`):
+Open `DaiJishow.xcodeproj` directly in Xcode (scheme `Dai-Jishow`, **⌘R** to run, **⌘U** to run unit tests), or build from the command line with Xcode or Swift Package Manager:
 
 ```bash
 # 1. Build the C++ core + macOS app

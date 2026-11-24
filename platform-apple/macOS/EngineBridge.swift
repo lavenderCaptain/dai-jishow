@@ -742,6 +742,7 @@ final class DaiJishowEngine: ObservableObject {
     private static let wordCosmosColorModeKey = "daijishow.wordCosmosColorMode"
     private static let lastScreenKey = "daijishow.lastScreen"
     private static let lastTargetIdKey = "daijishow.lastTargetId"
+    private static let appearanceModeKey = "daijishow.appearanceMode"
 
     private var handle: OpaquePointer?
     private var isBootstrapped = false
@@ -1082,6 +1083,18 @@ final class DaiJishowEngine: ObservableObject {
     /// Drives the About / Credits sheet (standard Mac "About" chrome).
     @Published var showAbout: Bool = false
 
+    /// Drives the Keyboard Shortcuts & Quick Guide sheet (Help menu).
+    @Published var showHelp: Bool = false
+
+    /// User-selected app appearance (System / Dark / Light), persisted in UserDefaults.
+    @Published var appearanceMode: AppAppearanceMode = .system {
+        didSet {
+            if isBootstrapped {
+                UserDefaults.standard.set(appearanceMode.rawValue, forKey: Self.appearanceModeKey)
+            }
+        }
+    }
+
     @Published var isWordCockpitExpanded: Bool {
         didSet {
             UserDefaults.standard.set(isWordCockpitExpanded, forKey: Self.cockpitDefaultsKey)
@@ -1246,6 +1259,10 @@ final class DaiJishowEngine: ObservableObject {
         if let savedColorMode = d.string(forKey: Self.wordCosmosColorModeKey),
            let colorMode = WordCosmosColorMode(rawValue: savedColorMode) {
             self.wordCosmosColorMode = colorMode
+        }
+        if let savedAppearance = d.string(forKey: Self.appearanceModeKey),
+           let appearance = AppAppearanceMode(rawValue: savedAppearance) {
+            self.appearanceMode = appearance
         }
 
         self.studyStoreCancellable = studyStore.objectWillChange.sink { [weak self] _ in
@@ -1531,7 +1548,7 @@ final class DaiJishowEngine: ObservableObject {
             } else if rank < 999_999 {
                 return ("Literary", 0.26, Color(red: 0.65, green: 0.55, blue: 0.98), "#\(rank)")
             } else {
-                return ("Unranked", 0.16, Color.white.opacity(0.55), "—")
+                return ("Unranked", 0.16, Color.secondary, "—")
             }
         }()
 

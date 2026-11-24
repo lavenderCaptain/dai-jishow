@@ -20,61 +20,59 @@ struct GlassCard<Content: View>: View {
     var surface: CardSurfaceStyle = .glass
     @ViewBuilder var content: () -> Content
 
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
     var body: some View {
+        let highContrast = (contrast == .increased)
+        let borderWidth: CGFloat = highContrast ? 1.35 : 1.0
         content()
             .background {
                 if surface == .content {
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(Color(red: 0.11, green: 0.13, blue: 0.19).opacity(0.92))
+                        .fill(DJTheme.contentCardFill(for: colorScheme, reduceTransparency: reduceTransparency, highContrast: highContrast))
                         .overlay {
                             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                                 .strokeBorder(
                                     LinearGradient(
                                         colors: [
-                                            Color.white.opacity(highlightOpacity * 0.65),
-                                            Color.white.opacity(0.05)
+                                            DJTheme.hairlineColor(for: colorScheme, baseOpacity: highlightOpacity * 0.65, highContrast: highContrast),
+                                            DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.08, highContrast: highContrast)
                                         ],
                                         startPoint: .topLeading,
                                         endPoint: .bottomTrailing
                                     ),
-                                    lineWidth: 1
+                                    lineWidth: borderWidth
                                 )
                         }
                 } else {
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(.ultraThinMaterial)
+                        .fill(reduceTransparency ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme)) : AnyShapeStyle(.ultraThinMaterial))
                         .overlay {
-                            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            Color.white.opacity(0.14),
-                                            Color.white.opacity(0.03),
-                                            Color.black.opacity(0.10)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                )
+                            if !reduceTransparency {
+                                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                                    .fill(DJTheme.glassSheenGradient(for: colorScheme))
+                            }
                         }
                         .overlay {
                             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                                 .strokeBorder(
                                     LinearGradient(
                                         colors: [
-                                            Color.white.opacity(highlightOpacity),
-                                            Color.white.opacity(0.06)
+                                            DJTheme.hairlineColor(for: colorScheme, baseOpacity: highlightOpacity, highContrast: highContrast),
+                                            DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.08, highContrast: highContrast)
                                         ],
                                         startPoint: .topLeading,
                                         endPoint: .bottomTrailing
                                     ),
-                                    lineWidth: 1
+                                    lineWidth: borderWidth
                                 )
                         }
                 }
             }
             .shadow(
-                color: Color.black.opacity(surface == .content ? 0.20 : 0.28),
+                color: Color.black.opacity(colorScheme == .dark ? (surface == .content ? 0.20 : 0.28) : (surface == .content ? 0.08 : 0.14)),
                 radius: surface == .content ? 12 : 18,
                 x: 0,
                 y: surface == .content ? 5 : 8
@@ -93,7 +91,7 @@ struct RubyWordView: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: 2) {
             ForEach(cells) { cell in
-                VStack(spacing: 1) {
+                let cellView = VStack(spacing: 1) {
                     Text(hideKana || cell.furigana.isEmpty ? " " : cell.furigana)
                         .font(.system(size: max(11, fontSize * 0.30), weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
@@ -108,15 +106,25 @@ struct RubyWordView: View {
                         .background {
                             if cell.kanjiCodepoint > 0 {
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color.white.opacity(0.07))
+                                    .fill(Color.primary.opacity(0.07))
                             }
                         }
                 }
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    if cell.kanjiCodepoint > 0 {
-                        onTapKanji?(cell.kanjiCodepoint)
+
+                if cell.kanjiCodepoint > 0, let onTapKanji {
+                    Button {
+                        onTapKanji(cell.kanjiCodepoint)
+                    } label: {
+                        cellView
                     }
+                    .buttonStyle(.plain)
+                    .djAccessibleControl(
+                        label: cell.furigana.isEmpty || hideKana ? cell.surface : "\(cell.surface), reading \(cell.furigana)",
+                        hint: "Open kanji detail for \(cell.surface)"
+                    )
+                } else {
+                    cellView
                 }
             }
         }
@@ -131,21 +139,29 @@ struct ZStackHistoryOverlay: View {
     @State private var scrollAccumulator: CGFloat = 0
     @State private var scrollMonitor: Any?
     @FocusState private var deckFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private let baseCardWidth: CGFloat = 860
     private let baseCardHeight: CGFloat = 540
 
     var body: some View {
         ZStack {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .background(Color.black.opacity(0.68))
-                .ignoresSafeArea()
-                .onTapGesture {
-                    withAnimation(.spring(response: 0.30, dampingFraction: 0.85)) {
-                        engine.isZStackOpen = false
-                    }
+            Group {
+                if reduceTransparency {
+                    Color.black.opacity(0.86)
+                } else {
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .background(Color.black.opacity(0.62))
                 }
+            }
+            .ignoresSafeArea()
+            .onTapGesture {
+                djWithAnimation(reduceMotion, .spring(response: 0.30, dampingFraction: 0.85)) {
+                    engine.isZStackOpen = false
+                }
+            }
 
             VStack(spacing: 14) {
                 HStack(spacing: 14) {
@@ -159,7 +175,7 @@ struct ZStackHistoryOverlay: View {
                             .foregroundStyle(.white.opacity(0.75))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
-                            .background(Capsule().fill(Color.white.opacity(0.12)))
+                            .background(Capsule().fill(Color.primary.opacity(0.12)))
                     }
 
                     Spacer()
@@ -169,15 +185,16 @@ struct ZStackHistoryOverlay: View {
                         .foregroundStyle(.white.opacity(0.65))
 
                     Button {
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                        djWithAnimation(reduceMotion, .spring(response: 0.28, dampingFraction: 0.86)) {
                             engine.isZStackOpen = false
                         }
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.title2)
-                            .foregroundStyle(.white.opacity(0.78))
+                            .foregroundStyle(.white.opacity(0.82))
                     }
                     .buttonStyle(.plain)
+                    .djAccessibleControl(label: "Close navigation deck", hint: "Press Escape or click to return")
                 }
                 .padding(.horizontal, 36)
                 .padding(.top, 20)
@@ -206,7 +223,7 @@ struct ZStackHistoryOverlay: View {
                                     let depthScale = max(0.56, 1.0 - absRel * 0.115)
                                     let xOffset = rel * stepSpacing + (rel > 0 ? 18 : (rel < 0 ? -18 : 0))
                                     let yOffset = absRel * 10
-                                    let yawDegrees = Double(max(-36, min(36, -rel * 16)))
+                                    let yawDegrees = reduceMotion ? 0 : Double(max(-36, min(36, -rel * 16)))
                                     let cardOpacity = max(0.0, 1.0 - Double(absRel) * 0.21)
                                     let isFocused = (idx == engine.zStackFocusedIndex)
 
@@ -230,13 +247,20 @@ struct ZStackHistoryOverlay: View {
                                     .offset(x: xOffset, y: yOffset)
                                     .opacity(cardOpacity)
                                     .zIndex(100 - Double(absRel) * 10)
+                                    .focusable(interactions: .activate)
+                                    .djAccessibleControl(
+                                        label: "\(item.label), \(item.subtitle)",
+                                        hint: isFocused ? "Open this history screen" : "Focus this history screen",
+                                        selected: isFocused,
+                                        isButton: true
+                                    )
                                     .onTapGesture {
                                         if isFocused {
-                                            withAnimation(.spring(response: 0.30, dampingFraction: 0.85)) {
+                                            djWithAnimation(reduceMotion, .spring(response: 0.30, dampingFraction: 0.85)) {
                                                 engine.jumpToHistory(index: idx)
                                             }
                                         } else {
-                                            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.82)) {
+                                            djWithAnimation(reduceMotion, .interactiveSpring(response: 0.28, dampingFraction: 0.82)) {
                                                 engine.zStackFocusedIndex = idx
                                                 engine.ensureHistorySnapshot(at: idx)
                                             }
@@ -265,50 +289,55 @@ struct ZStackHistoryOverlay: View {
                         )
                     }
 
-                    HStack(spacing: 20) {
-                        Button {
-                            withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
-                                engine.stepZStack(by: -1)
+                    DJGlassContainer(spacing: 20) {
+                        HStack(spacing: 20) {
+                            Button {
+                                djWithAnimation(reduceMotion, .interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
+                                    engine.stepZStack(by: -1)
+                                }
+                            } label: {
+                                Label("Previous", systemImage: "chevron.left")
+                                    .font(.subheadline.weight(.medium))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .djGlassCapsule(interactive: true)
                             }
-                        } label: {
-                            Label("Previous", systemImage: "chevron.left")
-                                .font(.subheadline.weight(.medium))
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(Capsule().fill(Color.white.opacity(0.12)))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(engine.zStackFocusedIndex <= 0)
-                        .opacity(engine.zStackFocusedIndex <= 0 ? 0.4 : 1)
+                            .buttonStyle(.plain)
+                            .disabled(engine.zStackFocusedIndex <= 0)
+                            .opacity(engine.zStackFocusedIndex <= 0 ? 0.4 : 1)
+                            .djAccessibleControl(label: "Previous card")
 
-                        Button {
-                            withAnimation(.spring(response: 0.30, dampingFraction: 0.85)) {
-                                engine.jumpToHistory(index: engine.zStackFocusedIndex)
+                            Button {
+                                djWithAnimation(reduceMotion, .spring(response: 0.30, dampingFraction: 0.85)) {
+                                    engine.jumpToHistory(index: engine.zStackFocusedIndex)
+                                }
+                            } label: {
+                                Label("Open Selected Card", systemImage: "arrow.up.forward.app.fill")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 9)
+                                    .background(Capsule().fill(Color.accentColor))
                             }
-                        } label: {
-                            Label("Open Selected Card", systemImage: "arrow.up.forward.app.fill")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 9)
-                                .background(Capsule().fill(Color.accentColor))
-                        }
-                        .buttonStyle(.plain)
+                            .buttonStyle(.plain)
+                            .djAccessibleControl(label: "Open selected card")
 
-                        Button {
-                            withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
-                                engine.stepZStack(by: 1)
+                            Button {
+                                djWithAnimation(reduceMotion, .interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
+                                    engine.stepZStack(by: 1)
+                                }
+                            } label: {
+                                Label("Next", systemImage: "chevron.right")
+                                    .font(.subheadline.weight(.medium))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .djGlassCapsule(interactive: true)
                             }
-                        } label: {
-                            Label("Next", systemImage: "chevron.right")
-                                .font(.subheadline.weight(.medium))
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(Capsule().fill(Color.white.opacity(0.12)))
+                            .buttonStyle(.plain)
+                            .disabled(engine.zStackFocusedIndex + 1 >= engine.history.count)
+                            .opacity(engine.zStackFocusedIndex + 1 >= engine.history.count ? 0.4 : 1)
+                            .djAccessibleControl(label: "Next card")
                         }
-                        .buttonStyle(.plain)
-                        .disabled(engine.zStackFocusedIndex + 1 >= engine.history.count)
-                        .opacity(engine.zStackFocusedIndex + 1 >= engine.history.count ? 0.4 : 1)
                     }
                     .foregroundStyle(.white)
                     .padding(.bottom, 22)
@@ -366,21 +395,25 @@ private struct ZStackScreenSnapshotCard: View {
     let renderScale: CGFloat
     let baseWidth: CGFloat
     let baseHeight: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
+        let highContrast = (contrast == .increased)
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: iconForKind(item.kind))
-                    .foregroundStyle(isFocused ? Color.accentColor : .white.opacity(0.75))
+                    .foregroundStyle(isFocused ? Color.accentColor : Color.secondary)
                 Text(item.label)
                     .font(.subheadline.weight(.bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
                 Text("•")
-                    .foregroundStyle(.white.opacity(0.35))
+                    .foregroundStyle(.tertiary)
                 Text(item.subtitle)
                     .font(.caption)
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer()
                 if isActiveCurrent {
@@ -393,21 +426,14 @@ private struct ZStackScreenSnapshotCard: View {
                 }
                 Text("#\(index + 1)")
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(Color.black.opacity(0.45))
+            .background(DJTheme.contentCardFill(for: colorScheme, reduceTransparency: reduceTransparency, highContrast: highContrast))
 
             ZStack {
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.08, green: 0.10, blue: 0.15),
-                        Color(red: 0.11, green: 0.13, blue: 0.20)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
+                DJTheme.workspaceBackground(for: colorScheme, reduceTransparency: reduceTransparency, highContrast: highContrast)
 
                 snapshotContent
                     .frame(width: baseWidth, height: baseHeight - 40)
@@ -416,12 +442,12 @@ private struct ZStackScreenSnapshotCard: View {
             }
             .clipped()
         }
-        .background(Color(red: 0.09, green: 0.11, blue: 0.16))
+        .background(DJTheme.solidGlassFallbackFill(for: colorScheme))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(
-                    isFocused ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.22),
+                    isFocused ? Color.accentColor.opacity(0.95) : DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.24, highContrast: highContrast),
                     lineWidth: isFocused ? 2.5 : 1
                 )
         }
@@ -470,7 +496,7 @@ private struct ZStackScreenSnapshotCard: View {
                     }
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06)))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.06)))
                 }
                 Spacer()
             }
@@ -480,7 +506,7 @@ private struct ZStackScreenSnapshotCard: View {
             HStack(spacing: 28) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(Color.white.opacity(0.06))
+                        .fill(Color.primary.opacity(0.06))
                     KanjiVectorDiagram(polylines: kanji.strokePolylines, visibleCount: kanji.strokePolylines.count)
                         .padding(24)
                 }
@@ -548,9 +574,9 @@ private struct ZStackScreenSnapshotCard: View {
                         VStack(spacing: 1) {
                             Text(node.glyph)
                                 .font(.system(size: nodeFontSize, weight: .bold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(.primary)
                             Text(node.shareText)
-                                .font(.system(size: 9, weight: .bold, design: .rounded))
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
                                 .foregroundStyle(node.tierColor)
                         }
                         .frame(width: nodeFontSize * 1.9, height: nodeFontSize * 1.9)
@@ -563,15 +589,15 @@ private struct ZStackScreenSnapshotCard: View {
                     VStack(spacing: 2) {
                         Text(kanji.glyph)
                             .font(.system(size: min(56, min(w, h) * 0.11), weight: .heavy))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.primary)
                         Text(kanji.meanings.split(separator: ";").first.map(String.init) ?? "")
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(.white.opacity(0.8))
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                     .frame(width: 112, height: 112)
-                    .background(Circle().fill(Color.accentColor.opacity(0.28)))
-                    .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: 2))
+                    .background(Circle().fill(Color.accentColor.opacity(0.24)))
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.42), lineWidth: 2))
                     .position(x: cx, y: cy)
 
                     if leftOv > 0 {
@@ -579,7 +605,7 @@ private struct ZStackScreenSnapshotCard: View {
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Capsule().fill(Color.white.opacity(0.14)))
+                            .background(Capsule().fill(Color.primary.opacity(0.14)))
                             .position(x: 68, y: h - 26)
                     }
                     if rightOv > 0 {
@@ -587,7 +613,7 @@ private struct ZStackScreenSnapshotCard: View {
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Capsule().fill(Color.white.opacity(0.14)))
+                            .background(Capsule().fill(Color.primary.opacity(0.14)))
                             .position(x: w - 68, y: h - 26)
                     }
                 }
@@ -610,7 +636,7 @@ private struct ZStackScreenSnapshotCard: View {
                         Text(isFilled ? RadicalCatalog.glyph(for: sel[idx]) : "＋")
                             .font(.system(size: 28, weight: .bold))
                             .frame(width: 56, height: 56)
-                            .background(RoundedRectangle(cornerRadius: 12).fill(isFilled ? Color.accentColor.opacity(0.25) : Color.white.opacity(0.06)))
+                            .background(RoundedRectangle(cornerRadius: 12).fill(isFilled ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.06)))
                     }
                 }
                 Text("\(matches.count) Matching Kanji")
@@ -621,7 +647,7 @@ private struct ZStackScreenSnapshotCard: View {
                         Text(String(UnicodeScalar(cp)!))
                             .font(.system(size: 26, weight: .semibold))
                             .frame(width: 52, height: 52)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
                     }
                 }
                 Spacer()
@@ -655,7 +681,7 @@ private struct ZStackScreenSnapshotCard: View {
                                 .foregroundStyle(.secondary)
                         }
                         .frame(width: 62, height: 62)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
                     }
                 }
                 Spacer()
@@ -689,7 +715,7 @@ private struct ZStackScreenSnapshotCard: View {
                         }
                         .padding(10)
                         .frame(maxWidth: .infinity)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
                     }
                 }
                 Spacer()
@@ -753,7 +779,7 @@ private struct ZStackScreenSnapshotCard: View {
                             }
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
                         }
                     }
                 }
@@ -812,6 +838,10 @@ struct FisheyeGraphView: View {
     @State private var hoveredOverflowPos: CGPoint?
     @State private var peekCenterGloss: Bool = false
     @State private var controlsHeight: CGFloat = 46
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     private var activeInspectorNode: FisheyeNode? {
         engine.hoveredFisheyeNode ?? engine.selectedFisheyeNode
@@ -838,11 +868,12 @@ struct FisheyeGraphView: View {
             let cy = h * 0.5
             let aspectRatio = Float(max(0.5, w / max(1.0, h)))
 
+            let highContrast = (contrast == .increased)
             let centerDiameter: CGFloat = min(132, max(88, minDim * 0.165))
             let centerGlyphSize: CGFloat = centerDiameter * 0.48
             let nodeDiameter: CGFloat = min(56, max(36, minDim * 0.068))
             let nodeGlyphSize: CGFloat = nodeDiameter * 0.48
-            let nodePctSize: CGFloat = max(9.5, nodeDiameter * 0.20)
+            let nodePctSize: CGFloat = max(10, nodeDiameter * 0.20)
 
             let leftAnchor = CGPoint(x: 54, y: h - 50)
             let rightAnchor = CGPoint(x: w - 54, y: h - 50)
@@ -884,7 +915,7 @@ struct FisheyeGraphView: View {
                         if engine.selectedFisheyeNode?.id == node.id {
                             engine.openFisheye(codepoint: node.codepoint, recordHistory: true)
                         } else {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            djWithAnimation(reduceMotion, .spring(response: 0.25, dampingFraction: 0.8)) {
                                 engine.selectedFisheyeNode = node
                             }
                         }
@@ -904,7 +935,7 @@ struct FisheyeGraphView: View {
                         .frame(width: nodeDiameter, height: nodeDiameter)
                         .background {
                             Circle()
-                                .fill(.ultraThinMaterial)
+                                .fill(reduceTransparency ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme)) : AnyShapeStyle(.ultraThinMaterial))
                                 .overlay(
                                     Circle()
                                         .fill(isHighlighted ? node.tierColor.opacity(0.24) : Color.clear)
@@ -920,6 +951,12 @@ struct FisheyeGraphView: View {
                         .shadow(color: node.tierColor.opacity(isHighlighted ? 0.45 : 0.16), radius: isHighlighted ? 14 : 8)
                     }
                     .buttonStyle(.plain)
+                    .djAccessibleControl(
+                        label: "\(node.glyph), \(node.tierLabel), \(node.shareText)",
+                        hint: engine.selectedFisheyeNode?.id == node.id ? "Re-center graph on \(node.glyph)" : "Select \(node.glyph) to inspect",
+                        value: node.compoundWord.isEmpty ? nil : node.compoundWord,
+                        selected: engine.selectedFisheyeNode?.id == node.id
+                    )
                     .scaleEffect(node.scale * (isHighlighted ? 1.12 : 1.0))
                     .opacity(isFanOpen ? 0.12 : node.opacity)
                     .allowsHitTesting(!isFanOpen)
@@ -955,22 +992,29 @@ struct FisheyeGraphView: View {
                         .frame(width: centerDiameter, height: centerDiameter)
                         .background {
                             Circle()
-                                .fill(.regularMaterial)
+                                .fill(reduceTransparency ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme)) : AnyShapeStyle(.regularMaterial))
                                 .overlay {
                                     Circle()
                                         .strokeBorder(
                                             LinearGradient(
-                                                colors: [.white.opacity(0.55), .white.opacity(0.12)],
+                                                colors: [
+                                                    DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.48, highContrast: highContrast),
+                                                    DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.12, highContrast: highContrast)
+                                                ],
                                                 startPoint: .topLeading,
                                                 endPoint: .bottomTrailing
                                             ),
-                                            lineWidth: 2
+                                            lineWidth: highContrast ? 2.4 : 2
                                         )
                                 }
                         }
-                        .shadow(color: Color.black.opacity(0.32), radius: 22, x: 0, y: 10)
+                        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.32 : 0.14), radius: 22, x: 0, y: 10)
                     }
                     .buttonStyle(.plain)
+                    .djAccessibleControl(
+                        label: "Center kanji \(kanji.glyph)",
+                        hint: isFanOpen ? "Collapse overflow fan" : "Open kanji detail for \(kanji.glyph)"
+                    )
                     .position(x: cx, y: cy)
                     .zIndex(15)
                 }
@@ -981,17 +1025,17 @@ struct FisheyeGraphView: View {
                     p.addLine(to: CGPoint(x: cx, y: h - 56))
                 }
                 .stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 6]))
-                .foregroundStyle(Color.white.opacity(0.12))
+                .foregroundStyle(Color.primary.opacity(0.14))
 
                 // Faint directional hints (← PREFIX + CENTER and CENTER + SUFFIX →)
                 HStack {
                     Text("← PREFIX + CENTER")
                         .font(.caption2.weight(.bold))
-                        .foregroundStyle(Color.white.opacity(0.38))
+                        .foregroundStyle(Color.primary.opacity(0.45))
                     Spacer()
                     Text("CENTER + SUFFIX →")
                         .font(.caption2.weight(.bold))
-                        .foregroundStyle(Color.white.opacity(0.38))
+                        .foregroundStyle(Color.primary.opacity(0.45))
                 }
                 .padding(.horizontal, 28)
                 .padding(.top, controlsHeight + 24)
@@ -1034,25 +1078,30 @@ struct FisheyeGraphView: View {
                                     .foregroundStyle(.primary)
                                 if engine.showFisheyePercentages {
                                     Text(sub.shareText)
-                                        .font(.system(size: max(9.5, 8.5 * dockScale), weight: .semibold, design: .monospaced))
+                                        .font(.system(size: max(10, 8.5 * dockScale), weight: .semibold, design: .monospaced))
                                         .foregroundStyle(sub.tierColor)
                                 }
                             }
                             .frame(width: diam, height: diam)
                             .background {
                                 Circle()
-                                    .fill(.ultraThinMaterial)
+                                    .fill(reduceTransparency ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme)) : AnyShapeStyle(.ultraThinMaterial))
                                     .overlay(Circle().fill(sub.tierColor.opacity(active ? 0.36 : 0.18)))
                                     .overlay(
                                         Circle().strokeBorder(
-                                            active ? Color.white : sub.tierColor.opacity(0.85),
+                                            active ? Color.primary : sub.tierColor.opacity(0.85),
                                             style: tierStrokeStyle(for: sub.commonalityTier, highlighted: active)
                                         )
                                     )
                             }
-                            .shadow(color: active ? sub.tierColor.opacity(0.55) : Color.black.opacity(0.35), radius: 8)
+                            .shadow(color: active ? sub.tierColor.opacity(0.55) : Color.black.opacity(colorScheme == .dark ? 0.35 : 0.14), radius: 8)
                         }
                         .buttonStyle(.plain)
+                        .djAccessibleControl(
+                            label: "\(sub.glyph), \(sub.tierLabel), \(sub.shareText)",
+                            hint: isSelected ? "Re-center graph on \(sub.glyph)" : "Select \(sub.glyph) to inspect",
+                            selected: isSelected
+                        )
                         .frame(width: diam, height: diam)
                         .contentShape(Circle())
                         .position(item.pos)
@@ -1098,69 +1147,79 @@ struct FisheyeGraphView: View {
                         }
 
                         if w < 1100 {
-                            modePicker.labelsHidden()
+                            modePicker.labelsHidden().accessibilityLabel("Graph Mode")
                         } else {
                             modePicker
                         }
 
-                        Menu {
-                            ForEach([6, 10, 12, 16, 24], id: \.self) { count in
-                                Button("Show Top \(count) per side") {
-                                    collapseOverflow()
-                                    engine.maxFisheyePerSide = count
-                                    if let cp = engine.activeKanji?.codepoint {
-                                        engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: aspectRatio)
+                        DJGlassContainer(spacing: 10) {
+                            Menu {
+                                ForEach([6, 10, 12, 16, 24], id: \.self) { count in
+                                    Button("Show Top \(count) per side") {
+                                        collapseOverflow()
+                                        engine.maxFisheyePerSide = count
+                                        if let cp = engine.activeKanji?.codepoint {
+                                            engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: aspectRatio)
+                                        }
                                     }
                                 }
+                            } label: {
+                                Label("Top \(engine.maxFisheyePerSide)/side", systemImage: "slider.horizontal.3")
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .djGlassCapsule(interactive: true)
                             }
-                        } label: {
-                            Label("Top \(engine.maxFisheyePerSide)/side", systemImage: "slider.horizontal.3")
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Capsule().fill(.ultraThinMaterial))
-                        }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                        .help("Top-N per side — how many neighbor kanji to show on each side of the center kanji. More = fuller graph; fewer = calmer view.")
+                            .menuStyle(.borderlessButton)
+                            .fixedSize()
+                            .help("Top-N per side — how many neighbor kanji to show on each side of the center kanji. More = fuller graph; fewer = calmer view.")
 
-                        Button {
-                            engine.showFisheyePercentages.toggle()
-                        } label: {
-                            Label("% Share", systemImage: engine.showFisheyePercentages ? "percent" : "circle")
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Capsule().fill(engine.showFisheyePercentages ? Color.accentColor.opacity(0.25) : Color.white.opacity(0.08)))
-                        }
-                        .buttonStyle(.plain)
-                        .fixedSize()
-                        .help("Toggle % Share — show each node's share of the center kanji's compound frequency in addition to its commonality tier color.")
-
-                        if let kanji = engine.activeKanji {
-                            BookmarkDeckControl(
-                                engine: engine,
-                                studyStore: engine.studyStore,
-                                item: engine.studyItem(for: kanji),
-                                compact: true
+                            Button {
+                                engine.showFisheyePercentages.toggle()
+                            } label: {
+                                Label("% Share", systemImage: engine.showFisheyePercentages ? "percent" : "circle")
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .djGlassCapsule(
+                                        interactive: true,
+                                        tint: engine.showFisheyePercentages ? Color.accentColor : nil
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .fixedSize()
+                            .djAccessibleControl(
+                                label: "Show Percentage Share",
+                                value: engine.showFisheyePercentages ? "On" : "Off",
+                                selected: engine.showFisheyePercentages
                             )
-                        }
+                            .help("Toggle % Share — show each node's share of the center kanji's compound frequency in addition to its commonality tier color.")
 
-                        HStack(spacing: 12) {
-                            legendDot(color: Color(red: 0.22, green: 0.74, blue: 0.97), label: "Core",
-                                      help: "Core kanji — overall frequency rank ≤ 2,500. Solid thick ring.")
-                            legendDot(color: Color(red: 0.20, green: 0.83, blue: 0.60), label: "Jōyō",
-                                      help: "Jōyō kanji — overall frequency rank ≤ 12,000. Solid ring.")
-                            legendDot(color: Color(red: 0.98, green: 0.75, blue: 0.14), label: "Literary",
-                                      help: "Literary kanji — overall frequency rank > 12,000. Dashed ring.")
-                            legendDot(color: Color(red: 0.65, green: 0.55, blue: 0.98), label: "Kyūjitai",
-                                      help: "Kyūjitai / non-Jōyō — ungraded legacy characters. Dotted ring.")
+                            if let kanji = engine.activeKanji {
+                                BookmarkDeckControl(
+                                    engine: engine,
+                                    studyStore: engine.studyStore,
+                                    item: engine.studyItem(for: kanji),
+                                    compact: true
+                                )
+                            }
+
+                            HStack(spacing: 12) {
+                                legendDot(color: Color(red: 0.22, green: 0.74, blue: 0.97), label: "Core",
+                                          help: "Core kanji — overall frequency rank ≤ 2,500. Solid thick ring.")
+                                legendDot(color: Color(red: 0.20, green: 0.83, blue: 0.60), label: "Jōyō",
+                                          help: "Jōyō kanji — overall frequency rank ≤ 12,000. Solid ring.")
+                                legendDot(color: Color(red: 0.98, green: 0.75, blue: 0.14), label: "Literary",
+                                          help: "Literary kanji — overall frequency rank > 12,000. Dashed ring.")
+                                legendDot(color: Color(red: 0.65, green: 0.55, blue: 0.98), label: "Kyūjitai",
+                                          help: "Kyūjitai / non-Jōyō — ungraded legacy characters. Dotted ring.")
+                            }
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .djGlassCapsule()
+                            .fixedSize()
                         }
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(.ultraThinMaterial))
-                        .fixedSize()
                     }
                     .frame(maxWidth: max(1, w - 32))
                     .background(
@@ -1234,7 +1293,7 @@ struct FisheyeGraphView: View {
                                             .font(.subheadline.weight(.semibold))
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 7)
-                                            .background(Capsule().fill(Color.white.opacity(0.14)))
+                                            .background(Capsule().fill(Color.primary.opacity(0.14)))
                                     }
                                     .buttonStyle(.plain)
                                     .fixedSize()
@@ -1246,7 +1305,7 @@ struct FisheyeGraphView: View {
                                             .font(.subheadline.weight(.semibold))
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 7)
-                                            .background(Capsule().fill(Color.white.opacity(0.14)))
+                                            .background(Capsule().fill(Color.primary.opacity(0.14)))
                                     }
                                     .buttonStyle(.plain)
                                     .fixedSize()
@@ -1259,7 +1318,7 @@ struct FisheyeGraphView: View {
                             HStack(spacing: 10) {
                                 Text("Hover or drag to focus · Tap node to inspect · Tap again to re-center")
                                     .font(.subheadline)
-                                    .foregroundStyle(Color.white.opacity(0.72))
+                                    .foregroundStyle(.secondary)
                                 if engine.recallMode == .hideGloss {
                                     Button(peekCenterGloss ? "Hide Center" : "Peek Center") {
                                         peekCenterGloss.toggle()
@@ -1271,7 +1330,7 @@ struct FisheyeGraphView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
-                            .background(Capsule().fill(.ultraThinMaterial))
+                            .djGlassCapsule()
                         }
 
                         Spacer()
@@ -1433,11 +1492,13 @@ struct FisheyeGraphView: View {
                     .font(.caption.bold())
                     .foregroundStyle(.primary)
                 Text(!isExpanded ? "more" : (remaining > 0 ? "expand" : "close"))
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
             }
             .frame(width: 52, height: 52)
-            .background(Circle().fill(.ultraThinMaterial))
+            .background(
+                Circle().fill(reduceTransparency ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme)) : AnyShapeStyle(.ultraThinMaterial))
+            )
             .overlay(
                 Circle()
                     .strokeBorder(
@@ -1445,10 +1506,15 @@ struct FisheyeGraphView: View {
                         style: StrokeStyle(lineWidth: 1.5, dash: isExpanded ? [] : [3, 3])
                     )
             )
-            .shadow(color: Color.black.opacity(0.25), radius: 8)
+            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.25 : 0.12), radius: 8)
         }
         .buttonStyle(.plain)
         .contentShape(Circle())
+        .djAccessibleControl(
+            label: isExpanded
+                ? (remaining > 0 ? "Expand \(side == 0 ? "prefix" : "suffix") overflow (\(remaining) left)" : "Collapse \(side == 0 ? "prefix" : "suffix") overflow")
+                : "Show \(totalOverflow) more \(side == 0 ? "prefix" : "suffix") kanji"
+        )
         .help(!isExpanded ? "Hover or tap to expand more kanji" : (remaining > 0 ? "Tap again to expand further" : "Tap to collapse"))
         .position(anchor)
         .zIndex(45)
@@ -1579,7 +1645,7 @@ enum CosmosTierInfo {
         } else if rank < 999_999 {
             return (0.26, Color(red: 0.65, green: 0.55, blue: 0.98), "Literary", "#\(rank)")
         } else {
-            return (0.16, Color.white.opacity(0.55), "Unranked", "—")
+            return (0.16, Color.secondary, "Unranked", "—")
         }
     }
 }
@@ -1694,6 +1760,9 @@ struct WordCosmosView: View {
     @State private var selectedWord: WordHit?
 
     @State private var controlBarHeight: CGFloat = 62
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private var activeWord: WordHit? { hoveredWord ?? selectedWord }
 
@@ -1805,9 +1874,9 @@ struct WordCosmosView: View {
         let isActive = isHovered || isSelected
         let diameter = b.diameter
 
-        // Fisheye lens: magnify bubbles near the pointer with a cosine bell
+        // Fisheye lens: magnify bubbles near the pointer with a cosine bell (disabled if Reduce Motion)
         let lensScale: CGFloat = {
-            guard let p = pointerPos else { return 1.0 }
+            guard !reduceMotion, let p = pointerPos else { return 1.0 }
             let d = hypot(b.pos.x - p.x, b.pos.y - p.y)
             let reach = diameter + 96
             if d < reach {
@@ -1817,7 +1886,7 @@ struct WordCosmosView: View {
             return 1.0
         }()
         let scaled = diameter * lensScale
-        let fontSize = max(9.5, scaled * 0.34)
+        let fontSize = max(10, scaled * 0.34)
         let showKana = b.hasKanji && !b.word.kanaHead.isEmpty
             && engine.recallMode != .hideKana && scaled >= 38
         let nonColorTag: String? = {
@@ -1849,38 +1918,46 @@ struct WordCosmosView: View {
                 .minimumScaleFactor(0.5)
             if showKana {
                 Text(b.word.kanaHead)
-                    .font(.system(size: max(9.5, fontSize * 0.36), weight: .medium))
+                    .font(.system(size: max(10, fontSize * 0.36), weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
             } else if let tag = nonColorTag {
                 Text(tag)
-                    .font(.system(size: 9.0, weight: .bold, design: .rounded))
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
                     .foregroundStyle(b.color)
             }
         }
         .frame(width: scaled, height: scaled)
         .background {
             Circle()
-                .fill(.ultraThinMaterial)
+                .fill(reduceTransparency ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme)) : AnyShapeStyle(.ultraThinMaterial))
                 .overlay(Circle().fill(b.color.opacity(isActive ? 0.34 : 0.18)))
                 .overlay(
                     Circle().strokeBorder(
-                        isActive ? Color.white : b.color.opacity(0.82),
+                        isActive ? Color.primary : b.color.opacity(0.82),
                         style: strokeStyle
                     )
                 )
         }
         .shadow(color: b.color.opacity(isActive ? 0.5 : 0.14), radius: isActive ? 12 : 6)
         .contentShape(Circle())
+        .focusable(interactions: .activate)
+        .djAccessibleControl(
+            label: b.word.kanaHead.isEmpty ? "\(b.word.displayHeadword), \(b.tierLabel)" : "\(b.word.displayHeadword), \(b.word.kanaHead), \(b.tierLabel)",
+            hint: isSelected ? "Open detailed word entry" : "Select word",
+            value: b.word.primaryGloss,
+            selected: isSelected,
+            isButton: true
+        )
         // Tap selects immediately (zero gesture timeout); tapping the selected bubble opens it.
         .onTapGesture {
             if selectedWord?.id == b.word.id {
-                withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                djWithAnimation(reduceMotion, .spring(response: 0.30, dampingFraction: 0.82)) {
                     engine.openWordFromCosmos(b.word)
                 }
             } else {
-                withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                djWithAnimation(reduceMotion, .spring(response: 0.24, dampingFraction: 0.82)) {
                     selectedWord = b.word
                 }
             }
@@ -1898,7 +1975,7 @@ struct WordCosmosView: View {
         ZStack {
             ForEach(0...5, id: \.self) { ring in
                 Circle()
-                    .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
                     .frame(
                         width: maxR * 2 * (CGFloat(ring) / 5.0 + 0.14),
                         height: maxR * 2 * (CGFloat(ring) / 5.0 + 0.14)
@@ -2062,16 +2139,17 @@ struct WordCosmosView: View {
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
-                        .background(Capsule().fill(Color.white.opacity(0.14)))
+                        .background(Capsule().fill(Color.primary.opacity(0.10)))
                 }
                 .buttonStyle(.plain)
+                .djAccessibleControl(label: "Open Kanji Fisheye for \(word.displayHeadword)")
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill((hoveredWord?.id == word.id) ? Color.white.opacity(0.06) : Color.clear)
+                .fill((hoveredWord?.id == word.id) ? Color.primary.opacity(0.06) : Color.clear)
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -2102,7 +2180,7 @@ struct WordCosmosView: View {
             .help("Layout: Constellation or Cloud")
 
             if hidePickerLabels {
-                layoutPicker.labelsHidden()
+                layoutPicker.labelsHidden().accessibilityLabel("Layout")
             } else {
                 layoutPicker
             }
@@ -2117,7 +2195,7 @@ struct WordCosmosView: View {
             .help("View: Cloud bubbles or Ranked frequency list")
 
             if hidePickerLabels {
-                viewPicker.labelsHidden()
+                viewPicker.labelsHidden().accessibilityLabel("View Mode")
             } else {
                 viewPicker
             }
@@ -2135,7 +2213,7 @@ struct WordCosmosView: View {
             .help("Tier: Core, Common, or All corpus words")
 
             if hidePickerLabels {
-                tierPicker.labelsHidden()
+                tierPicker.labelsHidden().accessibilityLabel("Frequency Tier")
             } else {
                 tierPicker
             }
@@ -2192,6 +2270,7 @@ struct WordCosmosView: View {
             }
             .buttonStyle(.plain)
             .fixedSize()
+            .djAccessibleControl(label: "Roll New Word Sample", hint: "Shuffle a new randomized sample of words")
             .help("Re-roll a fresh randomized sample")
 
             Toggle(isOn: Binding(
@@ -2233,7 +2312,7 @@ struct WordCosmosView: View {
                 .font(.caption2.weight(.semibold))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(Capsule().fill(.ultraThinMaterial))
+                .djGlassCapsule()
                 .fixedSize()
         }
         .frame(maxWidth: max(1, availableWidth - 68))
@@ -2393,7 +2472,7 @@ struct WordCosmosView: View {
                                     .font(.subheadline.weight(.semibold))
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 7)
-                                    .background(Capsule().fill(Color.white.opacity(0.14)))
+                                    .background(Capsule().fill(Color.primary.opacity(0.14)))
                             }
                             .buttonStyle(.plain)
                             .fixedSize()
@@ -2406,12 +2485,12 @@ struct WordCosmosView: View {
             } else {
                 Text("Hover or drag to preview · Tap once to select · Tap again to open Detailed")
                     .font(.subheadline)
-                    .foregroundStyle(Color.white.opacity(0.65))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(Capsule().fill(.ultraThinMaterial))
+                    .djGlassCapsule()
             }
 
             Spacer()
@@ -2633,7 +2712,7 @@ struct WordEntryView: View {
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(Capsule().fill(Color.white.opacity(0.10)))
+                        .background(Capsule().fill(Color.primary.opacity(0.10)))
                 }
                 .buttonStyle(.plain)
             }
@@ -2695,16 +2774,17 @@ struct WordEntryView: View {
                         .frame(width: 32, height: 32)
                         .background(
                             Circle()
-                                .fill(Color.white.opacity(0.08))
+                                .fill(Color.primary.opacity(0.08))
                                 .overlay(
                                     Circle()
-                                        .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                                        .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
                                 )
                         )
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
+                .djAccessibleControl(label: "Copy or Export Entry", hint: "Copy plain text, Anki TSV, or save CSV")
                 .help("Copy or export this entry as Anki TSV / CSV")
 
                 // Reader vs. Detailed Toggle (Persisted in UserDefaults)
@@ -2810,7 +2890,7 @@ struct WordEntryView: View {
                             GeometryReader { barGeo in
                                 ZStack(alignment: .leading) {
                                     Capsule()
-                                        .fill(Color.white.opacity(0.10))
+                                        .fill(Color.primary.opacity(0.10))
                                     Capsule()
                                         .fill(insights.telemetry.tierColor)
                                         .frame(width: max(12, barGeo.size.width * insights.telemetry.popularityRatio))
@@ -2839,8 +2919,8 @@ struct WordEntryView: View {
                                             .font(.subheadline.weight(.medium))
                                             .padding(.horizontal, 10)
                                             .padding(.vertical, 4)
-                                            .background(Capsule().fill(Color.white.opacity(0.08)))
-                                            .overlay(Capsule().strokeBorder(Color.white.opacity(0.15), lineWidth: 1))
+                                            .background(Capsule().fill(Color.primary.opacity(0.08)))
+                                            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
                                     }
                                     .buttonStyle(.plain)
                                     .help("Open the variant form \(variant)")
@@ -2939,7 +3019,7 @@ struct WordEntryView: View {
                                     .frame(width: 54, height: 54)
                                     .background(
                                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                            .fill(Color.white.opacity(0.08))
+                                            .fill(Color.primary.opacity(0.08))
                                     )
 
                                 VStack(alignment: .leading, spacing: 4) {
@@ -2992,10 +3072,10 @@ struct WordEntryView: View {
                             .padding(12)
                             .background(
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(Color.white.opacity(0.05))
+                                    .fill(Color.primary.opacity(0.05))
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
                                     )
                             )
                         }
@@ -3093,7 +3173,7 @@ struct WordEntryView: View {
                                                     .foregroundStyle(.secondary)
                                                     .padding(.horizontal, 8)
                                                     .padding(.vertical, 2)
-                                                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                                                    .background(Capsule().fill(Color.primary.opacity(0.08)))
                                             }
                                             ForEach(registerTags, id: \.self) { reg in
                                                 Text(reg)
@@ -3229,10 +3309,10 @@ struct WordEntryView: View {
                             .padding(12)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.white.opacity(0.06))
+                                    .fill(Color.primary.opacity(0.06))
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                            .strokeBorder(Color.white.opacity(0.11), lineWidth: 1)
+                                            .strokeBorder(Color.primary.opacity(0.11), lineWidth: 1)
                                     )
                             )
                         }
@@ -3329,7 +3409,7 @@ struct WordEntryView: View {
                         .padding(10)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.white.opacity(0.055))
+                                .fill(Color.primary.opacity(0.055))
                         )
                     }
                     .buttonStyle(.plain)
@@ -3407,10 +3487,10 @@ struct WordEntryView: View {
                             .padding(12)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.white.opacity(0.055))
+                                    .fill(Color.primary.opacity(0.055))
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                            .strokeBorder(Color.white.opacity(0.11), lineWidth: 1)
+                                            .strokeBorder(Color.primary.opacity(0.11), lineWidth: 1)
                                     )
                             )
                         }
@@ -3441,6 +3521,7 @@ struct WordEntryView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
+                            .djAccessibleControl(label: "Collocation Guide", hint: "Explain corpus collocation patterns")
                             .popover(isPresented: $showCollocationGuide, arrowEdge: .bottom) {
                                 Text("Particles that appear directly beside this word in example sentences. Tap a chip to filter matching sentences below.")
                                     .font(.caption)
@@ -3476,7 +3557,7 @@ struct WordEntryView: View {
                                     }
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 6)
-                                    .background(Capsule().fill(active ? Color.accentColor : Color.white.opacity(0.08)))
+                                    .background(Capsule().fill(active ? Color.accentColor : Color.primary.opacity(0.08)))
                                     .foregroundStyle(active ? .white : .primary)
                                 }
                                 .buttonStyle(.plain)
@@ -3639,7 +3720,7 @@ struct WordEntryView: View {
                         .padding(10)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.white.opacity(isCopied ? 0.10 : 0.055))
+                                .fill(Color.primary.opacity(isCopied ? 0.10 : 0.055))
                         )
                         .help("\(form.label): \(form.surface)\(form.kana != form.surface ? " (\(form.kana))" : "") — tap to copy")
                     }
@@ -3713,7 +3794,7 @@ struct PitchAccentContourView: View {
                             ZStack {
                                 Color.clear.frame(width: 24, height: 22)
                                 Circle()
-                                    .fill(isHigh ? Color.accentColor : Color.white.opacity(0.55))
+                                    .fill(isHigh ? Color.accentColor : Color.primary.opacity(0.55))
                                     .frame(width: 8, height: 8)
                                     .offset(y: isHigh ? -6 : 6)
                             }
@@ -3736,7 +3817,7 @@ struct PitchAccentContourView: View {
                         ZStack {
                             Color.clear.frame(width: 22, height: 22)
                             Circle()
-                                .strokeBorder(contour.particleHigh ? Color.accentColor : Color.white.opacity(0.45), lineWidth: 1.5)
+                                .strokeBorder(contour.particleHigh ? Color.accentColor : Color.primary.opacity(0.45), lineWidth: 1.5)
                                 .frame(width: 8, height: 8)
                                 .offset(y: contour.particleHigh ? -6 : 6)
                         }
@@ -3750,7 +3831,7 @@ struct PitchAccentContourView: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(0.055))
+                    .fill(Color.primary.opacity(0.055))
             )
         }
     }
@@ -4011,10 +4092,10 @@ struct KanjiDetailView: View {
                                         .padding(12)
                                         .background(
                                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                                .fill(Color.white.opacity(0.055))
+                                                .fill(Color.primary.opacity(0.055))
                                                 .overlay(
                                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                                        .strokeBorder(Color.white.opacity(0.11), lineWidth: 1)
+                                                        .strokeBorder(Color.primary.opacity(0.11), lineWidth: 1)
                                                 )
                                         )
                                     }
@@ -4063,7 +4144,7 @@ struct KanjiDetailView: View {
                                                 .font(.caption.weight(.semibold))
                                                 .padding(.horizontal, 10)
                                                 .padding(.vertical, 5)
-                                                .background(Capsule().fill(Color.white.opacity(0.10)))
+                                                .background(Capsule().fill(Color.primary.opacity(0.10)))
                                         }
                                         .buttonStyle(.plain)
                                     }
@@ -4164,7 +4245,7 @@ struct KanjiDetailView: View {
                                         }
                                         .padding(.vertical, 6)
                                         .padding(.horizontal, 10)
-                                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.05)))
+                                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
                                     }
                                     .buttonStyle(.plain)
                                     .help("\(word.displayHeadword) — \(word.kanaHead)\n\(word.primaryGloss)")
@@ -4262,8 +4343,9 @@ struct KanjiDetailView: View {
                                     .frame(width: 30, height: 28)
                             }
                             .buttonStyle(.plain)
-                            .background(Circle().fill(Color.white.opacity(0.08)))
+                            .background(Circle().fill(Color.primary.opacity(0.08)))
                             .disabled(shownStrokes <= 0)
+                            .djAccessibleControl(label: "Previous Stroke")
                             .help("Step back one stroke")
 
                             Button {
@@ -4288,8 +4370,9 @@ struct KanjiDetailView: View {
                                     .frame(width: 30, height: 28)
                             }
                             .buttonStyle(.plain)
-                            .background(Circle().fill(Color.white.opacity(0.08)))
+                            .background(Circle().fill(Color.primary.opacity(0.08)))
                             .disabled(shownStrokes >= totalStrokes)
+                            .djAccessibleControl(label: "Next Stroke")
                             .help("Step forward one stroke")
 
                             Button {
@@ -4299,7 +4382,8 @@ struct KanjiDetailView: View {
                                     .frame(width: 30, height: 28)
                             }
                             .buttonStyle(.plain)
-                            .background(Circle().fill(Color.white.opacity(0.08)))
+                            .background(Circle().fill(Color.primary.opacity(0.08)))
+                            .djAccessibleControl(label: "Restart Stroke Animation")
                             .help("Restart from stroke 1")
                         }
                     }
@@ -4334,7 +4418,7 @@ struct KanjiDetailView: View {
                                         .font(.caption.weight(.semibold))
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 5)
-                                        .background(Capsule().fill(Color.white.opacity(0.10)))
+                                        .background(Capsule().fill(Color.primary.opacity(0.10)))
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -4413,7 +4497,7 @@ struct KanjiDetailView: View {
                                 .font(.caption.weight(.semibold))
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
-                                .background(Capsule().fill(Color.white.opacity(0.10)))
+                                .background(Capsule().fill(Color.primary.opacity(0.10)))
                         }
                         .buttonStyle(.plain)
                     }
@@ -4469,7 +4553,7 @@ struct KanjiDetailView: View {
                                     }
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 5)
-                                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                                    .background(Capsule().fill(Color.primary.opacity(0.08)))
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -4502,7 +4586,7 @@ struct KanjiDetailView: View {
                                 .font(.subheadline.weight(.semibold))
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 9)
-                                .background(Capsule().fill(Color.white.opacity(0.12)))
+                                .background(Capsule().fill(Color.primary.opacity(0.12)))
                         }
                         .buttonStyle(.plain)
                     }
@@ -4605,7 +4689,7 @@ struct KanjiVectorDiagram: View {
             grid.addLine(to: CGPoint(x: w * 0.5, y: h))
             grid.move(to: CGPoint(x: 0, y: h * 0.5))
             grid.addLine(to: CGPoint(x: w, y: h * 0.5))
-            ctx.stroke(grid, with: .color(.white.opacity(0.14)), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+            ctx.stroke(grid, with: .color(.primary.opacity(0.14)), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
 
             let count = min(visibleCount, polylines.count)
             for idx in 0..<count {
@@ -4894,7 +4978,7 @@ struct CompoundKanjiView: View {
                                     .font(.caption.weight(.semibold))
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 4)
-                                    .background(Capsule().fill(Color.white.opacity(0.10)))
+                                    .background(Capsule().fill(Color.primary.opacity(0.10)))
                             }
                             .buttonStyle(.plain)
                         } else {
@@ -4913,7 +4997,7 @@ struct CompoundKanjiView: View {
                                     .font(.caption.weight(.semibold))
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 4)
-                                    .background(Capsule().fill(Color.white.opacity(0.10)))
+                                    .background(Capsule().fill(Color.primary.opacity(0.10)))
                             }
                             .buttonStyle(.plain)
                         } else {
@@ -5020,7 +5104,7 @@ struct CompoundKanjiView: View {
                     .frame(width: 58, height: 58)
                     .background(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.white.opacity(0.08))
+                            .fill(Color.primary.opacity(0.08))
                     )
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -5096,10 +5180,10 @@ struct CompoundKanjiView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.05))
+                .fill(Color.primary.opacity(0.05))
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
                 )
         )
     }
@@ -5117,7 +5201,7 @@ struct CompoundKanjiView: View {
                     .foregroundStyle(isMatch ? .cyan : .primary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
-                    .background(Capsule().fill(isMatch ? Color.cyan.opacity(0.18) : Color.white.opacity(0.06)))
+                    .background(Capsule().fill(isMatch ? Color.cyan.opacity(0.18) : Color.primary.opacity(0.06)))
             }
         }
     }
@@ -5242,7 +5326,7 @@ struct RadicalBuilderView: View {
                                 .overlay {
                                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                                         .strokeBorder(
-                                            isSelectedSlot ? Color.accentColor : Color.white.opacity(0.22),
+                                            isSelectedSlot ? Color.accentColor : Color.primary.opacity(0.22),
                                             lineWidth: isSelectedSlot ? 2.5 : 1
                                         )
                                 }
@@ -5276,7 +5360,7 @@ struct RadicalBuilderView: View {
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(.secondary)
                                     .fixedSize()
-                                Picker("", selection: $engine.radicalStrokeTolerance) {
+                                Picker("Stroke Tolerance", selection: $engine.radicalStrokeTolerance) {
                                     Text("Exact").tag(Int8(0))
                                     Text("±1").tag(Int8(1))
                                     Text("±2").tag(Int8(2))
@@ -5307,7 +5391,7 @@ struct RadicalBuilderView: View {
                             .font(.subheadline.weight(.semibold))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(Capsule().fill(Color.white.opacity(0.10)))
+                            .background(Capsule().fill(Color.primary.opacity(0.10)))
                     }
                     .buttonStyle(.plain)
                 }
@@ -5364,11 +5448,12 @@ struct RadicalBuilderView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .djAccessibleControl(label: "Clear radical filter")
                     }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -5412,13 +5497,13 @@ struct RadicalBuilderView: View {
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
                                     Text("\(rad.strokes)画")
-                                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                                        .font(.system(size: 10, weight: .semibold, design: .rounded))
                                         .foregroundStyle(isSelected ? Color.accentColor : .secondary.opacity(0.85))
                                 }
                                 .frame(width: 64, height: 64)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12)
-                                        .fill(isSelected ? Color.accentColor.opacity(0.28) : Color.white.opacity(0.06))
+                                        .fill(isSelected ? Color.accentColor.opacity(0.28) : Color.primary.opacity(0.06))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 12)
                                                 .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5)
@@ -5486,7 +5571,7 @@ struct RadicalBuilderView: View {
                                         }
                                     }
                                     .frame(width: 66, height: 66)
-                                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.08)))
+                                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.08)))
                                 }
                                 .buttonStyle(.plain)
                                 .help(meta.map { "\($0.glyph) — \($0.meanings)" } ?? "Open kanji detail")
@@ -5508,7 +5593,7 @@ struct RadicalBuilderView: View {
                 .font(.caption2.weight(.semibold))
                 .padding(.horizontal, 9)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(active ? Color.accentColor : Color.white.opacity(0.08)))
+                .background(Capsule().fill(active ? Color.accentColor : Color.primary.opacity(0.08)))
                 .foregroundStyle(active ? .white : .primary)
         }
         .buttonStyle(.plain)
@@ -5618,11 +5703,11 @@ struct KanjiLookupView: View {
                                                 Spacer()
                                                 if !item.gradeLabel.isEmpty {
                                                     Text(item.gradeLabel)
-                                                        .font(.system(size: 9.5, weight: .bold))
+                                                        .font(.system(size: 10, weight: .bold))
                                                         .foregroundStyle(Color.accentColor)
                                                 } else if !item.jlptLabel.isEmpty {
                                                     Text(item.jlptLabel)
-                                                        .font(.system(size: 9.5, weight: .bold))
+                                                        .font(.system(size: 10, weight: .bold))
                                                         .foregroundStyle(.green)
                                                 }
                                             }
@@ -5641,10 +5726,10 @@ struct KanjiLookupView: View {
                                         .frame(width: 92, height: 88)
                                         .background(
                                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                                .fill(Color.white.opacity(0.07))
+                                                .fill(Color.primary.opacity(0.07))
                                                 .overlay(
                                                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                                                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
                                                 )
                                         )
                                     }
@@ -5715,7 +5800,7 @@ struct KanjiLookupView: View {
                                 Text("\(st)")
                                     .font(.caption.monospacedDigit().weight(.bold))
                                     .frame(width: 30, height: 26)
-                                    .background(RoundedRectangle(cornerRadius: 8).fill(isSelected ? Color.accentColor : Color.white.opacity(0.08)))
+                                    .background(RoundedRectangle(cornerRadius: 8).fill(isSelected ? Color.accentColor : Color.primary.opacity(0.08)))
                                     .foregroundStyle(isSelected ? .white : .primary)
                             }
                             .buttonStyle(.plain)
@@ -5748,11 +5833,12 @@ struct KanjiLookupView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .djAccessibleControl(label: "Clear reading search")
                     }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
                 .frame(minWidth: 240, maxWidth: 420)
 
                 Picker("Scope", selection: $engine.kanjiLookupReadingScope) {
@@ -5797,7 +5883,7 @@ struct KanjiLookupView: View {
                             .padding(.vertical, 8)
                             .background(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .fill(selected ? Color.accentColor.opacity(0.28) : Color.white.opacity(0.07))
+                                    .fill(selected ? Color.accentColor.opacity(0.28) : Color.primary.opacity(0.07))
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 12)
                                             .strokeBorder(selected ? Color.accentColor : Color.clear, lineWidth: 1.5)
@@ -5866,11 +5952,12 @@ struct KanjiLookupView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .djAccessibleControl(label: "Clear Four-Corner search")
                     }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
                 .frame(minWidth: 240, maxWidth: 420)
 
                 Text("0=Lid • 1=Horizontal • 2=Vertical • 3=Dot • 4=Cross • 5=Skewer • 6=Box • 7=Angle • 8=Eight • 9=Small")
@@ -5891,7 +5978,7 @@ struct KanjiLookupView: View {
                                 .font(.caption.weight(.semibold))
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 7)
-                                .background(Capsule().fill(selected ? Color.accentColor : Color.white.opacity(0.08)))
+                                .background(Capsule().fill(selected ? Color.accentColor : Color.primary.opacity(0.08)))
                                 .foregroundStyle(selected ? .white : .primary)
                         }
                         .buttonStyle(.plain)
@@ -5922,11 +6009,12 @@ struct KanjiLookupView: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .djAccessibleControl(label: "Clear meaning search")
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
         }
     }
 }

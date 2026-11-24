@@ -45,13 +45,17 @@ struct DaiJishowMacApp: App {
         Window("Dai-Jishow", id: "main") {
             MainWorkspaceView(engine: engine)
                 .frame(minWidth: 820, minHeight: 560)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(engine.appearanceMode.colorScheme)
                 .sheet(isPresented: $engine.showAbout) {
                     AboutView(engine: engine)
                 }
+                .sheet(isPresented: $engine.showHelp) {
+                    HelpSheetView()
+                }
         }
         #if os(macOS)
-        .windowStyle(.hiddenTitleBar)
+        .windowStyle(.automatic)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .defaultSize(width: 1320, height: 880)
         #endif
         .commands {
@@ -63,18 +67,27 @@ struct DaiJishowMacApp: App {
                 }
             }
 
-            CommandGroup(after: .toolbar) {
-                Button("Open Navigation Deck (Z-Stack)") {
-                    withAnimation(.spring(response: 0.30, dampingFraction: 0.85)) {
-                        if engine.isZStackOpen {
-                            engine.isZStackOpen = false
-                        } else {
-                            engine.openHistoryStack()
-                        }
-                    }
+            // Edit menu conventions: Copy Entry & Focus Search belong in Edit.
+            CommandGroup(after: .pasteboard) {
+                // ⌘⇧C is the Cockpit toggle, so "Copy Entry" takes ⌘⌥C instead.
+                // Native ⌘C still copies any text the user has selected.
+                Button("Copy Entry") {
+                    engine.copyActiveEntry()
                 }
-                .keyboardShortcut("\\", modifiers: [.command])
+                .keyboardShortcut("c", modifiers: [.command, .option])
+                .disabled(engine.activeEntry == nil && engine.activeKanji == nil)
+            }
 
+            CommandGroup(after: .textEditing) {
+                Divider()
+                Button("Focus Search") {
+                    NotificationCenter.default.post(name: .daiJishowFocusSearch, object: nil)
+                }
+                .keyboardShortcut("f", modifiers: [.command])
+            }
+
+            // View menu conventions: layout density, bookmarking, and recall self-quiz.
+            CommandGroup(after: .toolbar) {
                 Button("Toggle Detailed / Reader Mode") {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         engine.isWordCockpitExpanded.toggle()
@@ -82,11 +95,6 @@ struct DaiJishowMacApp: App {
                 }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(engine.activeScreen != .wordEntry)
-
-                Button("Focus Search") {
-                    NotificationCenter.default.post(name: .daiJishowFocusSearch, object: nil)
-                }
-                .keyboardShortcut("f", modifiers: [.command])
 
                 Button("Toggle Bookmark") {
                     engine.toggleSaveCurrentScreen()
@@ -110,47 +118,10 @@ struct DaiJishowMacApp: App {
                     engine.recallMode = .hideGloss
                 }
                 .keyboardShortcut("3", modifiers: [.command])
+            }
 
-                Divider()
-
-                Button("Open Kanji Fisheye") {
-                    let cp = engine.activeKanji?.codepoint ?? engine.recentKanji.first ?? 0x5927
-                    engine.openFisheye(codepoint: cp)
-                }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
-
-                Button("Open Saved Decks") {
-                    engine.openStudyLibrary()
-                }
-                .keyboardShortcut("l", modifiers: [.command, .shift])
-
-                Button("Open Kanji Index") {
-                    engine.openKanjiLookup()
-                }
-                .keyboardShortcut("k", modifiers: [.command, .shift])
-
-                Button("Open 7-Slot Radical Builder") {
-                    engine.openRadicalBuilder()
-                }
-                .keyboardShortcut("r", modifiers: [.command, .shift])
-
-                Button("Open Word Cloud") {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
-                        engine.openWordCosmos()
-                    }
-                }
-                .keyboardShortcut("w", modifiers: [.command, .shift])
-
-                // "Open Compounds" opens the Compound Kanji screen (decompose a word into
-                // its kanji). ⌘⇧D — mnemonic for "Decompose" — since ⌘⇧C is the
-                // Detailed/Reader toggle and ⌘⌥C is Copy Entry, both C-shortcuts taken.
-                Button("Open Compounds") {
-                    engine.openCompoundKanji()
-                }
-                .keyboardShortcut("d", modifiers: [.command, .shift])
-
-                Divider()
-
+            // Navigate menu: history traversal, Z-Stack, and primary screens.
+            CommandMenu("Navigate") {
                 Button("Navigate Back") {
                     engine.goBack()
                 }
@@ -163,15 +134,61 @@ struct DaiJishowMacApp: App {
                 .keyboardShortcut("]", modifiers: [.command])
                 .disabled(!engine.canGoForward)
 
+                Button("Open Navigation Deck (Z-Stack)") {
+                    withAnimation(.spring(response: 0.30, dampingFraction: 0.85)) {
+                        if engine.isZStackOpen {
+                            engine.isZStackOpen = false
+                        } else {
+                            engine.openHistoryStack()
+                        }
+                    }
+                }
+                .keyboardShortcut("\\", modifiers: [.command])
+
                 Divider()
 
-                // ⌘⇧C is the Cockpit toggle, so "Copy Entry" takes ⌘⌥C instead.
-                // Native ⌘C still copies any text the user has selected.
-                Button("Copy Entry") {
-                    engine.copyActiveEntry()
+                Button("Kanji Fisheye") {
+                    let cp = engine.activeKanji?.codepoint ?? engine.recentKanji.first ?? 0x5927
+                    engine.openFisheye(codepoint: cp)
                 }
-                .keyboardShortcut("c", modifiers: [.command, .option])
-                .disabled(engine.activeEntry == nil && engine.activeKanji == nil)
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+
+                Button("Kanji Index") {
+                    engine.openKanjiLookup()
+                }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
+
+                Button("7-Slot Radical Builder") {
+                    engine.openRadicalBuilder()
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+
+                Button("Word Cloud") {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                        engine.openWordCosmos()
+                    }
+                }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+
+                // "Compounds" opens the Compound Kanji screen (decompose a word into
+                // its kanji). ⌘⇧D — mnemonic for "Decompose" — since ⌘⇧C is the
+                // Detailed/Reader toggle and ⌘⌥C is Copy Entry, both C-shortcuts taken.
+                Button("Compounds") {
+                    engine.openCompoundKanji()
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+
+                Button("Saved Decks") {
+                    engine.openStudyLibrary()
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+            }
+
+            CommandGroup(replacing: .help) {
+                Button("Dai-Jishow Help & Shortcuts") {
+                    engine.showHelp = true
+                }
+                .keyboardShortcut("/", modifiers: [.command])
             }
         }
 
@@ -179,7 +196,7 @@ struct DaiJishowMacApp: App {
         // live across the whole app.
         Settings {
             SettingsView(engine: engine)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(engine.appearanceMode.colorScheme)
         }
     }
 
@@ -209,6 +226,12 @@ extension Notification.Name {
 struct MainWorkspaceView: View {
     @ObservedObject var engine: DaiJishowEngine
     @FocusState private var isSearchFocused: Bool
+    @State private var windowWidth: CGFloat = 1320
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
 
     private var isSearchDropdownOpen: Bool {
         (!engine.searchResults.isEmpty || !engine.englishMatches.isEmpty)
@@ -216,25 +239,20 @@ struct MainWorkspaceView: View {
     }
 
     var body: some View {
+        let highContrast = (contrast == .increased)
+
         GeometryReader { rootGeo in
-            let windowWidth = rootGeo.size.width
+            let currentWidth = rootGeo.size.width
 
             ZStack {
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.06, green: 0.08, blue: 0.12),
-                        Color(red: 0.10, green: 0.12, blue: 0.18),
-                        Color(red: 0.07, green: 0.09, blue: 0.14)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+                DJTheme.workspaceBackground(
+                    for: colorScheme,
+                    reduceTransparency: reduceTransparency,
+                    highContrast: highContrast
                 )
                 .ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    topNavigationBar(availableWidth: windowWidth)
-                        .zIndex(20)
-
                     ZStack {
                         if !engine.isReady {
                             databaseMissingBanner
@@ -264,7 +282,7 @@ struct MainWorkspaceView: View {
                         }
 
                         if isSearchDropdownOpen {
-                            searchResultsDropdown(availableWidth: windowWidth)
+                            searchResultsDropdown(availableWidth: currentWidth)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -281,12 +299,23 @@ struct MainWorkspaceView: View {
                 if engine.isZStackOpen {
                     ZStackHistoryOverlay(engine: engine)
                         .zIndex(50)
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
                 }
             }
+            .onAppear {
+                windowWidth = currentWidth
+            }
+            .onChange(of: currentWidth) { _, newW in
+                windowWidth = newW
+            }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(engine.appearanceMode.colorScheme)
         #if os(macOS)
+        .background(WindowFrameAccessor())
+        .toolbarBackground(.hidden, for: .windowToolbar)
+        .toolbar {
+            workspaceToolbarContent(availableWidth: windowWidth)
+        }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                 isSearchFocused = true
@@ -306,7 +335,7 @@ struct MainWorkspaceView: View {
         }
         .onKeyPress(.escape) {
             if engine.isZStackOpen {
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                djWithAnimation(reduceMotion, .spring(response: 0.28, dampingFraction: 0.86)) {
                     engine.isZStackOpen = false
                 }
                 return .handled
@@ -334,7 +363,7 @@ struct MainWorkspaceView: View {
         }
         .onKeyPress(.leftArrow) {
             if engine.isZStackOpen {
-                withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
+                djWithAnimation(reduceMotion, .interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
                     engine.stepZStack(by: -1)
                 }
                 return .handled
@@ -343,7 +372,7 @@ struct MainWorkspaceView: View {
         }
         .onKeyPress(.rightArrow) {
             if engine.isZStackOpen {
-                withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
+                djWithAnimation(reduceMotion, .interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
                     engine.stepZStack(by: 1)
                 }
                 return .handled
@@ -352,7 +381,7 @@ struct MainWorkspaceView: View {
         }
         .onKeyPress(.return) {
             if engine.isZStackOpen {
-                withAnimation(.spring(response: 0.30, dampingFraction: 0.85)) {
+                djWithAnimation(reduceMotion, .spring(response: 0.30, dampingFraction: 0.85)) {
                     engine.jumpToHistory(index: engine.zStackFocusedIndex)
                 }
                 return .handled
@@ -362,72 +391,70 @@ struct MainWorkspaceView: View {
         #endif
     }
 
-    private func topNavigationBar(availableWidth: CGFloat) -> some View {
+    @ToolbarContentBuilder
+    private func workspaceToolbarContent(availableWidth: CGFloat) -> some ToolbarContent {
         let navCompact = availableWidth < 1640
         let ultraCompact = availableWidth < 920
-        let showRecallSegmented = availableWidth >= 1120
-        let showRecallLabel = availableWidth >= 1340
-        let maxRecentKanji = availableWidth >= 1240 ? 6 : (availableWidth >= 980 ? 3 : (ultraCompact ? 1 : 2))
+        let showRecallSegmented = availableWidth >= 1220
+        let maxRecentKanji = availableWidth >= 1340 ? 5 : (availableWidth >= 1040 ? 3 : (ultraCompact ? 1 : 2))
         let showSearchPrefixBadge = availableWidth >= 900 || !engine.searchQuery.isEmpty
         let searchPlaceholder = availableWidth >= 1120
             ? "Search Kanji, Kana, Romaji, or English (⌘F)..."
             : "Search (⌘F)..."
 
-        return HStack(spacing: ultraCompact ? 6 : (navCompact ? 8 : 11)) {
-            HStack(spacing: 4) {
-                Button { engine.goBack() } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 28, height: 28)
-                }
-                .disabled(!engine.canGoBack)
-                .help("Go back to the previous lookup")
-
-                Button { engine.goForward() } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 28, height: 28)
-                }
-                .disabled(!engine.canGoForward)
-                .help("Go forward in your lookup history")
-
-                Button {
-                    withAnimation(.spring(response: 0.30, dampingFraction: 0.85)) {
-                        if engine.isZStackOpen {
-                            engine.isZStackOpen = false
-                        } else {
-                            engine.openHistoryStack()
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "square.stack.3d.down.right")
-                            .font(.body.weight(.semibold))
-                        if !engine.history.isEmpty {
-                            Text("\(engine.history.count)")
-                                .font(.caption2.monospacedDigit().weight(.bold))
-                                .frame(minWidth: 16, alignment: .center)
-                        }
-                    }
-                    .frame(minWidth: 42, alignment: .center)
-                    .padding(.horizontal, 5)
-                    .frame(height: 28)
-                }
-                .help("Open Z-Stack Navigation Deck (⌘\\)")
+        ToolbarItemGroup(placement: .navigation) {
+            Button {
+                engine.goBack()
+            } label: {
+                Image(systemName: "chevron.left")
             }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(.ultraThinMaterial))
+            .disabled(!engine.canGoBack)
+            .help("Go back to the previous lookup (⌘[)")
+            .djAccessibleControl(label: "Back", hint: "Go back to the previous lookup")
 
-            // The Compound Kanji screen owns its own (autofocused, prominent) search
-            // field, so we hide this top omni-search there — the two are what the
-            // user kept confusing, and showing only one removes the ambiguity.
-            if engine.activeScreen != .compoundKanji {
+            Button {
+                engine.goForward()
+            } label: {
+                Image(systemName: "chevron.right")
+            }
+            .disabled(!engine.canGoForward)
+            .help("Go forward in your lookup history (⌘])")
+            .djAccessibleControl(label: "Forward", hint: "Go forward in your lookup history")
+
+            Button {
+                djWithAnimation(reduceMotion, .spring(response: 0.30, dampingFraction: 0.85)) {
+                    if engine.isZStackOpen {
+                        engine.isZStackOpen = false
+                    } else {
+                        engine.openHistoryStack()
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.stack.3d.down.right")
+                    if !engine.history.isEmpty {
+                        Text("\(engine.history.count)")
+                            .font(.caption2.monospacedDigit().weight(.bold))
+                    }
+                }
+            }
+            .help("Open Z-Stack Navigation Deck (⌘\\)")
+            .djAccessibleControl(
+                label: "Navigation Deck",
+                hint: "Open visual history snapshots (⌘\\)",
+                value: engine.history.isEmpty ? "Empty" : "\(engine.history.count) items",
+                selected: engine.isZStackOpen
+            )
+        }
+
+        // The Compound Kanji screen owns its own (autofocused, prominent) search
+        // field, so we hide this top omni-search there — removing the two-search ambiguity.
+        if engine.activeScreen != .compoundKanji {
+            ToolbarItem(placement: .principal) {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
 
                     TextField(searchPlaceholder, text: $engine.searchQuery)
                         .textFieldStyle(.plain)
@@ -449,13 +476,25 @@ struct MainWorkspaceView: View {
                                 .fixedSize()
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
-                                .background(Capsule().fill(engine.searchContainsMode ? Color.accentColor.opacity(0.28) : Color.white.opacity(0.08)))
+                                .background(
+                                    Capsule().fill(
+                                        engine.searchContainsMode
+                                            ? Color.accentColor.opacity(0.26)
+                                            : Color.primary.opacity(0.08)
+                                    )
+                                )
                                 .foregroundStyle(engine.searchContainsMode ? Color.accentColor : .secondary)
                         }
                         .buttonStyle(.plain)
                         .help(engine.searchContainsMode
                               ? "Contains mode: matching substrings anywhere in a headword or reading. Click for Prefix ranking."
                               : "Prefix mode: matching exact and prefix forms first. Click to search anywhere inside a word (Contains).")
+                        .djAccessibleControl(
+                            label: "Search match mode",
+                            hint: "Switch between Prefix and Contains search ranking",
+                            value: engine.searchContainsMode ? "Contains" : "Prefix",
+                            selected: engine.searchContainsMode
+                        )
                     }
 
                     if !engine.searchQuery.isEmpty {
@@ -469,97 +508,97 @@ struct MainWorkspaceView: View {
                         }
                         .buttonStyle(.plain)
                         .help("Clear the search")
+                        .djAccessibleControl(label: "Clear search")
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background {
-                    Capsule()
-                        .fill(.ultraThinMaterial)
-                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
-                }
-                .frame(minWidth: ultraCompact ? 96 : 120, maxWidth: 320)
-                .layoutPriority(0)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .frame(minWidth: ultraCompact ? 130 : 180, idealWidth: navCompact ? 240 : 300, maxWidth: 340)
                 .help("Search by kanji, kana, romaji, or English — results appear live; use ↑/↓ and Enter to open.")
             }
+        }
 
-            HStack(spacing: ultraCompact ? 4 : (navCompact ? 5 : 6)) {
-                navScreenButton(
-                    title: "Fisheye",
-                    systemImage: "circle.hexagongrid.fill",
-                    isActive: engine.activeScreen == .fisheye,
-                    compact: navCompact,
-                    help: "Open the Kanji Fisheye compound explorer (⌘⇧F)",
-                    action: {
-                        let cp = engine.activeKanji?.codepoint ?? engine.recentKanji.first ?? 0x5927
-                        engine.openFisheye(codepoint: cp)
-                    }
-                )
-
-                navScreenButton(
-                    title: "Kanji Index",
-                    systemImage: "character.book.closed.fill",
-                    isActive: engine.activeScreen == .kanjiLookup,
-                    compact: navCompact,
-                    help: "Open the Kanji Index — browse kanji by stroke count, radical, or reading (⌘⇧K)",
-                    action: { engine.openKanjiLookup() }
-                )
-
-                navScreenButton(
-                    title: "Radicals",
-                    systemImage: "puzzlepiece.extension.fill",
-                    isActive: engine.activeScreen == .radicalBuilder,
-                    compact: navCompact,
-                    help: "Open the Radical Builder — assemble kanji from their component radicals (⌘⇧R)",
-                    action: { engine.openRadicalBuilder() }
-                )
-
-                navScreenButton(
-                    title: "Word Cloud",
-                    systemImage: "sparkles",
-                    isActive: engine.activeScreen == .wordCosmos,
-                    compact: navCompact,
-                    help: "Open the Word Cloud — a randomized prevalence bubble cloud (⌘⇧W)",
-                    action: { engine.openWordCosmos() }
-                )
-
-                navScreenButton(
-                    title: "Compounds",
-                    systemImage: "square.split.2x2.fill",
-                    isActive: engine.activeScreen == .compoundKanji,
-                    compact: navCompact,
-                    help: "Open the Compound Kanji screen — decompose a word into its kanji, inspect each part's readings & meaning, and see how the compound reading assembles from them (⌘⇧D)",
-                    action: { engine.openCompoundKanji() }
-                )
-
-                Button {
-                    engine.openStudyLibrary()
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "star.square.on.square.fill")
-                        if !navCompact {
-                            Text("Decks")
-                        }
-                        if engine.studyStore.totalSavedCount > 0 {
-                            Text("\(engine.studyStore.totalSavedCount)")
-                                .font(.caption2.monospacedDigit().weight(.bold))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.white.opacity(0.18)))
-                        }
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                    .fixedSize()
-                    .padding(.horizontal, navCompact ? 9 : 10)
-                    .padding(.vertical, 7)
-                    .background(Capsule().fill(engine.activeScreen == .studyLibrary ? Color.accentColor : Color.white.opacity(0.10)))
+        ToolbarItemGroup(placement: .primaryAction) {
+            navScreenButton(
+                title: "Fisheye",
+                systemImage: "circle.hexagongrid.fill",
+                isActive: engine.activeScreen == .fisheye,
+                compact: navCompact,
+                help: "Open the Kanji Fisheye compound explorer (⌘⇧F)",
+                action: {
+                    let cp = engine.activeKanji?.codepoint ?? engine.recentKanji.first ?? 0x5927
+                    engine.openFisheye(codepoint: cp)
                 }
-                .buttonStyle(.plain)
-                .help("Open Saved Study Decks & Anki Export (⌘⇧L)")
-            }
-            .fixedSize()
+            )
 
+            navScreenButton(
+                title: "Kanji Index",
+                systemImage: "character.book.closed.fill",
+                isActive: engine.activeScreen == .kanjiLookup,
+                compact: navCompact,
+                help: "Open the Kanji Index — browse kanji by stroke count, radical, or reading (⌘⇧K)",
+                action: { engine.openKanjiLookup() }
+            )
+
+            navScreenButton(
+                title: "Radicals",
+                systemImage: "puzzlepiece.extension.fill",
+                isActive: engine.activeScreen == .radicalBuilder,
+                compact: navCompact,
+                help: "Open the Radical Builder — assemble kanji from their component radicals (⌘⇧R)",
+                action: { engine.openRadicalBuilder() }
+            )
+
+            navScreenButton(
+                title: "Word Cloud",
+                systemImage: "sparkles",
+                isActive: engine.activeScreen == .wordCosmos,
+                compact: navCompact,
+                help: "Open the Word Cloud — a randomized prevalence bubble cloud (⌘⇧W)",
+                action: { engine.openWordCosmos() }
+            )
+
+            navScreenButton(
+                title: "Compounds",
+                systemImage: "square.split.2x2.fill",
+                isActive: engine.activeScreen == .compoundKanji,
+                compact: navCompact,
+                help: "Open the Compound Kanji screen — decompose a word into its kanji, inspect each part's readings & meaning, and see how the compound reading assembles from them (⌘⇧D)",
+                action: { engine.openCompoundKanji() }
+            )
+
+            Button {
+                engine.openStudyLibrary()
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "star.square.on.square.fill")
+                    if !navCompact {
+                        Text("Decks")
+                    }
+                    if engine.studyStore.totalSavedCount > 0 {
+                        Text("\(engine.studyStore.totalSavedCount)")
+                            .font(.caption2.monospacedDigit().weight(.bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.primary.opacity(0.16)))
+                    }
+                }
+                .foregroundStyle(engine.activeScreen == .studyLibrary ? Color.accentColor : Color.primary)
+            }
+            .help("Open Saved Study Decks & Anki Export (⌘⇧L)")
+            .djAccessibleControl(
+                label: "Study Decks",
+                hint: "Open Saved Study Decks & Anki Export (⌘⇧L)",
+                value: "\(engine.studyStore.totalSavedCount) saved",
+                selected: engine.activeScreen == .studyLibrary
+            )
+        }
+
+        if #available(macOS 26, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+
+        ToolbarItemGroup(placement: .primaryAction) {
             Toggle("Names", isOn: Binding(
                 get: { engine.includeNames },
                 set: { engine.setNamesIncluded($0, userInitiated: true) }
@@ -567,14 +606,17 @@ struct MainWorkspaceView: View {
             .toggleStyle(.switch)
             .controlSize(.small)
             .fixedSize()
-            // Flash the toggle when the engine auto-enables Names, so the result
-            // shift reads as "this control just changed" rather than a silent flip.
             .background(
                 RoundedRectangle(cornerRadius: 10)
                     .fill(engine.namesToggleFlash ? Color.accentColor.opacity(0.28) : Color.clear)
             )
-            .animation(.easeInOut(duration: 0.45), value: engine.namesToggleFlash)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: engine.namesToggleFlash)
             .help("Include proper names (人名) in search and related-word lists. Auto-turned on when a proper name is the best match for your search — the toggle flashes and you can undo it from the results.")
+            .djAccessibleControl(
+                label: "Include Proper Names",
+                hint: "Include proper names in search and related-word lists",
+                value: engine.includeNames ? "On" : "Off"
+            )
             .onChange(of: engine.includeNames) { _, _ in
                 engine.performSearch()
                 engine.invalidateFisheyeSnapshots()
@@ -588,20 +630,16 @@ struct MainWorkspaceView: View {
             }
 
             if showRecallSegmented {
-                let recallPicker = Picker("Recall", selection: $engine.recallMode) {
+                Picker("Recall", selection: $engine.recallMode) {
                     ForEach(RecallMode.allCases) { mode in
                         Text(mode.rawValue).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
                 .fixedSize()
                 .help("Recall Mode — Full shows everything, Hide Kana hides readings, Hide Defn. hides the English (for self-quizzing)")
-
-                if showRecallLabel {
-                    recallPicker
-                } else {
-                    recallPicker.labelsHidden()
-                }
+                .djAccessibleControl(label: "Recall Mode", value: engine.recallMode.rawValue)
             } else {
                 Menu {
                     ForEach(RecallMode.allCases) { mode in
@@ -613,58 +651,38 @@ struct MainWorkspaceView: View {
                     }
                 } label: {
                     Label(engine.recallMode.rawValue, systemImage: "eye")
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(engine.recallMode == .full ? Color.white.opacity(0.10) : Color.accentColor.opacity(0.28)))
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
                 .help("Recall Mode — Full shows everything, Hide Kana hides readings, Hide Defn. hides the English (for self-quizzing)")
+                .djAccessibleControl(label: "Recall Mode", value: engine.recallMode.rawValue)
             }
+        }
 
-            Spacer(minLength: 4)
-
-            HStack(spacing: 5) {
+        if !engine.recentKanji.isEmpty {
+            if #available(macOS 26, *) {
+                ToolbarSpacer(.fixed, placement: .primaryAction)
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
                 ForEach(Array(engine.recentKanji.prefix(maxRecentKanji)), id: \.self) { cp in
+                    let glyph = String(UnicodeScalar(cp)!)
                     Button {
                         engine.openFisheye(codepoint: cp)
                     } label: {
-                        Text(String(UnicodeScalar(cp)!))
+                        Text(glyph)
                             .font(.headline.weight(.bold))
-                            .frame(width: 28, height: 28)
-                            .background(Circle().fill(Color.white.opacity(0.10)))
+                            .frame(minWidth: 24)
                     }
-                    .buttonStyle(.plain)
-                    .help("Recently viewed kanji — open \(String(UnicodeScalar(cp)!))")
+                    .help("Recently viewed kanji — open \(glyph)")
+                    .djAccessibleControl(
+                        label: "Recent kanji \(glyph)",
+                        hint: "Open \(glyph) in Kanji Fisheye"
+                    )
                 }
             }
-            .fixedSize()
         }
-        .padding(.horizontal, navCompact ? 16 : 22)
-        .padding(.vertical, 10)
-        .frame(width: max(1, availableWidth), alignment: .leading)
-        // The title bar is hidden, so this transparent handle re-installs the
-        // usual macOS affordances on the (otherwise-dead) top band: drag the
-        // window from empty space here, and double-click it to zoom/restore.
-        //
-        // `.ignoresSafeArea(.container, edges: .top)` extends the handle *up into*
-        // the hidden title bar's safe-area inset — the thin "window shade" band
-        // above the widget row. Without it the handle stops below that band, so
-        // double-clicking the very top of the window did nothing. The widgets
-        // themselves stay put (they're the foreground content, not the background).
-        .background {
-            WindowZoomHandle()
-                .ignoresSafeArea(.container, edges: .top)
-        }
-        .help("Drag the window by its empty top bar; double-click it to zoom/restore between a typical size and your last size.")
     }
 
-    /// A top-bar screen button that keeps its full `Label` when there is room
-    /// and drops to an icon-only `Image` when `compact`, so it never spills onto
-    /// a second line. The active screen gets the accent fill; the tooltip is
-    /// always attached, keeping the icon-only state self-documenting.
+    /// A toolbar screen button that keeps its full `Label` when there is room
+    /// and drops to an icon-only `Image` when `compact`, so the toolbar stays tidy.
     @ViewBuilder
     private func navScreenButton(
         title: String,
@@ -682,19 +700,18 @@ struct MainWorkspaceView: View {
                     Label(title, systemImage: systemImage)
                 }
             }
-            .font(.subheadline.weight(.semibold))
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, compact ? 10 : 11)
-            .padding(.vertical, 7)
-            .background(Capsule().fill(isActive ? Color.accentColor : Color.white.opacity(0.10)))
+            .foregroundStyle(isActive ? Color.accentColor : Color.primary)
         }
-        .buttonStyle(.plain)
         .help(help)
+        .djAccessibleControl(
+            label: title,
+            hint: help,
+            selected: isActive
+        )
     }
 
     private func searchResultsDropdown(availableWidth: CGFloat) -> some View {
-        let leadingPad: CGFloat = availableWidth < 1000 ? 20 : 118
+        let leadingPad: CGFloat = availableWidth < 1000 ? 20 : 180
         return VStack {
             HStack {
                 GlassCard(cornerRadius: 18, highlightOpacity: 0.35) {
@@ -707,7 +724,7 @@ struct MainWorkspaceView: View {
                         Divider().opacity(0.4)
                         resultsBody
                     }
-                    .animation(.easeInOut(duration: 0.25), value: engine.nameNudge?.id)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: engine.nameNudge?.id)
                 }
                 .padding(.leading, leadingPad)
                 .padding(.trailing, 20)
@@ -715,7 +732,7 @@ struct MainWorkspaceView: View {
             }
             Spacer()
         }
-        .padding(.top, 4)
+        .padding(.top, 8)
     }
 
     /// A transient banner above the search results, raised when the engine's best
@@ -769,6 +786,7 @@ struct MainWorkspaceView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Dismiss")
+                .djAccessibleControl(label: "Dismiss name suggestion")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -914,6 +932,12 @@ struct MainWorkspaceView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .djAccessibleControl(
+            label: "\(hit.displayHeadword), \(hit.kanaHead)",
+            hint: "Open dictionary entry",
+            value: hit.primaryGloss,
+            selected: isSelected
+        )
         .contextMenu {
             Button("Copy") {
                 engine.copyText("\(hit.displayHeadword)  \(hit.kanaHead)  \(hit.primaryGloss)")
@@ -952,6 +976,11 @@ struct MainWorkspaceView: View {
                     .help(searchFilterTooltip(for: filter))
                 }
                 .buttonStyle(.plain)
+                .djAccessibleControl(
+                    label: "Filter: \(filter.rawValue)",
+                    hint: searchFilterTooltip(for: filter),
+                    selected: active
+                )
             }
             if !engine.searchFilters.isEmpty {
                 Button {
@@ -962,6 +991,7 @@ struct MainWorkspaceView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .djAccessibleControl(label: "Clear all search filters")
             }
         }
         .padding(.horizontal, 12)
@@ -1058,6 +1088,8 @@ struct MainWorkspaceView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .help("Show full navigation trail")
+                .djAccessibleControl(label: "History trail menu", value: "\(engine.history.count) steps")
             }
 
             ScrollViewReader { proxy in
@@ -1066,8 +1098,9 @@ struct MainWorkspaceView: View {
                         ForEach(Array(engine.history.enumerated()), id: \.element.id) { idx, crumb in
                             if idx > 0 {
                                 Image(systemName: "chevron.right")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(Color.white.opacity(0.35))
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(Color.primary.opacity(0.38))
+                                    .accessibilityHidden(true)
                             }
 
                             Button {
@@ -1075,11 +1108,11 @@ struct MainWorkspaceView: View {
                             } label: {
                                 Text(crumb.label)
                                     .font(.caption.weight(idx == engine.historyIndex ? .bold : .medium))
-                                    .foregroundStyle(idx == engine.historyIndex ? Color.accentColor : Color.white.opacity(0.85))
+                                    .foregroundStyle(idx == engine.historyIndex ? Color.accentColor : Color.primary.opacity(0.85))
                                     .padding(.horizontal, 9)
                                     .padding(.vertical, 4)
                                     .background(
-                                        Capsule().fill(idx == engine.historyIndex ? Color.accentColor.opacity(0.22) : Color.white.opacity(0.08))
+                                        Capsule().fill(idx == engine.historyIndex ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.08))
                                     )
                                     .overlay(
                                         Capsule().strokeBorder(idx == engine.historyIndex ? Color.accentColor.opacity(0.65) : Color.clear, lineWidth: 1)
@@ -1088,11 +1121,16 @@ struct MainWorkspaceView: View {
                             .buttonStyle(.plain)
                             .fixedSize()
                             .id(idx)
+                            .djAccessibleControl(
+                                label: crumb.label,
+                                hint: "Jump to step \(idx + 1) in navigation history",
+                                selected: idx == engine.historyIndex
+                            )
                         }
                     }
                 }
                 .onChange(of: engine.historyIndex) { _, newIdx in
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    djWithAnimation(reduceMotion, .easeOut(duration: 0.2)) {
                         proxy.scrollTo(newIdx, anchor: .trailing)
                     }
                 }
@@ -1100,8 +1138,7 @@ struct MainWorkspaceView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
-        .background(Capsule().fill(.ultraThinMaterial))
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.25), radius: 8, x: 0, y: 4)
+        .djGlassCapsule()
+        .shadow(color: Color.black.opacity(0.22), radius: 8, x: 0, y: 4)
     }
 }

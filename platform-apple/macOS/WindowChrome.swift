@@ -155,6 +155,29 @@ final class WindowFrameCoordinator {
     }
 }
 
+/// Zero-hit-test accessor that attaches `WindowFrameCoordinator` to the
+/// enclosing `NSWindow` without intercepting clicks or drags (the native
+/// unified macOS toolbar handles title-bar drag & double-click-to-zoom).
+struct WindowFrameAccessor: NSViewRepresentable {
+    func makeNSView(context: Context) -> FrameAccessorView {
+        FrameAccessorView()
+    }
+    func updateNSView(_ nsView: FrameAccessorView, context: Context) {}
+}
+
+final class FrameAccessorView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let window {
+            WindowFrameCoordinator.shared.attach(to: window)
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
 // MARK: - Top-bar drag + zoom handle
 
 /// A transparent NSView backing the main window's top bar. It lets the user

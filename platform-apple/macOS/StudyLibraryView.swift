@@ -41,6 +41,11 @@ struct BookmarkDeckControl: View {
             }
             .buttonStyle(.plain)
             .help(isSaved ? "Remove from saved decks (⌘B)" : "Save to Favorites deck (⌘B)")
+            .djAccessibleControl(
+                label: isSaved ? "Saved in study decks" : "Save to Favorites deck",
+                hint: "Toggle Favorites bookmark (⌘B)",
+                selected: isSaved
+            )
 
             Divider()
                 .frame(height: 16)
@@ -75,14 +80,15 @@ struct BookmarkDeckControl: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Choose which study decks contain this item")
+            .djAccessibleControl(label: "Choose study decks", hint: "Add or remove this item from study decks")
         }
         .fixedSize()
         .background(
             Capsule()
-                .fill(isSaved ? Color.yellow.opacity(0.16) : Color.white.opacity(0.08))
+                .fill(isSaved ? Color.yellow.opacity(0.16) : Color.primary.opacity(0.08))
                 .overlay(
                     Capsule()
-                        .strokeBorder(isSaved ? Color.yellow.opacity(0.45) : Color.white.opacity(0.14), lineWidth: 1)
+                        .strokeBorder(isSaved ? Color.yellow.opacity(0.45) : Color.primary.opacity(0.14), lineWidth: 1)
                 )
         )
         .popover(isPresented: $showingNewDeckPrompt, arrowEdge: .bottom) {
@@ -189,6 +195,7 @@ struct StudyLibraryView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Create a custom study deck")
+                    .djAccessibleControl(label: "Create study deck")
                 }
 
                 if showingNewDeckSheet {
@@ -207,6 +214,7 @@ struct StudyLibraryView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .djAccessibleControl(label: "Cancel creating deck")
                     }
                 }
 
@@ -282,20 +290,28 @@ struct StudyLibraryView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.20) : Color.white.opacity(0.04))
+                .fill(isSelected ? Color.accentColor.opacity(0.20) : Color.primary.opacity(0.04))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .strokeBorder(isSelected ? Color.accentColor.opacity(0.65) : Color.clear, lineWidth: 1)
                 )
         )
         .contentShape(Rectangle())
+        .focusable(interactions: .activate)
+        .djAccessibleControl(
+            label: "\(deck.name) deck",
+            hint: "Select study deck",
+            value: "\(deck.items.count) items",
+            selected: isSelected,
+            isButton: true
+        )
         .onTapGesture {
             studyStore.selectedDeckId = deck.id
         }
@@ -335,6 +351,7 @@ struct StudyLibraryView: View {
                                     }
                                     .buttonStyle(.plain)
                                     .help("Rename deck")
+                                    .djAccessibleControl(label: "Rename \(deck.name) deck")
                                 }
                             }
                             Text("\(deck.items.count) saved \(deck.items.count == 1 ? "item" : "items")")
@@ -417,11 +434,12 @@ struct StudyLibraryView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
+                            .djAccessibleControl(label: "Clear deck filter")
                         }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.06)))
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06)))
 
                     if filteredItems.isEmpty {
                         Spacer()
@@ -478,7 +496,7 @@ struct StudyLibraryView: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.white.opacity(0.08)))
+                            .background(Capsule().fill(Color.primary.opacity(0.08)))
                     }
                     if !item.metadata.isEmpty {
                         Text(item.metadata)
@@ -510,10 +528,11 @@ struct StudyLibraryView: View {
                 Image(systemName: "doc.on.doc")
                     .font(.caption.weight(.semibold))
                     .frame(width: 30, height: 30)
-                    .background(Circle().fill(Color.white.opacity(0.08)))
+                    .background(Circle().fill(Color.primary.opacity(0.08)))
             }
             .buttonStyle(.plain)
             .help("Copy single-line Anki TSV card")
+            .djAccessibleControl(label: "Copy Anki card for \(item.headword)")
 
             Button {
                 if item.kind == .word {
@@ -530,6 +549,7 @@ struct StudyLibraryView: View {
                     .foregroundStyle(Color.accentColor)
             }
             .buttonStyle(.plain)
+            .djAccessibleControl(label: "Open \(item.headword)")
 
             if item.kind == .kanji {
                 Button {
@@ -538,10 +558,11 @@ struct StudyLibraryView: View {
                     Image(systemName: "scope")
                         .font(.caption.weight(.semibold))
                         .frame(width: 30, height: 30)
-                        .background(Circle().fill(Color.white.opacity(0.08)))
+                        .background(Circle().fill(Color.primary.opacity(0.08)))
                 }
                 .buttonStyle(.plain)
                 .help("Open in Kanji Fisheye")
+                .djAccessibleControl(label: "Open \(item.headword) in Kanji Fisheye")
             }
 
             Button {
@@ -555,15 +576,16 @@ struct StudyLibraryView: View {
             }
             .buttonStyle(.plain)
             .help("Remove from \(deck.name)")
+            .djAccessibleControl(label: "Remove \(item.headword) from \(deck.name)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.045))
+                .fill(Color.primary.opacity(0.045))
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.09), lineWidth: 1)
+                        .strokeBorder(Color.primary.opacity(0.09), lineWidth: 1)
                 )
         )
         .contentShape(Rectangle())

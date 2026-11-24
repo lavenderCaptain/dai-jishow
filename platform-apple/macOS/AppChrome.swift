@@ -147,9 +147,9 @@ struct AboutView: View {
 
             // Actions
             HStack {
-                if let url = URL(string: "https://github.com") {
+                if let url = URL(string: "https://github.com/lavenderCaptain/dai-jishow") {
                     Link(destination: url) {
-                        Label("Project", systemImage: "chevron.left.forwardslash.chevron.right")
+                        Label("GitHub Repository", systemImage: "chevron.left.forwardslash.chevron.right")
                     }
                 }
                 Spacer()
@@ -160,7 +160,7 @@ struct AboutView: View {
             }
         }
         .padding(28)
-        .frame(width: 560, height: 560)
+        .frame(minWidth: 500, idealWidth: 560, maxWidth: 640, minHeight: 480, idealHeight: 580)
     }
 
     @ViewBuilder
@@ -222,7 +222,7 @@ struct AboutView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(Capsule().fill(Color.white.opacity(0.08)))
+                .background(Capsule().fill(Color.primary.opacity(0.08)))
         }
     }
 }
@@ -240,6 +240,16 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("Appearance") {
+                Picker("Theme", selection: $engine.appearanceMode) {
+                    ForEach(AppAppearanceMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .help("Follow macOS System appearance, or lock Dark or Light mode.")
+            }
+
             Section("Display") {
                 VStack(alignment: .leading, spacing: 6) {
                     Picker("Gloss Language", selection: $engine.glossLanguageMode) {
@@ -248,7 +258,6 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .labelsHidden()
                     .disabled(!hasJapaneseGlossesInActiveEntry && engine.glossLanguageMode == .english)
                     .help("Which definition languages to show when Japanese-language glosses are available in the corpus.")
 
@@ -265,7 +274,6 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .labelsHidden()
                 .help("Toggle kana and/or glosses for self-quiz recall.")
 
                 Toggle("Include proper names in search", isOn: Binding(
@@ -282,6 +290,117 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 390)
+        .frame(minWidth: 460, idealWidth: 500, minHeight: 410)
+    }
+}
+
+// MARK: - Help & Keyboard Shortcuts Sheet
+
+struct HelpSheetView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    private struct ShortcutRow: Identifiable {
+        let id = UUID()
+        let keys: String
+        let title: String
+        let detail: String
+    }
+
+    private let navigationShortcuts: [ShortcutRow] = [
+        ShortcutRow(keys: "⌘F", title: "Focus Search", detail: "Type kanji, kana, romaji (e.g. dzu, n'ya), or English"),
+        ShortcutRow(keys: "⌘[  /  ⌘]", title: "Navigate Back / Forward", detail: "Step through your lookup trail"),
+        ShortcutRow(keys: "⌘\\", title: "Navigation Deck (Z-Stack)", detail: "Scrub visual snapshots with ←/→, trackpad scroll, or Enter"),
+        ShortcutRow(keys: "⌘⇧F", title: "Kanji Fisheye", detail: "Prefix & suffix compound explorer around a kanji"),
+        ShortcutRow(keys: "⌘⇧K", title: "Kanji Index", detail: "Browse by stroke count, reading, SKIP, 4-Corner, or grade"),
+        ShortcutRow(keys: "⌘⇧R", title: "7-Slot Radical Builder", detail: "Compose kanji from component radicals"),
+        ShortcutRow(keys: "⌘⇧W", title: "Word Cloud", detail: "Randomized prevalence / JLPT / grade bubble explorer"),
+        ShortcutRow(keys: "⌘⇧D", title: "Compounds", detail: "Decompose a compound word into its constituent kanji"),
+        ShortcutRow(keys: "⌘⇧L", title: "Saved Decks", detail: "Manage study decks and export Anki TSV / CSV"),
+    ]
+
+    private let studyShortcuts: [ShortcutRow] = [
+        ShortcutRow(keys: "⌘1 / ⌘2 / ⌘3", title: "Recall Mode", detail: "Full, Hide Kana, or Hide Defn. for self-quizzing"),
+        ShortcutRow(keys: "⌘⇧C", title: "Detailed / Reader Mode", detail: "Toggle full lexical dashboard on a word entry"),
+        ShortcutRow(keys: "⌘B", title: "Toggle Bookmark", detail: "Save or remove the current word/kanji in Favorites"),
+        ShortcutRow(keys: "⌘⌥C", title: "Copy Entry", detail: "Copy formatted headword, readings, and glosses"),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "keyboard.badge.ellipsis")
+                    .font(.title)
+                    .foregroundStyle(Color.accentColor)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Dai-Jishow Shortcuts & Search Guide")
+                        .font(.title2.weight(.bold))
+                    Text("Offline Japanese dictionary, kanji fisheye, and study decks")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    shortcutSection("Navigation & Views", rows: navigationShortcuts)
+                    shortcutSection("Study & Editing", rows: studyShortcuts)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("SEARCH TIPS")
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(.secondary)
+                        Text("• Switch between Prefix (exact/prefix priority) and Contains (substring match anywhere) from the search bar badge.\n• Toggle Names to include or hide proper names (人名); Dai-Jishow also auto-nudges when a name is the top match.\n• Use ↑ / ↓ and Return inside the search dropdown, or Esc to dismiss overlays.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("Done") {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(26)
+        .frame(minWidth: 540, idealWidth: 600, minHeight: 460, idealHeight: 560)
+    }
+
+    private func shortcutSection(_ title: String, rows: [ShortcutRow]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.caption.weight(.heavy))
+                .foregroundStyle(.secondary)
+            VStack(spacing: 6) {
+                ForEach(rows) { row in
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(row.keys)
+                            .font(.caption.monospaced().weight(.bold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color.primary.opacity(0.08)))
+                            .frame(minWidth: 118, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(row.title)
+                                .font(.callout.weight(.semibold))
+                            Text(row.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
     }
 }

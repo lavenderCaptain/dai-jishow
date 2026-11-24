@@ -1,5 +1,5 @@
 // swift-tools-version: 5.9
-// Zero-Xcode-project Swift Package Manager manifest for Dai-Jishow.
+// Swift Package Manager manifest for Dai-Jishow (alongside DaiJishow.xcodeproj).
 // Compiles the C++20 `core/` engine directly and links it into the native
 // macOS SwiftUI glass-material application (`DaiJishowMac`).
 

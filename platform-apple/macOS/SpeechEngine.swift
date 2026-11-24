@@ -193,6 +193,11 @@ struct SpeakerButton: View {
         .buttonStyle(.plain)
         .disabled(available && !hasText)
         .help(helpText)
+        .djAccessibleControl(
+            label: available ? "Speak Japanese" : "Japanese voice not installed",
+            hint: helpText,
+            value: hasText ? trimmed : nil
+        )
         .fixedSize()
         .popover(isPresented: $showingVoiceSetupPopover, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
