@@ -953,6 +953,8 @@ private struct WatchKanjiDetailView: View {
 
 // MARK: - Spatial Digital Crown Fisheye (Mode Cycle + Paging)
 
+
+
 private struct WatchCrownFisheyeView: View {
     @ObservedObject var engine: DaiJishowEngine
     @Binding var path: [WatchDestination]
@@ -1124,7 +1126,28 @@ private struct WatchCrownFisheyeView: View {
             let focusedIdx = normalizedFocusIndex(count: nodes.count)
             let focusedNode: FisheyeNode? = nodes.isEmpty ? nil : nodes[focusedIdx]
 
-            VStack(spacing: isCompactWatch ? 2 : 4) {
+            ZStack(alignment: .topLeading) {
+                Button {
+                    cycleFisheyeMode()
+                } label: {
+                    Text(fisheyeModeLabel)
+                        .font(.system(size: isCompactWatch ? 9.5 : 10, weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, isCompactWatch ? 5 : 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.22)))
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .padding(.leading, isCompactWatch ? 14 : 16)
+                .padding(.top, isCompactWatch ? 10 : 12)
+                .ignoresSafeArea(.container, edges: .top)
+                .zIndex(30)
+                .accessibilityLabel("Fisheye mode: \(fisheyeModeLabel)")
+                .accessibilityHint("Tap to switch between Compounds, Parts, and Idioms")
+
+                VStack(spacing: isCompactWatch ? 2 : 4) {
                 HStack(spacing: 4) {
                     if let center = engine.activeKanji {
                         Button {
@@ -1386,21 +1409,8 @@ private struct WatchCrownFisheyeView: View {
                     }
                 }
             }
-            .toolbarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        cycleFisheyeMode()
-                    } label: {
-                        Text(fisheyeModeLabel)
-                            .font(.system(size: isCompactWatch ? 10 : 11, weight: .semibold))
-                            .lineLimit(1)
-                            .fixedSize()
-                    }
-                    .accessibilityLabel("Fisheye mode: \(fisheyeModeLabel)")
-                    .accessibilityHint("Tap to switch between Compounds, Parts, and Idioms")
-                }
             }
+            .toolbar(.hidden, for: .navigationBar)
             .onAppear {
                 syncFisheyeIfNeeded()
             }
