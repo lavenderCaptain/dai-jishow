@@ -199,11 +199,40 @@ struct SpeakerButton: View {
             value: hasText ? trimmed : nil
         )
         .fixedSize()
-        .popover(isPresented: $showingVoiceSetupPopover, arrowEdge: .bottom) {
+        .modifier(VoiceSetupPresenter(isPresented: $showingVoiceSetupPopover))
+    }
+}
+
+
+private struct VoiceSetupPresenter: ViewModifier {
+    @Binding var isPresented: Bool
+
+    private var setupInstructions: String {
+        #if os(iOS)
+        return "Add a Japanese (ja-JP) voice in Settings → Accessibility → Spoken Content → Voices, then tap Speak again."
+        #else
+        return "Add a Japanese (ja-JP) voice in System Settings → Accessibility → Spoken Content (or System Voice) → Manage Voices, then click Speak again."
+        #endif
+    }
+
+    func body(content: Content) -> some View {
+        #if os(watchOS)
+        content.sheet(isPresented: $isPresented) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("No Japanese Voice", systemImage: "speaker.slash.fill")
+                    .font(.headline)
+                Text("Add a Japanese (ja-JP) voice in Apple Watch Settings → Accessibility → Spoken Content → Voices.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+        }
+        #else
+        content.popover(isPresented: $isPresented, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Japanese Voice Not Installed", systemImage: "speaker.slash.fill")
                     .font(.headline)
-                Text("Add a Japanese (ja-JP) voice in System Settings → Accessibility → Spoken Content (or System Voice) → Manage Voices, then click Speak again.")
+                Text(setupInstructions)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -211,5 +240,6 @@ struct SpeakerButton: View {
             }
             .padding(14)
         }
+        #endif
     }
 }

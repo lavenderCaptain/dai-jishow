@@ -1626,30 +1626,6 @@ private func halton(_ index: Int, base: Int) -> Double {
     return r
 }
 
-/// Mirrors the cockpit's WordTelemetry tier → ratio → color mapping, but derived
-/// straight from a raw `WordHit` (freqRank / isName) so the cosmos can size and
-/// tint bubbles without loading a full entry detail.
-enum CosmosTierInfo {
-    static func of(_ word: WordHit) -> (ratio: Double, color: Color, label: String, rankStr: String) {
-        let rank = word.freqRank
-        if word.isName {
-            return (0.35, Color.purple, "Proper Name", rank < 999_999 ? "#\(rank)" : "Name")
-        } else if rank <= 500 {
-            return (1.0, Color(red: 0.22, green: 0.74, blue: 0.97), "Core Top 500", "#\(rank)")
-        } else if rank <= 2500 {
-            return (0.84, Color(red: 0.22, green: 0.74, blue: 0.97), "Core Top 2,500", "#\(rank)")
-        } else if rank <= 10_000 {
-            return (0.66, Color(red: 0.20, green: 0.83, blue: 0.60), "Jōyō Common", "#\(rank)")
-        } else if rank <= 35_000 {
-            return (0.45, Color(red: 0.98, green: 0.75, blue: 0.14), "Standard", "#\(rank)")
-        } else if rank < 999_999 {
-            return (0.26, Color(red: 0.65, green: 0.55, blue: 0.98), "Literary", "#\(rank)")
-        } else {
-            return (0.16, Color.secondary, "Unranked", "—")
-        }
-    }
-}
-
 /// One placed bubble: a sampled word with its deterministic position + tier.
 private struct CosmosBubble: Identifiable {
     let word: WordHit

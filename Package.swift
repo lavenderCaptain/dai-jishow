@@ -44,14 +44,20 @@ let package = Package(
             path: "Sources/DaiJishowMorph"
         ),
 
-        // 3. Native macOS SwiftUI + Canvas glass-material shell
+        // 3. Native macOS SwiftUI + Canvas glass-material shell (shared + macOS layers)
         .executableTarget(
             name: "DaiJishowMac",
             dependencies: ["DaiJishowCore", "DaiJishowMorph"],
-            path: "platform-apple/macOS",
+            path: "platform-apple",
             exclude: [
-                "DaiJishow.entitlements",
-                "PrivacyInfo.xcprivacy"
+                "iOS",
+                "watchOS",
+                "macOS/DaiJishow.entitlements",
+                "macOS/PrivacyInfo.xcprivacy"
+            ],
+            sources: [
+                "Shared",
+                "macOS"
             ]
         ),
 

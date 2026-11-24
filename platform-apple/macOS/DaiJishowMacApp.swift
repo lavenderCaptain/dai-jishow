@@ -33,7 +33,7 @@ struct DaiJishowMacApp: App {
     @StateObject private var engine: DaiJishowEngine
 
     init() {
-        let resolvedPath = Self.locateDatabasePath()
+        let resolvedPath = DatabaseLocator.locateDatabasePath()
         _engine = StateObject(wrappedValue: DaiJishowEngine(dbPath: resolvedPath))
     }
 
@@ -199,21 +199,6 @@ struct DaiJishowMacApp: App {
         }
     }
 
-    private static func locateDatabasePath() -> String {
-        if let bundlePath = Bundle.main.path(forResource: "daijishow", ofType: "db") {
-            return bundlePath
-        }
-        let candidates = [
-            "daijishow.db",
-            "build/daijishow.db",
-            "../data/daijishow.db",
-            "../../data/daijishow.db"
-        ]
-        for path in candidates where FileManager.default.fileExists(atPath: path) {
-            return path
-        }
-        return "daijishow.db"
-    }
 }
 
 extension Notification.Name {

@@ -8,6 +8,8 @@ import DaiJishowCore
 import DaiJishowMorph
 #if os(macOS)
 import AppKit
+#elseif canImport(UIKit) && !os(watchOS)
+import UIKit
 #endif
 
 struct WordHit: Identifiable, Hashable {
@@ -1318,12 +1320,14 @@ final class DaiJishowEngine: ObservableObject {
 
     // MARK: - Clipboard (copy / paste to the system pasteboard)
 
-    /// Copies `text` to the system clipboard. No-op on non-macOS targets.
+    /// Copies `text` to the system clipboard on macOS and iOS/iPadOS.
     func copyText(_ text: String) {
         #if os(macOS)
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
+        #elseif canImport(UIKit) && !os(watchOS)
+        UIPasteboard.general.string = text
         #endif
     }
 

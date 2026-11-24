@@ -19,6 +19,7 @@
 		56E6D0A9A79C3E62DBE70D8F = {isa = PBXBuildFile; fileRef = CE5D9021521271ED28C89FB6; };
 		B4C8D9E0F1A2B3C4D5E6F703 = {isa = PBXBuildFile; fileRef = B4C8D9E0F1A2B3C4D5E6F701; };
 		A6CC693C49E60CD9B4E1E0F1 = {isa = PBXBuildFile; fileRef = DC79B455413A497D3127400F; };
+		B10000010000000000000001 = {isa = PBXBuildFile; fileRef = F10000010000000000000001; };
 		712103DDD68438AC276C98B3 = {isa = PBXBuildFile; fileRef = 6EE65AF19BB3DE4A1BA00D6C; };
 		304BFE3EFDBCFB8AD1D0380B = {isa = PBXBuildFile; fileRef = 8E74BD4D653982F2797E84B2; };
 		331B2A4FB7E13792DD70A331 = {isa = PBXBuildFile; fileRef = 83CE9DF8AED7A79492861840; };
@@ -44,6 +45,38 @@
 		50D389464C0DAB9EB517A729 = {isa = PBXBuildFile; fileRef = 294CF4D3A45F05F35EF58E4D; };
 		E1F2A3B4C5D6E7F809010001 = {isa = PBXBuildFile; fileRef = E1F2A3B4C5D6E7F809010011; };
 		E1F2A3B4C5D6E7F809010002 = {isa = PBXBuildFile; fileRef = 294CF4D3A45F05F35EF58E4D; };
+		/* Dai-Jishow-iOS build files */
+		B20000010000000000000001 = {isa = PBXBuildFile; fileRef = DC79B455413A497D3127400F; };
+		B20000010000000000000002 = {isa = PBXBuildFile; fileRef = F10000010000000000000001; };
+		B20000010000000000000003 = {isa = PBXBuildFile; fileRef = 83CE9DF8AED7A79492861840; };
+		B20000010000000000000004 = {isa = PBXBuildFile; fileRef = C23BEF6A2CEC67B57AE9A8B3; };
+		B20000010000000000000005 = {isa = PBXBuildFile; fileRef = A6D630FB42412B7437B3DE8E; };
+		B20000010000000000000006 = {isa = PBXBuildFile; fileRef = 925163EDC594D42264C532A0; };
+		B20000010000000000000007 = {isa = PBXBuildFile; fileRef = F10000020000000000000001; };
+		B20000010000000000000008 = {isa = PBXBuildFile; fileRef = F10000020000000000000002; };
+		B20000010000000000000009 = {isa = PBXBuildFile; fileRef = F10000020000000000000003; };
+		B20000010000000000000010 = {isa = PBXBuildFile; fileRef = 4E78B02432783474D2B1831B; };
+		B20000010000000000000011 = {isa = PBXBuildFile; fileRef = C4D8E9F01A2B3C4D5E6F7011; };
+		B20000010000000000000012 = {isa = PBXBuildFile; fileRef = C4D8E9F01A2B3C4D5E6F7012; };
+		B20000010000000000000013 = {isa = PBXBuildFile; fileRef = C4D8E9F01A2B3C4D5E6F7013; };
+		B20000010000000000000014 = {isa = PBXBuildFile; fileRef = 74E4D8317DB65544032DE753; };
+		B20000010000000000000015 = {isa = PBXBuildFile; fileRef = 294CF4D3A45F05F35EF58E4D; };
+		B20000010000000000000016 = {isa = PBXBuildFile; fileRef = 294CF4D3A45F05F35EF58E4D; settings = { ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		/* Dai-Jishow-Watch build files */
+		B30000010000000000000001 = {isa = PBXBuildFile; fileRef = DC79B455413A497D3127400F; };
+		B30000010000000000000002 = {isa = PBXBuildFile; fileRef = F10000010000000000000001; };
+		B30000010000000000000003 = {isa = PBXBuildFile; fileRef = 83CE9DF8AED7A79492861840; };
+		B30000010000000000000004 = {isa = PBXBuildFile; fileRef = C23BEF6A2CEC67B57AE9A8B3; };
+		B30000010000000000000005 = {isa = PBXBuildFile; fileRef = A6D630FB42412B7437B3DE8E; };
+		B30000010000000000000006 = {isa = PBXBuildFile; fileRef = 925163EDC594D42264C532A0; };
+		B30000010000000000000007 = {isa = PBXBuildFile; fileRef = F10000030000000000000001; };
+		B30000010000000000000010 = {isa = PBXBuildFile; fileRef = 4E78B02432783474D2B1831B; };
+		B30000010000000000000011 = {isa = PBXBuildFile; fileRef = C4D8E9F01A2B3C4D5E6F7011; };
+		B30000010000000000000012 = {isa = PBXBuildFile; fileRef = C4D8E9F01A2B3C4D5E6F7012; };
+		B30000010000000000000013 = {isa = PBXBuildFile; fileRef = C4D8E9F01A2B3C4D5E6F7013; };
+		B30000010000000000000014 = {isa = PBXBuildFile; fileRef = 74E4D8317DB65544032DE753; };
+		B30000010000000000000015 = {isa = PBXBuildFile; fileRef = 294CF4D3A45F05F35EF58E4D; };
+		B30000010000000000000016 = {isa = PBXBuildFile; fileRef = 294CF4D3A45F05F35EF58E4D; settings = { ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,6 +108,34 @@
 			remoteGlobalIDString = 64AF879D865BBCFB4C5E4A2A;
 			remoteInfo = "Dai-Jishow";
 		};
+		C20000010000000000000001 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3BA39E0C2E44CE79075FB8BD;
+			proxyType = 1;
+			remoteGlobalIDString = D6D12E602DD267EEA61A5D31;
+			remoteInfo = DaiJishowCore;
+		};
+		C20000010000000000000002 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3BA39E0C2E44CE79075FB8BD;
+			proxyType = 1;
+			remoteGlobalIDString = 8B0ECFA29B022C4A8EA6A87B;
+			remoteInfo = DaiJishowMorph;
+		};
+		C30000010000000000000001 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3BA39E0C2E44CE79075FB8BD;
+			proxyType = 1;
+			remoteGlobalIDString = D6D12E602DD267EEA61A5D31;
+			remoteInfo = DaiJishowCore;
+		};
+		C30000010000000000000002 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3BA39E0C2E44CE79075FB8BD;
+			proxyType = 1;
+			remoteGlobalIDString = 8B0ECFA29B022C4A8EA6A87B;
+			remoteInfo = DaiJishowMorph;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -85,6 +146,28 @@
 			dstSubfolderSpec = 10;
 			files = (
 				9A1140A5D98835475A5E813B,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E20000010000000000000001 = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				B20000010000000000000016,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E30000010000000000000001 = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				B30000010000000000000016,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -107,17 +190,24 @@
 		455725CAB5198565E10231D1 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PitchAccentContour.swift; path = Sources/DaiJishowMorph/PitchAccentContour.swift; sourceTree = SOURCE_ROOT; };
 		CE5D9021521271ED28C89FB6 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyExport.swift; path = Sources/DaiJishowMorph/StudyExport.swift; sourceTree = SOURCE_ROOT; };
 		B4C8D9E0F1A2B3C4D5E6F701 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyStore.swift; path = Sources/DaiJishowMorph/StudyStore.swift; sourceTree = SOURCE_ROOT; };
-		DC79B455413A497D3127400F = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AdaptiveControls.swift; path = "platform-apple/macOS/AdaptiveControls.swift"; sourceTree = SOURCE_ROOT; };
+		DC79B455413A497D3127400F = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AdaptiveControls.swift; path = "platform-apple/Shared/AdaptiveControls.swift"; sourceTree = SOURCE_ROOT; };
+		F10000010000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DaiJishowCredits.swift; path = "platform-apple/Shared/DaiJishowCredits.swift"; sourceTree = SOURCE_ROOT; };
 		6EE65AF19BB3DE4A1BA00D6C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppChrome.swift; path = "platform-apple/macOS/AppChrome.swift"; sourceTree = SOURCE_ROOT; };
 		8E74BD4D653982F2797E84B2 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DaiJishowMacApp.swift; path = "platform-apple/macOS/DaiJishowMacApp.swift"; sourceTree = SOURCE_ROOT; };
-		83CE9DF8AED7A79492861840 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EngineBridge.swift; path = "platform-apple/macOS/EngineBridge.swift"; sourceTree = SOURCE_ROOT; };
+		83CE9DF8AED7A79492861840 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EngineBridge.swift; path = "platform-apple/Shared/EngineBridge.swift"; sourceTree = SOURCE_ROOT; };
 		1E8A649EB363EC93E968087A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GlassViews.swift; path = "platform-apple/macOS/GlassViews.swift"; sourceTree = SOURCE_ROOT; };
-		C23BEF6A2CEC67B57AE9A8B3 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadicalCatalog.swift; path = "platform-apple/macOS/RadicalCatalog.swift"; sourceTree = SOURCE_ROOT; };
-		A6D630FB42412B7437B3DE8E = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SpeechEngine.swift; path = "platform-apple/macOS/SpeechEngine.swift"; sourceTree = SOURCE_ROOT; };
+		C23BEF6A2CEC67B57AE9A8B3 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadicalCatalog.swift; path = "platform-apple/Shared/RadicalCatalog.swift"; sourceTree = SOURCE_ROOT; };
+		A6D630FB42412B7437B3DE8E = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SpeechEngine.swift; path = "platform-apple/Shared/SpeechEngine.swift"; sourceTree = SOURCE_ROOT; };
 		4417DC4C4E626E697EE832E1 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyLibraryView.swift; path = "platform-apple/macOS/StudyLibraryView.swift"; sourceTree = SOURCE_ROOT; };
 		F3ADFA7DA56D6D9CBC098C1E = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyStore.swift; path = "platform-apple/macOS/StudyStore.swift"; sourceTree = SOURCE_ROOT; };
-		925163EDC594D42264C532A0 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ThemeTokens.swift; path = "platform-apple/macOS/ThemeTokens.swift"; sourceTree = SOURCE_ROOT; };
+		925163EDC594D42264C532A0 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ThemeTokens.swift; path = "platform-apple/Shared/ThemeTokens.swift"; sourceTree = SOURCE_ROOT; };
 		7B736531F239BEE3EFA1E819 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WindowChrome.swift; path = "platform-apple/macOS/WindowChrome.swift"; sourceTree = SOURCE_ROOT; };
+		F10000020000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DaiJishowIOSApp.swift; path = "platform-apple/iOS/DaiJishowIOSApp.swift"; sourceTree = SOURCE_ROOT; };
+		F10000020000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IOSDetailViews.swift; path = "platform-apple/iOS/IOSDetailViews.swift"; sourceTree = SOURCE_ROOT; };
+		F10000020000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IOSExploreViews.swift; path = "platform-apple/iOS/IOSExploreViews.swift"; sourceTree = SOURCE_ROOT; };
+		F10000020000000000000004 = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = DaiJishowIOS.entitlements; path = "platform-apple/iOS/DaiJishowIOS.entitlements"; sourceTree = SOURCE_ROOT; };
+		F10000030000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DaiJishowWatchApp.swift; path = "platform-apple/watchOS/DaiJishowWatchApp.swift"; sourceTree = SOURCE_ROOT; };
+		F10000030000000000000002 = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = DaiJishowWatch.entitlements; path = "platform-apple/watchOS/DaiJishowWatch.entitlements"; sourceTree = SOURCE_ROOT; };
 		31530B5EF24C26111DF39711 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ConjugationTests.swift; path = Tests/DaiJishowMorphTests/ConjugationTests.swift; sourceTree = SOURCE_ROOT; };
 		0E94DC152E9204C84E27C5F1 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PitchContourTests.swift; path = Tests/DaiJishowMorphTests/PitchContourTests.swift; sourceTree = SOURCE_ROOT; };
 		0ED6723CDB7B484AF3BB2777 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SenseTagsTests.swift; path = Tests/DaiJishowMorphTests/SenseTagsTests.swift; sourceTree = SOURCE_ROOT; };
@@ -133,6 +223,8 @@
 		74E4D8317DB65544032DE753 = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libDaiJishowCore.a; path = libDaiJishowCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		294CF4D3A45F05F35EF58E4D = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DaiJishowMorph.framework; path = DaiJishowMorph.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		679578CE01A46F106A612CE5 = {isa = PBXFileReference; lastKnownFileType = wrapper.application; name = "Dai-Jishow.app"; path = "Dai-Jishow.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10000020000000000000099 = {isa = PBXFileReference; lastKnownFileType = wrapper.application; name = DaiJishowIOS.app; path = DaiJishowIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10000030000000000000099 = {isa = PBXFileReference; lastKnownFileType = wrapper.application; name = DaiJishowWatch.app; path = DaiJishowWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D33C270E14141608E041686E = {isa = PBXFileReference; lastKnownFileType = wrapper.cfbundle; name = DaiJishowMorphTests.xctest; path = DaiJishowMorphTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E1F2A3B4C5D6E7F809010011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DaiJishowAppTests.swift; path = Tests/DaiJishowAppTests/DaiJishowAppTests.swift; sourceTree = SOURCE_ROOT; };
 		E1F2A3B4C5D6E7F809010012 = {isa = PBXFileReference; lastKnownFileType = wrapper.cfbundle; name = DaiJishowAppTests.xctest; path = DaiJishowAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -145,6 +237,24 @@
 			files = (
 				ABDA24EECAEBC24D9532E91F,
 				9C3673C53D047C4BD00FAE4B,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F20000020000000000000002 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B20000010000000000000014,
+				B20000010000000000000015,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F30000020000000000000002 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B30000010000000000000014,
+				B30000010000000000000015,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -170,7 +280,10 @@
 		5994AD8779C31B215CABFA9D = {
 			isa = PBXGroup;
 			children = (
+				F20000010000000000000001,
 				2CDDF7164627DA0AC1691680,
+				F20000020000000000000001,
+				F20000030000000000000001,
 				92CD0AA97355A43213C3DAE9,
 				FE21CCA35BB82F3C6B6ED45C,
 				26B27A207F6D1CE3B361AA42,
@@ -183,24 +296,52 @@
 			);
 			sourceTree = "<group>";
 		};
-		2CDDF7164627DA0AC1691680 = {
+		F20000010000000000000001 = {
 			isa = PBXGroup;
 			children = (
 				DC79B455413A497D3127400F,
-				6EE65AF19BB3DE4A1BA00D6C,
-				8E74BD4D653982F2797E84B2,
+				F10000010000000000000001,
 				83CE9DF8AED7A79492861840,
-				1E8A649EB363EC93E968087A,
 				C23BEF6A2CEC67B57AE9A8B3,
 				A6D630FB42412B7437B3DE8E,
+				925163EDC594D42264C532A0,
+			);
+			name = "Shared Apple";
+			sourceTree = "<group>";
+		};
+		2CDDF7164627DA0AC1691680 = {
+			isa = PBXGroup;
+			children = (
+				6EE65AF19BB3DE4A1BA00D6C,
+				8E74BD4D653982F2797E84B2,
+				1E8A649EB363EC93E968087A,
 				4417DC4C4E626E697EE832E1,
 				F3ADFA7DA56D6D9CBC098C1E,
-				925163EDC594D42264C532A0,
 				7B736531F239BEE3EFA1E819,
 				C4D8E9F01A2B3C4D5E6F7010,
 				C4D8E9F01A2B3C4D5E6F7011,
 			);
 			name = "macOS App";
+			sourceTree = "<group>";
+		};
+		F20000020000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				F10000020000000000000001,
+				F10000020000000000000002,
+				F10000020000000000000003,
+				F10000020000000000000004,
+			);
+			name = "iOS App";
+			sourceTree = "<group>";
+		};
+		F20000030000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				F10000030000000000000001,
+				F10000030000000000000002,
+			);
+			name = "watchOS App";
 			sourceTree = "<group>";
 		};
 		92CD0AA97355A43213C3DAE9 = {
@@ -257,6 +398,8 @@
 			isa = PBXGroup;
 			children = (
 				679578CE01A46F106A612CE5,
+				F10000020000000000000099,
+				F10000030000000000000099,
 				294CF4D3A45F05F35EF58E4D,
 				74E4D8317DB65544032DE753,
 				D33C270E14141608E041686E,
@@ -314,6 +457,46 @@
 			productReference = 679578CE01A46F106A612CE5;
 			productType = "com.apple.product-type.application";
 		};
+		T20000010000000000000001 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = L20000010000000000000001;
+			buildPhases = (
+				S20000010000000000000001,
+				F20000020000000000000002,
+				R20000010000000000000001,
+				E20000010000000000000001,
+				P20000010000000000000001,
+			);
+			buildRules = ();
+			dependencies = (
+				D20000010000000000000001,
+				D20000010000000000000002,
+			);
+			name = "Dai-Jishow-iOS";
+			productName = DaiJishowIOS;
+			productReference = F10000020000000000000099;
+			productType = "com.apple.product-type.application";
+		};
+		T30000010000000000000001 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = L30000010000000000000001;
+			buildPhases = (
+				S30000010000000000000001,
+				F30000020000000000000002,
+				R30000010000000000000001,
+				E30000010000000000000001,
+				P30000010000000000000001,
+			);
+			buildRules = ();
+			dependencies = (
+				D30000010000000000000001,
+				D30000010000000000000002,
+			);
+			name = "Dai-Jishow-Watch";
+			productName = DaiJishowWatch;
+			productReference = F10000030000000000000099;
+			productType = "com.apple.product-type.application";
+		};
 		8CFC618062B24D2A92D8C13C = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 7D231D01A46E6EB57C64B68A;
@@ -366,6 +549,8 @@
 			projectRoot = "";
 			targets = (
 				64AF879D865BBCFB4C5E4A2A,
+				T20000010000000000000001,
+				T30000010000000000000001,
 				8B0ECFA29B022C4A8EA6A87B,
 				D6D12E602DD267EEA61A5D31,
 				8CFC618062B24D2A92D8C13C,
@@ -386,10 +571,56 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		R20000010000000000000001 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B20000010000000000000010,
+				B20000010000000000000011,
+				B20000010000000000000012,
+				B20000010000000000000013,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		R30000010000000000000001 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B30000010000000000000010,
+				B30000010000000000000011,
+				B30000010000000000000012,
+				B30000010000000000000013,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		05A4CC4C4DBE40CA659E3AE0 = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ();
+			name = "Bundle Offline Corpus (build/daijishow.db)";
+			outputPaths = ();
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = "/bin/bash";
+			shellScript = "DB_SRC=\"${SRCROOT}/build/daijishow.db\"\nRES_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nif [ -f \"$DB_SRC\" ]; then\n  mkdir -p \"$RES_DIR\"\n  if [ -L \"$RES_DIR/daijishow.db\" ]; then\n    rm -f \"$RES_DIR/daijishow.db\"\n  fi\n  if [ ! -f \"$RES_DIR/daijishow.db\" ] || [ \"$DB_SRC\" -nt \"$RES_DIR/daijishow.db\" ]; then\n    cp -c \"$DB_SRC\" \"$RES_DIR/daijishow.db\" 2>/dev/null || cp -f \"$DB_SRC\" \"$RES_DIR/daijishow.db\"\n  fi\nfi\n";
+		};
+		P20000010000000000000001 = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ();
+			name = "Bundle Offline Corpus (build/daijishow.db)";
+			outputPaths = ();
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = "/bin/bash";
+			shellScript = "DB_SRC=\"${SRCROOT}/build/daijishow.db\"\nRES_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nif [ -f \"$DB_SRC\" ]; then\n  mkdir -p \"$RES_DIR\"\n  if [ -L \"$RES_DIR/daijishow.db\" ]; then\n    rm -f \"$RES_DIR/daijishow.db\"\n  fi\n  if [ ! -f \"$RES_DIR/daijishow.db\" ] || [ \"$DB_SRC\" -nt \"$RES_DIR/daijishow.db\" ]; then\n    cp -c \"$DB_SRC\" \"$RES_DIR/daijishow.db\" 2>/dev/null || cp -f \"$DB_SRC\" \"$RES_DIR/daijishow.db\"\n  fi\nfi\n";
+		};
+		P30000010000000000000001 = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -434,6 +665,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A6CC693C49E60CD9B4E1E0F1,
+				B10000010000000000000001,
 				712103DDD68438AC276C98B3,
 				304BFE3EFDBCFB8AD1D0380B,
 				331B2A4FB7E13792DD70A331,
@@ -444,6 +676,36 @@
 				B7759C91BE68A78A6BA2F50F,
 				3A636C08F1F0185EA25FF209,
 				7DE33E5F2FFDA973FC97830F,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		S20000010000000000000001 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B20000010000000000000001,
+				B20000010000000000000002,
+				B20000010000000000000003,
+				B20000010000000000000004,
+				B20000010000000000000005,
+				B20000010000000000000006,
+				B20000010000000000000007,
+				B20000010000000000000008,
+				B20000010000000000000009,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		S30000010000000000000001 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B30000010000000000000001,
+				B30000010000000000000002,
+				B30000010000000000000003,
+				B30000010000000000000004,
+				B30000010000000000000005,
+				B30000010000000000000006,
+				B30000010000000000000007,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -480,6 +742,26 @@
 			target = 8B0ECFA29B022C4A8EA6A87B;
 			targetProxy = D3426ED18671CD2F80B183B9;
 		};
+		D20000010000000000000001 = {
+			isa = PBXTargetDependency;
+			target = D6D12E602DD267EEA61A5D31;
+			targetProxy = C20000010000000000000001;
+		};
+		D20000010000000000000002 = {
+			isa = PBXTargetDependency;
+			target = 8B0ECFA29B022C4A8EA6A87B;
+			targetProxy = C20000010000000000000002;
+		};
+		D30000010000000000000001 = {
+			isa = PBXTargetDependency;
+			target = D6D12E602DD267EEA61A5D31;
+			targetProxy = C30000010000000000000001;
+		};
+		D30000010000000000000002 = {
+			isa = PBXTargetDependency;
+			target = 8B0ECFA29B022C4A8EA6A87B;
+			targetProxy = C30000010000000000000002;
+		};
 		C416A1841837887DCF6C43C9 = {
 			isa = PBXTargetDependency;
 			target = 8B0ECFA29B022C4A8EA6A87B;
@@ -501,17 +783,20 @@
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "-";
-				CURRENT_PROJECT_VERSION = 1;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.2.0;
-				SDKROOT = macosx;
-				SWIFT_VERSION = 5.0;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_TESTABILITY = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.2.0;
 				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "macosx iphoneos iphonesimulator watchos watchsimulator";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
 			};
 			name = Debug;
 		};
@@ -523,13 +808,16 @@
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "-";
+				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 0.2.0;
-				SDKROOT = macosx;
-				SWIFT_VERSION = 5.0;
-				COPY_PHASE_STRIP = NO;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "macosx iphoneos iphonesimulator watchos watchsimulator";
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
 			};
 			name = Release;
 		};
@@ -552,6 +840,7 @@
 				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "macosx iphoneos iphonesimulator watchos watchsimulator";
 			};
 			name = Debug;
 		};
@@ -574,6 +863,7 @@
 				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "macosx iphoneos iphonesimulator watchos watchsimulator";
 			};
 			name = Release;
 		};
@@ -590,6 +880,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.morph;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "macosx iphoneos iphonesimulator watchos watchsimulator";
 			};
 			name = Debug;
 		};
@@ -606,6 +897,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.morph;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "macosx iphoneos iphonesimulator watchos watchsimulator";
 			};
 			name = Release;
 		};
@@ -638,6 +930,8 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.mac;
 				PRODUCT_NAME = "Dai-Jishow";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_INCLUDE_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/core/include",
@@ -674,10 +968,168 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.mac;
 				PRODUCT_NAME = "Dai-Jishow";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_INCLUDE_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/core/include",
 				);
+			};
+			name = Release;
+		};
+		K20000010000000000000001 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = DaiJishow;
+				CODE_SIGN_ENTITLEMENTS = "platform-apple/iOS/DaiJishowIOS.entitlements";
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/core/include",
+				);
+				INFOPLIST_KEY_CFBundleDisplayName = "Dai-Jishow";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Dai-Jishow Contributors. Code: MIT; Corpus: CC BY-SA 4.0 / 3.0 & CC BY 2.0.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+					"-lc++",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.ios;
+				PRODUCT_NAME = DaiJishowIOS;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/core/include",
+				);
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		K20000010000000000000002 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = DaiJishow;
+				CODE_SIGN_ENTITLEMENTS = "platform-apple/iOS/DaiJishowIOS.entitlements";
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/core/include",
+				);
+				INFOPLIST_KEY_CFBundleDisplayName = "Dai-Jishow";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Dai-Jishow Contributors. Code: MIT; Corpus: CC BY-SA 4.0 / 3.0 & CC BY 2.0.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+					"-lc++",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.ios;
+				PRODUCT_NAME = DaiJishowIOS;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/core/include",
+				);
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		K30000010000000000000001 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = DaiJishow;
+				CODE_SIGN_ENTITLEMENTS = "platform-apple/watchOS/DaiJishowWatch.entitlements";
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/core/include",
+				);
+				INFOPLIST_KEY_CFBundleDisplayName = "Dai-Jishow";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Dai-Jishow Contributors. Code: MIT; Corpus: CC BY-SA 4.0 / 3.0 & CC BY 2.0.";
+				INFOPLIST_KEY_WKApplication = YES;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+					"-lc++",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.watch;
+				PRODUCT_NAME = DaiJishowWatch;
+				SDKROOT = watchos;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/core/include",
+				);
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		K30000010000000000000002 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = DaiJishow;
+				CODE_SIGN_ENTITLEMENTS = "platform-apple/watchOS/DaiJishowWatch.entitlements";
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/core/include",
+				);
+				INFOPLIST_KEY_CFBundleDisplayName = "Dai-Jishow";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Dai-Jishow Contributors. Code: MIT; Corpus: CC BY-SA 4.0 / 3.0 & CC BY 2.0.";
+				INFOPLIST_KEY_WKApplication = YES;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+					"-lc++",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.watch;
+				PRODUCT_NAME = DaiJishowWatch;
+				SDKROOT = watchos;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/core/include",
+				);
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
 			};
 			name = Release;
 		};
@@ -689,9 +1141,12 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.morph.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "macosx iphoneos iphonesimulator";
 			};
 			name = Debug;
 		};
@@ -703,9 +1158,12 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.morph.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "macosx iphoneos iphonesimulator";
 			};
 			name = Release;
 		};
@@ -725,6 +1183,8 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.mac.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_INCLUDE_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/core/include",
@@ -749,6 +1209,8 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = org.daijishow.mac.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_INCLUDE_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/core/include",
@@ -792,6 +1254,24 @@
 			buildConfigurations = (
 				271B8318053A345DAC214376,
 				A2BD4384CA3E51B4BC1746E1,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		L20000010000000000000001 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				K20000010000000000000001,
+				K20000010000000000000002,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		L30000010000000000000001 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				K30000010000000000000001,
+				K30000010000000000000002,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
