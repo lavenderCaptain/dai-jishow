@@ -97,6 +97,19 @@ struct Registrar {
         }                                                       \
     } while (0)
 
+/// Assert two values compare equal with `==`.
+#define CHECK_EQ(actual, expected)                              \
+    do {                                                        \
+        ++::djtest::check_count();                              \
+        auto dj_act = (actual);                                 \
+        auto dj_exp = (expected);                               \
+        if (!(dj_act == dj_exp)) {                              \
+            ++::djtest::fail_count();                           \
+            std::fprintf(stderr, "  FAIL %s:%d: CHECK_EQ(%s, %s)\n", \
+                         __FILE__, __LINE__, #actual, #expected); \
+        }                                                       \
+    } while (0)
+
 /// Assert two strings are equal, printing both on failure. The expected/actual
 /// are shown as raw UTF-8 so a wrong kana/kanji output is visible in the log
 /// rather than an opaque mismatch.

@@ -38,13 +38,13 @@ APP_DIR="$BUILD_DIR/$APP_NAME.app"
 # --- version (single source of truth: the git release tag) -------------
 # Capture the version from the latest git tag so the About page, Info.plist,
 # and the DMG filename all agree — there is no hand-maintained version string
-# to drift. The About panel shows "short (build …)": e.g. 0.9ß (build rc3)
-# for a release candidate, or just 0.9ß for the final v0.9ß tag.
+# to drift. Info.plist uses numeric CFBundleShortVersionString / CFBundleVersion
+# for App Store compatibility.
 capture_version() {
   local tag
   tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
   if [[ -z "$tag" ]]; then
-    tag="0.9ß"                       # no git tags at all — sane default
+    tag="0.2.0"                       # no git tags at all — sane default
   fi
   tag="${tag#v}"                    # drop the conventional leading "v"
   if [[ "$tag" == *-* ]]; then
@@ -58,9 +58,20 @@ capture_version() {
   if [[ "$BUILD_VERSION" != "$SHORT_VERSION" ]]; then
     FULL_VERSION="${SHORT_VERSION}-${BUILD_VERSION}"
   fi
+  # Apple CFBundleShortVersionString / CFBundleVersion must be ASCII integers
+  # separated by dots (no Greek/non-numeric suffixes).
+  PLIST_SHORT_VERSION="${SHORT_VERSION//[^0-9.]/}"
+  if [[ "$PLIST_SHORT_VERSION" =~ ^[0-9]+$ ]]; then
+    PLIST_SHORT_VERSION="${PLIST_SHORT_VERSION}.0.0"
+  elif [[ "$PLIST_SHORT_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    PLIST_SHORT_VERSION="${PLIST_SHORT_VERSION}.0"
+  elif [[ -z "$PLIST_SHORT_VERSION" ]]; then
+    PLIST_SHORT_VERSION="0.2.0"
+  fi
+  PLIST_BUILD_VERSION="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 }
 capture_version
-echo "==> version: $FULL_VERSION  (About page shows \"$SHORT_VERSION (build $BUILD_VERSION)\")"
+echo "==> version: $FULL_VERSION  (Info.plist: $PLIST_SHORT_VERSION build $PLIST_BUILD_VERSION)"
 
 CONFIG="debug"
 BUNDLE_DB=1
@@ -154,6 +165,15 @@ if [[ "$BUNDLE_DB" -eq 1 ]]; then
   fi
 fi
 
+# --- Legal / License notices & Privacy Manifest -------------------------
+for doc in LICENSE NOTICE platform-apple/macOS/PrivacyInfo.xcprivacy; do
+  if [[ -f "$doc" ]]; then
+    base="$(basename "$doc")"
+    cp "$doc" "$APP_DIR/Contents/Resources/$base"
+    echo "    + $base"
+  fi
+done
+
 # --- Info.plist ---------------------------------------------------------
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -165,12 +185,14 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>CFBundleExecutable</key>      <string>$BINARY</string>
     <key>CFBundleIdentifier</key>      <string>$BUNDLE_ID</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
-    <key>CFBundleShortVersionString</key> <string>$SHORT_VERSION</string>
-    <key>CFBundleVersion</key>         <string>$BUILD_VERSION</string>
+    <key>CFBundleShortVersionString</key> <string>$PLIST_SHORT_VERSION</string>
+    <key>CFBundleVersion</key>         <string>$PLIST_BUILD_VERSION</string>
     <key>CFBundleInfoDictionaryVersion</key> <string>6.0</string>
     <key>CFBundleIconFile</key>        <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>  <string>$MIN_OS</string>
     <key>LSApplicationCategoryType</key> <string>public.app-category.education</string>
+    <key>ITSAppUsesNonExemptEncryption</key> <false/>
+    <key>NSHumanReadableCopyright</key> <string>Copyright © 2026 Dai-Jishow Contributors. Code: MIT; Corpus: CC BY-SA 4.0 / 3.0 &amp; CC BY 2.0.</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>NSPrincipalClass</key>        <string>NSApplication</string>
     <key>NSSupportsAutomaticTermination</key> <false/>
@@ -180,9 +202,12 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 PLIST
 echo "    + Info.plist"
 
-# --- code sign (ad-hoc) -------------------------------------------------
+# --- code sign (ad-hoc with App Sandbox entitlements) -------------------
 echo "==> codesign (ad-hoc)"
-if codesign --force --deep --sign - "$APP_DIR" 2>/dev/null; then
+ENTITLEMENTS="platform-apple/macOS/DaiJishow.entitlements"
+if [[ -f "$ENTITLEMENTS" ]] && codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP_DIR" 2>/dev/null; then
+  echo "    signed (sandbox + hardened runtime)"
+elif codesign --force --deep --sign - "$APP_DIR" 2>/dev/null; then
   echo "    signed"
 else
   echo "    (codesign unavailable or failed — app still runs locally)"

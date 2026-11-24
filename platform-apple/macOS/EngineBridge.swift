@@ -922,18 +922,19 @@ final class DaiJishowEngine: ObservableObject {
         return Color(hue: hue, saturation: saturation, brightness: brightness)
     }
 
-    /// Canonical JLPT level definitions (N5 easiest → N1 hardest), kept in one
+    /// Approximate kanji study band definitions (N5 easiest → N1 hardest,
+    /// derived from KANJIDIC2's pre-2010 4-level JLPT metadata), kept in one
     /// place so the colour legend, the ranked-row JLPT chip, and the search
     /// filter chips all explain *what a level means* — not merely which words
     /// match a given level.
     static func jlptLevelDescription(_ level: Int) -> String {
         switch level {
-        case 5: return "Basic phrases, hiragana, katakana, simple kanji, and short, slow conversations."
-        case 4: return "Basic everyday Japanese — simple daily topics and slowly spoken conversations."
-        case 3: return "A bridge between basic and advanced Japanese, used in everyday situations."
-        case 2: return "Everyday Japanese across broader settings — clear articles and natural-speed speech."
-        case 1: return "Complex, abstract texts (editorials, critiques) and natural-speed speech across varied settings."
-        default: return "Kana-only — no JLPT level (the word has no head kanji)."
+        case 5: return "Basic phrases, hiragana, katakana, simple kanji, and short, slow conversations (approximate KANJIDIC2 study band)."
+        case 4: return "Basic everyday Japanese — simple daily topics and slowly spoken conversations (approximate KANJIDIC2 study band)."
+        case 3: return "A bridge between basic and advanced Japanese, used in everyday situations (approximate KANJIDIC2 study band)."
+        case 2: return "Everyday Japanese across broader settings — clear articles and natural-speed speech (approximate KANJIDIC2 study band)."
+        case 1: return "Complex, abstract texts (editorials, critiques) and natural-speed speech across varied settings (approximate KANJIDIC2 study band)."
+        default: return "Kana-only — no JLPT band (the word has no head kanji)."
         }
     }
 

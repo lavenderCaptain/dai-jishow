@@ -36,10 +36,10 @@ CXX="${CXX:-c++}"
 OUT="build/dj_core_tests"
 mkdir -p build
 
-# Pure-logic translation units under test.
-CORE_SRC="core/dj_nlp/romaji.cpp core/dj_graph/fisheye.cpp"
+# Core translation units under test.
+CORE_SRC="core/dj_nlp/romaji.cpp core/dj_graph/fisheye.cpp core/dj_storage/storage.cpp core/dj_capi.cpp core/dj_state/session_state.cpp"
 # Harness + test cases.
-TEST_SRC="core/test/dj_test_main.cpp core/test/test_romaji.cpp core/test/test_pair_head.cpp core/test/test_idioms.cpp"
+TEST_SRC="core/test/dj_test_main.cpp core/test/test_romaji.cpp core/test/test_pair_head.cpp core/test/test_idioms.cpp core/test/test_storage.cpp core/test/test_db_storage.cpp"
 
 echo "==> compiling C++ core tests ($CXX -std=c++20 -Wall -Wextra -Wpedantic)"
 # -Icore        lets the test TUs #include "dj_internal.hpp"

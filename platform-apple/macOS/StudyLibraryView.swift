@@ -250,12 +250,12 @@ struct StudyLibraryView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Menu {
-                        Button("Copy All Decks (Anki TSV)") {
+                        Button("Copy All Decks (Flashcard TSV)") {
                             let tsv = studyStore.exportAllSavedText(format: .ankiTSV)
                             engine.copyText(tsv)
-                            flashNotice("Copied Anki TSV for all decks")
+                            flashNotice("Copied Flashcard TSV for all decks")
                         }
-                        Button("Save All Decks as Anki .tsv…") {
+                        Button("Save All Decks as Flashcard .tsv…") {
                             let tsv = studyStore.exportAllSavedText(format: .ankiTSV)
                             studyStore.saveExportFile(content: tsv, suggestedName: "Dai-Jishow-All-Decks", format: .ankiTSV)
                         }
@@ -391,9 +391,9 @@ struct StudyLibraryView: View {
                             Button {
                                 let tsv = studyStore.exportDeckText(deckId: deck.id, format: .ankiTSV)
                                 engine.copyText(tsv)
-                                flashNotice("Copied \(deck.items.count) cards as Anki TSV")
+                                flashNotice("Copied \(deck.items.count) cards as Flashcard TSV")
                             } label: {
-                                Label("Copy Anki TSV", systemImage: "doc.on.clipboard")
+                                Label("Copy Flashcard TSV", systemImage: "doc.on.clipboard")
                             }
 
                             Button {
@@ -404,7 +404,7 @@ struct StudyLibraryView: View {
                                     format: .ankiTSV
                                 )
                             } label: {
-                                Label("Save Anki .tsv File…", systemImage: "square.and.arrow.down")
+                                Label("Save Flashcard .tsv File…", systemImage: "square.and.arrow.down")
                             }
 
                             Divider()
@@ -465,7 +465,7 @@ struct StudyLibraryView: View {
                                 .foregroundStyle(.secondary)
                             Text(deck.items.isEmpty ? "This deck is empty" : "No saved items match “\(itemFilterText)”")
                                 .font(.headline)
-                            Text("Star any word or kanji (⌘B) to save it here for recall practice and Anki deck export.")
+                            Text("Star any word or kanji (⌘B) to save it here for recall practice and flashcard deck export.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
@@ -539,7 +539,7 @@ struct StudyLibraryView: View {
             Button {
                 let tsv = studyStore.exportSingleItemText(item, format: .ankiTSV)
                 engine.copyText(tsv)
-                flashNotice("Copied Anki card for \(item.headword)")
+                flashNotice("Copied flashcard for \(item.headword)")
             } label: {
                 Image(systemName: "doc.on.doc")
                     .font(.caption.weight(.semibold))
@@ -547,8 +547,8 @@ struct StudyLibraryView: View {
                     .background(Circle().fill(Color.primary.opacity(0.08)))
             }
             .buttonStyle(.plain)
-            .help("Copy single-line Anki TSV card")
-            .djAccessibleControl(label: "Copy Anki card for \(item.headword)")
+            .help("Copy single-line Flashcard TSV row (Anki-compatible)")
+            .djAccessibleControl(label: "Copy flashcard for \(item.headword)")
 
             Button {
                 if item.kind == .word {

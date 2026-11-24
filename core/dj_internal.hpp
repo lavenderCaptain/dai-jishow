@@ -153,6 +153,57 @@ bool anchor_lemmas_contains(const std::string& anchor_lemmas, const std::string&
 std::string select_pair_head(const std::string& primary, const std::string& alt_forms,
                              uint32_t center_cp, uint32_t neighbor_cp);
 
+/// Lower-case an ASCII string (non-ASCII bytes untouched). Promoted from
+/// `dj_storage/storage.cpp` so the C++ pure-logic suite can verify it directly.
+std::string to_lower_ascii(const std::string& s);
+
+/// Score how well the primary English gloss matches a lower-cased English query
+/// (0 = exact gloss or stripped-parenthetical core, 1 = leading word or
+/// `"to <query>"`, 2 = substring match, 3 = no match / empty).
+int english_gloss_relevance_tier(const std::string& primary_gloss, const std::string& query_lower);
+
+/// Compute the exclusive upper bound (`prefix + U+FFFF`) for UTF-8 B-tree
+/// prefix range scans.
+std::string utf8_prefix_upper_bound(const std::string& prefix);
+
+/// Count the UTF-16 code units occupied by `s[start_byte .. start_byte + byte_len)`.
+uint16_t utf8_byte_range_to_utf16_units(const std::string& s, size_t start_byte, size_t byte_len);
+
+/// Decode one UTF-8 codepoint at `pos` and advance `pos`.
+uint32_t next_utf8_cp(const std::string& s, size_t& pos);
+
+/// Decode an entire UTF-8 string into Unicode codepoints.
+std::vector<uint32_t> utf8_to_cps(const std::string& s);
+
+/// Encode `cps[start .. start+len)` back to UTF-8.
+std::string cps_to_utf8(const std::vector<uint32_t>& cps, size_t start, size_t len);
+
+/// @return `true` for CJK Unified Ideographs, Extension A, or `々` (`U+3005`).
+bool is_kanji_cp(uint32_t cp);
+
+/// @return `true` for a hiragana codepoint (`U+3041`..`U+3096`).
+bool is_hiragana_cp(uint32_t cp);
+
+/// Map katakana (`U+30A1`..`U+30F6`) to hiragana; other codepoints pass through.
+uint32_t to_hiragana_cp(uint32_t cp);
+
+/// Fold voiced/semi-voiced kana onto their unvoiced base hiragana.
+uint32_t base_kana_cp(uint32_t cp);
+
+/// @return `true` when `cand` matches `target` starting at `offset` (with
+///         script fold, first-mora daku-ten tolerance, and trailing sokuon).
+bool kana_prefix_matches(const std::vector<uint32_t>& target, size_t offset,
+                         const std::vector<uint32_t>& cand);
+
+/// Partition `kana_cps` across `kanji_cps` using per-kanji candidate readings.
+bool solve_kanji_reading_split(
+    const std::vector<uint32_t>& kanji_cps,
+    const std::vector<std::vector<std::vector<uint32_t>>>& all_cands,
+    const std::vector<uint32_t>& kana_cps,
+    size_t idx,
+    size_t k_pos,
+    std::vector<std::pair<size_t, size_t>>& out_ranges);
+
 /// Search the dictionary (C++ side of `dj_dict_search`).
 std::vector<OwnedWordHit> db_search_words(
     sqlite3* db,

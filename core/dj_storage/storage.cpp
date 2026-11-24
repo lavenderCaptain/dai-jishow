@@ -60,6 +60,8 @@ constexpr const char* kKangxiRadicalGlyphs[215] = {
     "齒", "龍", "龜", "龠"
 };
 
+} // namespace
+
 /// Lower-case an ASCII string (non-ASCII bytes are left untouched).
 std::string to_lower_ascii(const std::string& s) {
     std::string out = s;
@@ -239,7 +241,7 @@ uint32_t base_kana_cp(uint32_t cp) {
     cp = to_hiragana_cp(cp);
     if (cp >= 0x304C && cp <= 0x3062 && (cp % 2 == 0)) return cp - 1;
     if (cp >= 0x3065 && cp <= 0x3069 && (cp % 2 == 1)) return cp - 1;
-    if (cp >= 0x3070 && cp <= 0x307C) {
+    if (cp >= 0x3070 && cp <= 0x307D) {
         uint32_t rem = (cp - 0x306F) % 3;
         if (rem != 0) return cp - rem;
     }
@@ -263,6 +265,8 @@ bool kana_prefix_matches(const std::vector<uint32_t>& target, size_t offset, con
     }
     return true;
 }
+
+namespace {
 
 /// Collect every candidate reading (On + Kun) for one kanji as hiragana
 /// codepoint sequences, longest-first, for the reading-split solver.
@@ -341,6 +345,8 @@ std::string get_primary_standalone_kun(sqlite3* db, uint32_t cp) {
     return best;
 }
 
+} // namespace
+
 /// Backtracking solver that partitions the kana reading of a kanji compound
 /// into per-kanji chunks.
 ///
@@ -378,6 +384,8 @@ bool solve_kanji_reading_split(
     }
     return false;
 }
+
+namespace {
 
 // Lookup sub-compound readings (e.g. `山車` -> `だし` inside `矛山車` = `ほこだし`)
 std::vector<std::vector<uint32_t>> lookup_subword_readings(sqlite3* db, const std::string& sub_kanji) {

@@ -83,7 +83,7 @@ std::vector<uint32_t> utf8_to_cps_local(const std::string& s) {
 }
 
 // Computes the exclusive upper bound for a UTF-8 prefix so SQLite can execute a pure B-tree range scan
-std::string utf8_prefix_upper_bound(const std::string& prefix) {
+std::string utf8_prefix_upper_bound_local(const std::string& prefix) {
     std::string upper = prefix;
     while (!upper.empty()) {
         unsigned char last = static_cast<unsigned char>(upper.back());
@@ -498,7 +498,7 @@ void populate_fisheye_batch_cache(sqlite3* db, uint32_t center_cp, dj_fisheye_mo
                 char center_utf8[8];
                 encode_utf8(center_cp, center_utf8);
                 std::string prefix_lo(center_utf8);
-                std::string prefix_hi = utf8_prefix_upper_bound(prefix_lo);
+                std::string prefix_hi = utf8_prefix_upper_bound_local(prefix_lo);
 
                 // Side 1 (center + suffix): uses idx_entries_kanji(is_name, kanji_head, freq_overall) range scan
                 const char* suffix_name_sql =

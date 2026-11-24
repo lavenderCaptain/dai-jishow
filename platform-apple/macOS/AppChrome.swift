@@ -18,17 +18,19 @@ import AppKit
 // list in tools/corpus-builder/fetch_sources.py, so the credits never drift
 // from what actually compiled the corpus.
 //
-// License notes (verified against upstream at time of writing):
-//   • EDRG JMdict_e / JMnedict ....... CC BY 4.0
-//   • EDRG KANJIDIC2 .................. CC BY-SA 4.0
-//   • KanjiVG stroke vectors .......... Open-source (see repository)
-//   • mifunetoshiro/kanjium accents ... Open-source (see repository)
-//   • Tatoeba sentences/links ......... CC BY 2.0
+// License notes (verified against upstream files & licences):
+//   • EDRG JMdict_e / JMnedict ....... CC BY-SA 4.0 (James William Breen & EDRG)
+//   • EDRG KANJIDIC2 .................. CC BY-SA 4.0 (James William Breen & EDRG)
+//   • KanjiVG stroke vectors .......... CC BY-SA 3.0 (Ulrich Apel)
+//   • mifunetoshiro/kanjium accents ... CC BY-SA 4.0 (Uros O.)
+//   • Tatoeba sentences/links ......... CC BY 2.0 (Tatoeba Project)
 
 struct DataCredit {
     let name: String
+    let attribution: String
     let role: String
     let license: String
+    let licenseURL: String
     let url: String
 }
 
@@ -36,38 +38,50 @@ enum DaiJishowCredits {
     static let sources: [DataCredit] = [
         DataCredit(
             name: "JMdict_e (EDRG)",
-            role: "Japanese–English word & phrase definitions",
-            license: "CC BY 4.0",
-            url: "http://ftp.edrdg.org/pub/Nihongo/JMdict_e.gz"
+            attribution: "James William Breen & Electronic Dictionary Research and Development Group",
+            role: "Japanese–English word & phrase definitions (compiled into SQLite)",
+            license: "CC BY-SA 4.0",
+            licenseURL: "https://creativecommons.org/licenses/by-sa/4.0/",
+            url: "https://www.edrdg.org/edrdg/licence.html"
         ),
         DataCredit(
-            name: "JMnedict (EDRG)",
-            role: "Japanese–Japanese definitions",
-            license: "CC BY 4.0",
-            url: "http://ftp.edrdg.org/pub/Nihongo/JMnedict.xml.gz"
+            name: "JMnedict / ENAMDICT (EDRG)",
+            attribution: "James William Breen & Electronic Dictionary Research and Development Group",
+            role: "Japanese proper names, places & organizations (compiled into SQLite)",
+            license: "CC BY-SA 4.0",
+            licenseURL: "https://creativecommons.org/licenses/by-sa/4.0/",
+            url: "https://www.edrdg.org/edrdg/licence.html"
         ),
         DataCredit(
             name: "KANJIDIC2 (EDRG)",
-            role: "Kanji readings, meanings, radicals & stroke counts",
+            attribution: "James William Breen & Electronic Dictionary Research and Development Group",
+            role: "Kanji readings, meanings, radicals & stroke counts (compiled into SQLite)",
             license: "CC BY-SA 4.0",
-            url: "http://ftp.edrdg.org/pub/Nihongo/kanjidic2.xml.gz"
+            licenseURL: "https://creativecommons.org/licenses/by-sa/4.0/",
+            url: "https://www.edrdg.org/edrdg/licence.html"
         ),
         DataCredit(
             name: "KanjiVG",
-            role: "Stroke-order polylines & radical diagrams",
-            license: "Open Source",
-            url: "https://github.com/KanjiVG/kanjivg"
+            attribution: "Copyright © 2009–2013 Ulrich Apel",
+            role: "Stroke-order vector diagrams & component radicals (quantized into SQLite)",
+            license: "CC BY-SA 3.0",
+            licenseURL: "https://creativecommons.org/licenses/by-sa/3.0/",
+            url: "https://kanjivg.tagaini.net"
         ),
         DataCredit(
-            name: "kanjium accents",
-            role: "Pitch-accent downstep positions",
-            license: "Open Source",
+            name: "Kanjium Accents",
+            attribution: "Pitch-accent notation provided by Uros O. (Kanjium)",
+            role: "Tokyo pitch-accent downstep positions (mapped onto entries)",
+            license: "CC BY-SA 4.0",
+            licenseURL: "https://creativecommons.org/licenses/by-sa/4.0/",
             url: "https://github.com/mifunetoshiro/kanjium"
         ),
         DataCredit(
             name: "Tatoeba",
-            role: "Real-world example sentences (JP / EN)",
+            attribution: "Tatoeba Project & Contributors",
+            role: "Real-world example sentences (80,000 JP–EN pairs subset)",
             license: "CC BY 2.0",
+            licenseURL: "https://creativecommons.org/licenses/by/2.0/",
             url: "https://tatoeba.org"
         ),
     ]
@@ -121,7 +135,7 @@ struct AboutView: View {
 
             Divider()
 
-            Text("Dai-Jishow fuses an offline Japanese lexicon — headwords, kanji, pitch accent, and real-world example sentences — into a single fisheye-driven study dashboard. The corpus below is built entirely from open linguistic datasets; their licenses are honoured in full.")
+            Text("Dai-Jishow fuses an offline Japanese lexicon — headwords, kanji, pitch accent, and real-world example sentences — into a single fisheye-driven study dashboard. Application source code is MIT-licensed; the bundled corpus database (daijishow.db) transforms the open datasets below and is distributed under CC BY-SA 4.0 (see NOTICE in app resources).")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -200,6 +214,10 @@ struct AboutView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Text(credit.attribution)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let url = URL(string: credit.url) {
                     Link(destination: url) {
                         Text(credit.url)
@@ -217,12 +235,24 @@ struct AboutView: View {
 
             Spacer(minLength: 8)
 
-            Text(credit.license)
-                .font(.caption2.weight(.heavy))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(Color.primary.opacity(0.08)))
+            if let licURL = URL(string: credit.licenseURL) {
+                Link(destination: licURL) {
+                    Text(credit.license)
+                        .font(.caption2.weight(.heavy))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
+                }
+                .help("View \(credit.license) license deed")
+            } else {
+                Text(credit.license)
+                    .font(.caption2.weight(.heavy))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+            }
         }
     }
 }

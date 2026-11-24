@@ -17,6 +17,7 @@
 		A75A9D9BF91C465F969830B8 = {isa = PBXBuildFile; fileRef = E2BF807C639817D277856953; };
 		A21A4DA3D2429D809A8E2EA5 = {isa = PBXBuildFile; fileRef = 455725CAB5198565E10231D1; };
 		56E6D0A9A79C3E62DBE70D8F = {isa = PBXBuildFile; fileRef = CE5D9021521271ED28C89FB6; };
+		B4C8D9E0F1A2B3C4D5E6F703 = {isa = PBXBuildFile; fileRef = B4C8D9E0F1A2B3C4D5E6F701; };
 		A6CC693C49E60CD9B4E1E0F1 = {isa = PBXBuildFile; fileRef = DC79B455413A497D3127400F; };
 		712103DDD68438AC276C98B3 = {isa = PBXBuildFile; fileRef = 6EE65AF19BB3DE4A1BA00D6C; };
 		304BFE3EFDBCFB8AD1D0380B = {isa = PBXBuildFile; fileRef = 8E74BD4D653982F2797E84B2; };
@@ -29,6 +30,9 @@
 		3A636C08F1F0185EA25FF209 = {isa = PBXBuildFile; fileRef = 925163EDC594D42264C532A0; };
 		7DE33E5F2FFDA973FC97830F = {isa = PBXBuildFile; fileRef = 7B736531F239BEE3EFA1E819; };
 		7D6EB2F77287A4C18A994AED = {isa = PBXBuildFile; fileRef = 4E78B02432783474D2B1831B; };
+		C4D8E9F01A2B3C4D5E6F7001 = {isa = PBXBuildFile; fileRef = C4D8E9F01A2B3C4D5E6F7011; };
+		C4D8E9F01A2B3C4D5E6F7002 = {isa = PBXBuildFile; fileRef = C4D8E9F01A2B3C4D5E6F7012; };
+		C4D8E9F01A2B3C4D5E6F7003 = {isa = PBXBuildFile; fileRef = C4D8E9F01A2B3C4D5E6F7013; };
 		ABDA24EECAEBC24D9532E91F = {isa = PBXBuildFile; fileRef = 74E4D8317DB65544032DE753; };
 		9C3673C53D047C4BD00FAE4B = {isa = PBXBuildFile; fileRef = 294CF4D3A45F05F35EF58E4D; };
 		9A1140A5D98835475A5E813B = {isa = PBXBuildFile; fileRef = 294CF4D3A45F05F35EF58E4D; settings = { ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -36,6 +40,7 @@
 		F859D9802C151B6573AE2987 = {isa = PBXBuildFile; fileRef = 0E94DC152E9204C84E27C5F1; };
 		2B6DAD1BC0CFEEC9E6B70363 = {isa = PBXBuildFile; fileRef = 0ED6723CDB7B484AF3BB2777; };
 		BCE9E6004A92E4E34184271D = {isa = PBXBuildFile; fileRef = 803490D9D90902973E691E54; };
+		B4C8D9E0F1A2B3C4D5E6F704 = {isa = PBXBuildFile; fileRef = B4C8D9E0F1A2B3C4D5E6F702; };
 		50D389464C0DAB9EB517A729 = {isa = PBXBuildFile; fileRef = 294CF4D3A45F05F35EF58E4D; };
 /* End PBXBuildFile section */
 
@@ -92,6 +97,7 @@
 		E2BF807C639817D277856953 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Morph.swift; path = Sources/DaiJishowMorph/Morph.swift; sourceTree = SOURCE_ROOT; };
 		455725CAB5198565E10231D1 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PitchAccentContour.swift; path = Sources/DaiJishowMorph/PitchAccentContour.swift; sourceTree = SOURCE_ROOT; };
 		CE5D9021521271ED28C89FB6 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyExport.swift; path = Sources/DaiJishowMorph/StudyExport.swift; sourceTree = SOURCE_ROOT; };
+		B4C8D9E0F1A2B3C4D5E6F701 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyStore.swift; path = Sources/DaiJishowMorph/StudyStore.swift; sourceTree = SOURCE_ROOT; };
 		DC79B455413A497D3127400F = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AdaptiveControls.swift; path = "platform-apple/macOS/AdaptiveControls.swift"; sourceTree = SOURCE_ROOT; };
 		6EE65AF19BB3DE4A1BA00D6C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppChrome.swift; path = "platform-apple/macOS/AppChrome.swift"; sourceTree = SOURCE_ROOT; };
 		8E74BD4D653982F2797E84B2 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DaiJishowMacApp.swift; path = "platform-apple/macOS/DaiJishowMacApp.swift"; sourceTree = SOURCE_ROOT; };
@@ -107,9 +113,14 @@
 		0E94DC152E9204C84E27C5F1 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PitchContourTests.swift; path = Tests/DaiJishowMorphTests/PitchContourTests.swift; sourceTree = SOURCE_ROOT; };
 		0ED6723CDB7B484AF3BB2777 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SenseTagsTests.swift; path = Tests/DaiJishowMorphTests/SenseTagsTests.swift; sourceTree = SOURCE_ROOT; };
 		803490D9D90902973E691E54 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyExportTests.swift; path = Tests/DaiJishowMorphTests/StudyExportTests.swift; sourceTree = SOURCE_ROOT; };
+		B4C8D9E0F1A2B3C4D5E6F702 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyStoreTests.swift; path = Tests/DaiJishowMorphTests/StudyStoreTests.swift; sourceTree = SOURCE_ROOT; };
 		4E78B02432783474D2B1831B = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; name = DaiJishow.icon; path = icons/DaiJishow.icon; sourceTree = SOURCE_ROOT; };
 		552859E0535F9B0195F591B8 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Package.swift; path = Package.swift; sourceTree = SOURCE_ROOT; };
 		8F7426F62B0448FC532FDAC0 = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = README.md; path = README.md; sourceTree = SOURCE_ROOT; };
+		C4D8E9F01A2B3C4D5E6F7010 = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = DaiJishow.entitlements; path = "platform-apple/macOS/DaiJishow.entitlements"; sourceTree = SOURCE_ROOT; };
+		C4D8E9F01A2B3C4D5E6F7011 = {isa = PBXFileReference; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = "platform-apple/macOS/PrivacyInfo.xcprivacy"; sourceTree = SOURCE_ROOT; };
+		C4D8E9F01A2B3C4D5E6F7012 = {isa = PBXFileReference; lastKnownFileType = text; name = LICENSE; path = LICENSE; sourceTree = SOURCE_ROOT; };
+		C4D8E9F01A2B3C4D5E6F7013 = {isa = PBXFileReference; lastKnownFileType = text; name = NOTICE; path = NOTICE; sourceTree = SOURCE_ROOT; };
 		74E4D8317DB65544032DE753 = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libDaiJishowCore.a; path = libDaiJishowCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		294CF4D3A45F05F35EF58E4D = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DaiJishowMorph.framework; path = DaiJishowMorph.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		679578CE01A46F106A612CE5 = {isa = PBXFileReference; lastKnownFileType = wrapper.application; name = "Dai-Jishow.app"; path = "Dai-Jishow.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -147,6 +158,8 @@
 				B08EE8464BA36A80E08FA83F,
 				552859E0535F9B0195F591B8,
 				8F7426F62B0448FC532FDAC0,
+				C4D8E9F01A2B3C4D5E6F7012,
+				C4D8E9F01A2B3C4D5E6F7013,
 				2FF95B73491F5FC9AC7BF8F9,
 			);
 			sourceTree = "<group>";
@@ -165,6 +178,8 @@
 				F3ADFA7DA56D6D9CBC098C1E,
 				925163EDC594D42264C532A0,
 				7B736531F239BEE3EFA1E819,
+				C4D8E9F01A2B3C4D5E6F7010,
+				C4D8E9F01A2B3C4D5E6F7011,
 			);
 			name = "macOS App";
 			sourceTree = "<group>";
@@ -177,6 +192,7 @@
 				E2BF807C639817D277856953,
 				455725CAB5198565E10231D1,
 				CE5D9021521271ED28C89FB6,
+				B4C8D9E0F1A2B3C4D5E6F701,
 			);
 			name = DaiJishowMorph;
 			sourceTree = "<group>";
@@ -204,6 +220,7 @@
 				0E94DC152E9204C84E27C5F1,
 				0ED6723CDB7B484AF3BB2777,
 				803490D9D90902973E691E54,
+				B4C8D9E0F1A2B3C4D5E6F702,
 			);
 			name = Tests;
 			sourceTree = "<group>";
@@ -325,6 +342,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				7D6EB2F77287A4C18A994AED,
+				C4D8E9F01A2B3C4D5E6F7001,
+				C4D8E9F01A2B3C4D5E6F7002,
+				C4D8E9F01A2B3C4D5E6F7003,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -341,7 +361,7 @@
 			outputPaths = ();
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = "/bin/bash";
-			shellScript = "DB_SRC=\"${SRCROOT}/build/daijishow.db\"\nRES_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nif [ -f \"$DB_SRC\" ]; then\n  mkdir -p \"$RES_DIR\"\n  if [ \"$CONFIGURATION\" = \"Release\" ]; then\n    if [ ! -f \"$RES_DIR/daijishow.db\" ] || [ \"$DB_SRC\" -nt \"$RES_DIR/daijishow.db\" ]; then\n      cp -f \"$DB_SRC\" \"$RES_DIR/daijishow.db\"\n    fi\n  else\n    ln -sf \"$DB_SRC\" \"$RES_DIR/daijishow.db\"\n  fi\nfi\n";
+			shellScript = "DB_SRC=\"${SRCROOT}/build/daijishow.db\"\nRES_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nif [ -f \"$DB_SRC\" ]; then\n  mkdir -p \"$RES_DIR\"\n  if [ -L \"$RES_DIR/daijishow.db\" ]; then\n    rm -f \"$RES_DIR/daijishow.db\"\n  fi\n  if [ ! -f \"$RES_DIR/daijishow.db\" ] || [ \"$DB_SRC\" -nt \"$RES_DIR/daijishow.db\" ]; then\n    cp -c \"$DB_SRC\" \"$RES_DIR/daijishow.db\" 2>/dev/null || cp -f \"$DB_SRC\" \"$RES_DIR/daijishow.db\"\n  fi\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -367,6 +387,7 @@
 				A75A9D9BF91C465F969830B8,
 				A21A4DA3D2429D809A8E2EA5,
 				56E6D0A9A79C3E62DBE70D8F,
+				B4C8D9E0F1A2B3C4D5E6F703,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -396,6 +417,7 @@
 				F859D9802C151B6573AE2987,
 				2B6DAD1BC0CFEEC9E6B70363,
 				BCE9E6004A92E4E34184271D,
+				B4C8D9E0F1A2B3C4D5E6F704,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -428,9 +450,9 @@
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "-";
-				CURRENT_PROJECT_VERSION = "0.2γ";
+				CURRENT_PROJECT_VERSION = 1;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = "0.2γ";
+				MARKETING_VERSION = 0.2.0;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
 				COPY_PHASE_STRIP = NO;
@@ -450,9 +472,9 @@
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "-";
-				CURRENT_PROJECT_VERSION = "0.2γ";
+				CURRENT_PROJECT_VERSION = 1;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = "0.2γ";
+				MARKETING_VERSION = 0.2.0;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
 				COPY_PHASE_STRIP = NO;
@@ -540,7 +562,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = DaiJishow;
+				CODE_SIGN_ENTITLEMENTS = "platform-apple/macOS/DaiJishow.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
@@ -548,8 +572,9 @@
 					"$(SRCROOT)/core/include",
 				);
 				INFOPLIST_KEY_CFBundleDisplayName = "Dai-Jishow";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "MIT License";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Dai-Jishow Contributors. Code: MIT; Corpus: CC BY-SA 4.0 / 3.0 & CC BY 2.0.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -573,7 +598,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = DaiJishow;
+				CODE_SIGN_ENTITLEMENTS = "platform-apple/macOS/DaiJishow.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
@@ -581,8 +608,9 @@
 					"$(SRCROOT)/core/include",
 				);
 				INFOPLIST_KEY_CFBundleDisplayName = "Dai-Jishow";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "MIT License";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Dai-Jishow Contributors. Code: MIT; Corpus: CC BY-SA 4.0 / 3.0 & CC BY 2.0.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

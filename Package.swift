@@ -48,7 +48,11 @@ let package = Package(
         .executableTarget(
             name: "DaiJishowMac",
             dependencies: ["DaiJishowCore", "DaiJishowMorph"],
-            path: "platform-apple/macOS"
+            path: "platform-apple/macOS",
+            exclude: [
+                "DaiJishow.entitlements",
+                "PrivacyInfo.xcprivacy"
+            ]
         ),
 
         // 4. Regression tests for the morphology core (Swift Testing). Locked in by

@@ -79,7 +79,7 @@ public struct StudyDeck: Identifiable, Codable, Hashable, Sendable {
 
 /// Supported flashcard export formats.
 public enum AnkiExportFormat: String, CaseIterable, Identifiable, Sendable {
-    case ankiTSV = "Anki TSV (.tsv)"
+    case ankiTSV = "Flashcard TSV (.tsv)"
     case csv = "CSV (.csv)"
 
     public var id: String { rawValue }

@@ -644,10 +644,10 @@ struct MainWorkspaceView: View {
                         .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .help("Open Saved Study Decks & Anki Export (⌘⇧L)")
+                    .help("Open Saved Study Decks & Flashcard Export (⌘⇧L)")
                     .djAccessibleControl(
                         label: "Study Decks",
-                        hint: "Open Saved Study Decks & Anki Export (⌘⇧L)",
+                        hint: "Open Saved Study Decks & Flashcard Export (⌘⇧L)",
                         value: "\(engine.studyStore.totalSavedCount) saved",
                         selected: engine.activeScreen == .studyLibrary
                     )
@@ -1188,7 +1188,7 @@ struct MainWorkspaceView: View {
                 .foregroundStyle(.secondary)
             Text("daijishow.db Not Found")
                 .font(.title.weight(.bold))
-            Text("Run the C++ ingest compiler (`daijishow_ingest`) to generate `data/daijishow.db`, then relaunch DaiJiShow.")
+            Text("Run `python3 tools/corpus-builder/build_corpus.py --out build/daijishow.db` to build the corpus, then relaunch Dai-Jishow.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

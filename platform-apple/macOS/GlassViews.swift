@@ -2627,9 +2627,9 @@ struct WordEntryView: View {
                 Button {
                     let tsv = engine.studyStore.exportSingleItemText(engine.studyItem(for: entry, insights: insights), format: .ankiTSV)
                     engine.copyText(tsv)
-                    flashToast("Copied Anki TSV")
+                    flashToast("Copied Flashcard TSV")
                 } label: {
-                    Label("Copy Anki Card (TSV)", systemImage: "rectangle.stack")
+                    Label("Copy Flashcard (TSV)", systemImage: "rectangle.stack")
                 }
                 Divider()
                 Button {
@@ -2742,9 +2742,9 @@ struct WordEntryView: View {
                             format: .ankiTSV
                         )
                         engine.copyText(tsv)
-                        flashToast("Copied Anki TSV")
+                        flashToast("Copied Flashcard TSV")
                     } label: {
-                        Label("Copy Anki Card (TSV)", systemImage: "rectangle.stack")
+                        Label("Copy Flashcard (TSV)", systemImage: "rectangle.stack")
                     }
                     Button {
                         let item = engine.studyItem(for: entry, insights: insights)
@@ -2755,7 +2755,7 @@ struct WordEntryView: View {
                             format: .ankiTSV
                         )
                     } label: {
-                        Label("Save Anki .tsv…", systemImage: "square.and.arrow.down")
+                        Label("Save Flashcard .tsv…", systemImage: "square.and.arrow.down")
                     }
                     Button {
                         let item = engine.studyItem(for: entry, insights: insights)
@@ -2784,8 +2784,8 @@ struct WordEntryView: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .djAccessibleControl(label: "Copy or Export Entry", hint: "Copy plain text, Anki TSV, or save CSV")
-                .help("Copy or export this entry as Anki TSV / CSV")
+                .djAccessibleControl(label: "Copy or Export Entry", hint: "Copy plain text, Flashcard TSV, or save CSV")
+                .help("Copy or export this entry as Flashcard TSV (Anki-compatible) / CSV")
 
                 // Reader vs. Detailed Toggle (Persisted in UserDefaults)
                 Picker("View Mode", selection: $engine.isWordCockpitExpanded) {
