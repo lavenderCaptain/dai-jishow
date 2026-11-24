@@ -143,6 +143,10 @@ private struct WatchSearchView: View {
 
     @State private var randomWord: WordHit?
 
+    private var isCompactWatch: Bool {
+        WKInterfaceDevice.current().screenBounds.width < 175
+    }
+
     private var hasQuery: Bool {
         !engine.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -239,25 +243,26 @@ private struct WatchSearchView: View {
                     }
                 } else {
                     Section("In Context") {
-                        HStack(spacing: 8) {
+                        HStack(spacing: isCompactWatch ? 6 : 8) {
+                            let badgeSize: CGFloat = isCompactWatch ? 30 : 36
+                            let actionSize: CGFloat = isCompactWatch ? 28 : 32
                             Button {
                                 engine.openKanjiDetail(codepoint: contextKanjiCodepoint)
                                 path.append(.kanji(contextKanjiCodepoint))
                             } label: {
-                                HStack(spacing: 8) {
+                                HStack(spacing: isCompactWatch ? 6 : 8) {
                                     Text(contextKanjiGlyph)
-                                        .font(.title3.bold())
-                                        .frame(width: 36, height: 36)
+                                        .font(.system(size: isCompactWatch ? 16 : 20, weight: .bold))
+                                        .frame(width: badgeSize, height: badgeSize)
                                         .background(
                                             Circle()
                                                 .fill(Color.accentColor.opacity(0.24))
                                                 .overlay(Circle().strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1.5))
                                         )
                                     VStack(alignment: .leading, spacing: 1) {
-                                        Text("Active Kanji")
+                                        Text(isCompactWatch ? "Active" : "Active Kanji")
                                             .font(.caption.weight(.semibold))
                                             .lineLimit(1)
-                                            .minimumScaleFactor(0.85)
                                         if let active = engine.activeKanji,
                                            active.codepoint == contextKanjiCodepoint,
                                            !active.meanings.isEmpty {
@@ -265,6 +270,7 @@ private struct WatchSearchView: View {
                                                 .font(.caption2)
                                                 .foregroundStyle(.secondary)
                                                 .lineLimit(1)
+                                                .minimumScaleFactor(0.85)
                                         } else {
                                             Text("Tap to inspect")
                                                 .font(.caption2)
@@ -283,9 +289,9 @@ private struct WatchSearchView: View {
                                 onFocusInFisheye(contextKanjiCodepoint)
                             } label: {
                                 Image(systemName: "circle.hexagongrid.fill")
-                                    .font(.caption)
+                                    .font(.system(size: isCompactWatch ? 11 : 12))
                                     .foregroundStyle(Color.accentColor)
-                                    .frame(width: 32, height: 32)
+                                    .frame(width: actionSize, height: actionSize)
                                     .background(Circle().fill(Color.accentColor.opacity(0.16)))
                             }
                             .buttonStyle(.plain)
@@ -328,7 +334,8 @@ private struct WatchSearchView: View {
                     }
 
                     Section("Discover") {
-                        HStack(spacing: 8) {
+                        HStack(spacing: isCompactWatch ? 6 : 8) {
+                            let shuffleSize: CGFloat = isCompactWatch ? 28 : 32
                             Button {
                                 let target = randomWord ?? engine.fetchRandomWords(count: 1, maxFreqRank: 12_000).first
                                 if let target {
@@ -338,10 +345,12 @@ private struct WatchSearchView: View {
                                 }
                             } label: {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 5) {
+                                    HStack(spacing: 4) {
                                         Text(randomWord?.displayHeadword ?? "Random Word")
-                                            .font(.headline)
+                                            .font(.system(size: isCompactWatch ? 15 : 17, weight: .semibold))
                                             .lineLimit(1)
+                                            .minimumScaleFactor(0.8)
+                                            .layoutPriority(1)
                                         if let kana = randomWord?.kanaHead,
                                            !kana.isEmpty,
                                            kana != randomWord?.displayHeadword {
@@ -349,12 +358,14 @@ private struct WatchSearchView: View {
                                                 .font(.caption2)
                                                 .foregroundStyle(.secondary)
                                                 .lineLimit(1)
+                                                .truncationMode(.tail)
                                         }
                                     }
                                     Text(randomWord?.primaryGloss ?? "Tap to explore a word")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
+                                        .minimumScaleFactor(0.85)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
@@ -366,9 +377,9 @@ private struct WatchSearchView: View {
                                 randomWord = engine.fetchRandomWords(count: 1, maxFreqRank: 12_000).first
                             } label: {
                                 Image(systemName: "shuffle")
-                                    .font(.caption)
+                                    .font(.system(size: isCompactWatch ? 11 : 12))
                                     .foregroundStyle(Color.accentColor)
-                                    .frame(width: 32, height: 32)
+                                    .frame(width: shuffleSize, height: shuffleSize)
                                     .background(Circle().fill(Color.accentColor.opacity(0.16)))
                             }
                             .buttonStyle(.plain)
@@ -377,7 +388,24 @@ private struct WatchSearchView: View {
                     }
                 }
             }
-            .navigationTitle("Dai-Jishow")
+            .navigationTitle("")
+            .toolbarTitleDisplayMode(.inline)
+            .overlay(alignment: .topLeading) {
+                if path.isEmpty {
+                    Text("Dai-Jishow")
+                        .font(.system(size: isCompactWatch ? 9.5 : 10, weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .foregroundStyle(.primary.opacity(0.88))
+                        .padding(.horizontal, isCompactWatch ? 6 : 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+                        .padding(.leading, isCompactWatch ? 14 : 16)
+                        .padding(.top, isCompactWatch ? 10 : 12)
+                        .ignoresSafeArea(.container, edges: .top)
+                        .allowsHitTesting(false)
+                }
+            }
             .searchable(text: $engine.searchQuery, prompt: "Search")
             .onAppear {
                 if randomWord == nil {
