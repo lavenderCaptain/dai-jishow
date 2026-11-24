@@ -1,3 +1,19 @@
+/**
+ * @file dj_internal.hpp
+ * @brief Internal C++ representation behind the flat C11 ABI.
+ *
+ * The public API (`dj_capi.h`) passes `const char*` / `const T*` pointers
+ * that the host never frees. Those pointers are produced here: each `Owned*`
+ * struct is a C++ value type that *owns* its strings and nested arrays, and
+ * `dj_capi.cpp` marshals them into fixed `dj_*_t` ABI structs whose pointers
+ * point into the owned storage.
+ *
+ * The `dj_engine` struct (defined outside the `dj` namespace so it can be
+ * referenced from C as `struct dj_engine`) is the per-handle arena: one
+ * owned container per ABI family. Because each call rebuilds its own arena,
+ * the result of any call remains valid until the *next* call that writes to
+ * the same arena (see the memory-ownership contract in `dj_capi.h`).
+ */
 #pragma once
 
 #include "include/dj_capi.h"
@@ -9,6 +25,7 @@
 
 namespace dj {
 
+/// Owned C++ row of dictionary search results (C++ side of `dj_word_hit_t`).
 struct OwnedWordHit {
     uint32_t    entry_id = 0;
     std::string kanji_head;
@@ -22,12 +39,14 @@ struct OwnedWordHit {
     bool        is_name = false;
 };
 
+/// One owned ruby (furigana) cell for an entry head.
 struct OwnedRubyCell {
     std::string surface;
     std::string furigana;
     uint32_t    kanji_cp = 0;
 };
 
+/// One owned numbered sense (meaning) of a dictionary entry.
 struct OwnedSense {
     uint32_t    sense_idx = 0;
     uint64_t    pos_mask = 0;
@@ -35,6 +54,7 @@ struct OwnedSense {
     std::string ja_glosses;
 };
 
+/// One owned token (dictionary word) inside an example sentence.
 struct OwnedSentenceToken {
     uint16_t    utf16_offset = 0;
     uint16_t    utf16_length = 0;
@@ -42,6 +62,7 @@ struct OwnedSentenceToken {
     std::string kana_reading;
 };
 
+/// One owned bilingual example sentence with its token breakdown.
 struct OwnedSentence {
     uint32_t                        sent_id = 0;
     std::string                     jp_text;
@@ -49,6 +70,7 @@ struct OwnedSentence {
     std::vector<OwnedSentenceToken> tokens;
 };
 
+/// Full owned dictionary entry detail (C++ side of `dj_entry_detail_t`).
 struct OwnedEntryDetail {
     OwnedWordHit               header;
     std::string                paired_kanji;
@@ -58,6 +80,7 @@ struct OwnedEntryDetail {
     std::vector<OwnedSentence> sentences;
 };
 
+/// Full owned kanji detail (C++ side of `dj_kanji_detail_t`).
 struct OwnedKanjiDetail {
     uint32_t                             codepoint = 0;
     char                                 utf8_glyph[8] = {0};
@@ -76,6 +99,7 @@ struct OwnedKanjiDetail {
     std::vector<std::vector<dj_point_t>> strokes_points;
 };
 
+/// One owned node in the fisheye kanji graph (C++ side of `dj_fisheye_node_t`).
 struct OwnedFisheyeNode {
     uint32_t    codepoint = 0;
     char        utf8_glyph[8] = {0};
@@ -93,10 +117,94 @@ struct OwnedFisheyeNode {
     float       opacity = 1.0f;
 };
 
+/// One owned idiom / yojijukugo / proverb row (C++ side of `dj_idiom_t`).
+struct OwnedIdiom {
+    uint32_t    entry_id = 0;
+    uint8_t     idiom_kind = 2;
+    std::string kanji_head;
+    std::string kana_head;
+    std::string figurative_gloss;
+    std::string anchor_lemmas;
+};
+
+/// @return `true` if `input` is purely ASCII and contains at least one letter
+///         (i.e. it is plausibly romaji rather than kanji/kana/English).
 bool is_ascii_romaji(const std::string& input);
+
+/// Transliterate romaji to kana. See `dj_nlp/romaji.cpp` for the state machine.
 std::string romaji_to_kana(const std::string& input, bool to_katakana = false);
+
+/// Encode a single Unicode codepoint as up to 4 bytes of UTF-8 into `out[8]`.
 void encode_utf8(uint32_t cp, char out[8]);
 
+/// Exact comma-delimited token check against `idioms.anchor_lemmas`.
+bool anchor_lemmas_contains(const std::string& anchor_lemmas, const std::string& token);
+
+/// Choose the headword to *display* for a `(center, neighbor)` fisheye compound
+/// edge. Pure and deterministic, no DB: given the corpus-stored *primary* head
+/// and a `|`-separated list of alternate kanji spellings, return the primary if
+/// it already contains both kanji of the pair, otherwise the *shortest* alt form
+/// that contains both (so the pair renders its true head rather than an
+/// unrelated primary), or the primary if no alt form fits.
+///
+/// Promoted from the anonymous namespace in `dj_graph/fisheye.cpp` to external
+/// linkage so the C++ regression suite (`core/test/test_pair_head.cpp`) can lock
+/// the pair-head selection a hovered (center, neighbor) edge shows.
+std::string select_pair_head(const std::string& primary, const std::string& alt_forms,
+                             uint32_t center_cp, uint32_t neighbor_cp);
+
+/// Lower-case an ASCII string (non-ASCII bytes untouched). Promoted from
+/// `dj_storage/storage.cpp` so the C++ pure-logic suite can verify it directly.
+std::string to_lower_ascii(const std::string& s);
+
+/// Score how well the primary English gloss matches a lower-cased English query
+/// (0 = exact gloss or stripped-parenthetical core, 1 = leading word or
+/// `"to <query>"`, 2 = substring match, 3 = no match / empty).
+int english_gloss_relevance_tier(const std::string& primary_gloss, const std::string& query_lower);
+
+/// Compute the exclusive upper bound (`prefix + U+FFFF`) for UTF-8 B-tree
+/// prefix range scans.
+std::string utf8_prefix_upper_bound(const std::string& prefix);
+
+/// Count the UTF-16 code units occupied by `s[start_byte .. start_byte + byte_len)`.
+uint16_t utf8_byte_range_to_utf16_units(const std::string& s, size_t start_byte, size_t byte_len);
+
+/// Decode one UTF-8 codepoint at `pos` and advance `pos`.
+uint32_t next_utf8_cp(const std::string& s, size_t& pos);
+
+/// Decode an entire UTF-8 string into Unicode codepoints.
+std::vector<uint32_t> utf8_to_cps(const std::string& s);
+
+/// Encode `cps[start .. start+len)` back to UTF-8.
+std::string cps_to_utf8(const std::vector<uint32_t>& cps, size_t start, size_t len);
+
+/// @return `true` for CJK Unified Ideographs, Extension A, or `々` (`U+3005`).
+bool is_kanji_cp(uint32_t cp);
+
+/// @return `true` for a hiragana codepoint (`U+3041`..`U+3096`).
+bool is_hiragana_cp(uint32_t cp);
+
+/// Map katakana (`U+30A1`..`U+30F6`) to hiragana; other codepoints pass through.
+uint32_t to_hiragana_cp(uint32_t cp);
+
+/// Fold voiced/semi-voiced kana onto their unvoiced base hiragana.
+uint32_t base_kana_cp(uint32_t cp);
+
+/// @return `true` when `cand` matches `target` starting at `offset` (with
+///         script fold, first-mora daku-ten tolerance, and trailing sokuon).
+bool kana_prefix_matches(const std::vector<uint32_t>& target, size_t offset,
+                         const std::vector<uint32_t>& cand);
+
+/// Partition `kana_cps` across `kanji_cps` using per-kanji candidate readings.
+bool solve_kanji_reading_split(
+    const std::vector<uint32_t>& kanji_cps,
+    const std::vector<std::vector<std::vector<uint32_t>>>& all_cands,
+    const std::vector<uint32_t>& kana_cps,
+    size_t idx,
+    size_t k_pos,
+    std::vector<std::pair<size_t, size_t>>& out_ranges);
+
+/// Search the dictionary (C++ side of `dj_dict_search`).
 std::vector<OwnedWordHit> db_search_words(
     sqlite3* db,
     const std::string& query,
@@ -104,9 +212,20 @@ std::vector<OwnedWordHit> db_search_words(
     bool include_names,
     size_t limit);
 
+/// Sample random words from the dictionary (C++ side of `dj_dict_get_random_words`).
+std::vector<OwnedWordHit> db_get_random_words(
+    sqlite3* db,
+    uint32_t max_freq,
+    bool include_names,
+    size_t limit);
+
+/// Load full entry detail (C++ side of `dj_dict_get_entry_detail`).
 bool db_get_entry_detail(sqlite3* db, uint32_t entry_id, OwnedEntryDetail& out);
+
+/// Load full kanji detail (C++ side of `dj_kanji_get_detail`).
 bool db_get_kanji_detail(sqlite3* db, uint32_t codepoint, OwnedKanjiDetail& out);
 
+/// Find kanji by Kangxi radical set (C++ side of `dj_kanji_search_radicals`).
 std::vector<uint32_t> db_search_radicals(
     sqlite3* db,
     const uint8_t* radical_ids,
@@ -114,6 +233,19 @@ std::vector<uint32_t> db_search_radicals(
     int16_t target_strokes,
     int8_t stroke_tolerance);
 
+/// Fetch idioms anchored by a single kanji codepoint.
+std::vector<OwnedIdiom> db_get_kanji_idioms(
+    sqlite3* db,
+    uint32_t codepoint,
+    size_t limit);
+
+/// Fetch idioms directly matching or sharing kanji with a dictionary entry.
+std::vector<OwnedIdiom> db_get_entry_idioms(
+    sqlite3* db,
+    uint32_t entry_id,
+    size_t limit);
+
+/// Solve the fisheye graph (C++ side of `dj_graph_solve_fisheye`).
 std::vector<OwnedFisheyeNode> solve_fisheye_graph(
     sqlite3* db,
     uint32_t center_cp,
@@ -129,25 +261,44 @@ std::vector<OwnedFisheyeNode> solve_fisheye_graph(
 
 } // namespace dj
 
+/**
+ * Per-engine arena (the concrete type behind the opaque `dj_engine_t`).
+ *
+ * Each `owned_*` container is the single source of truth for one ABI family,
+ * and each `abi_*` container is the flattened `dj_*_t` view whose string and
+ * array pointers point into the matching `owned_*` storage. Rebuilding an
+ * `owned_*` container invalidates the previous `abi_*` pointers, which is
+ * exactly the "valid until the next call on this handle" contract the host
+ * relies on.
+ */
 struct dj_engine {
     sqlite3* db = nullptr;
 
+    // Search hits.
     std::vector<dj::OwnedWordHit> owned_hits;
     std::vector<dj_word_hit_t>    abi_hits;
 
+    // Entry detail (header + ruby + senses + sentences).
     dj::OwnedEntryDetail              owned_entry;
     std::vector<dj_ruby_cell_t>       abi_ruby_cells;
     std::vector<dj_sense_t>           abi_senses;
     std::vector<dj_sentence_token_t>  abi_sent_tokens;
     std::vector<dj_sentence_t>        abi_sentences;
 
+    // Kanji detail (metadata + stroke polylines).
     dj::OwnedKanjiDetail              owned_kanji;
     std::vector<dj_stroke_polyline_t> abi_polylines;
 
+    // Radical search + fisheye graph.
     std::vector<uint32_t>             abi_radical_cps;
     std::vector<dj::OwnedFisheyeNode> owned_fisheye;
     std::vector<dj_fisheye_node_t>    abi_fisheye;
 
+    // Idioms / yojijukugo / proverbs.
+    std::vector<dj::OwnedIdiom>       owned_idioms;
+    std::vector<dj_idiom_t>           abi_idioms;
+
+    // Session state: the 6-slot recent-kanji ring (most-recent first).
     std::array<uint32_t, 6> recent_kanji{};
     size_t                  recent_kanji_count = 0;
 };

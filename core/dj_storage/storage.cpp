@@ -60,6 +60,8 @@ constexpr const char* kKangxiRadicalGlyphs[215] = {
     "齒", "龍", "龜", "龠"
 };
 
+} // namespace
+
 /// Lower-case an ASCII string (non-ASCII bytes are left untouched).
 std::string to_lower_ascii(const std::string& s) {
     std::string out = s;
@@ -239,7 +241,7 @@ uint32_t base_kana_cp(uint32_t cp) {
     cp = to_hiragana_cp(cp);
     if (cp >= 0x304C && cp <= 0x3062 && (cp % 2 == 0)) return cp - 1;
     if (cp >= 0x3065 && cp <= 0x3069 && (cp % 2 == 1)) return cp - 1;
-    if (cp >= 0x3070 && cp <= 0x307C) {
+    if (cp >= 0x3070 && cp <= 0x307D) {
         uint32_t rem = (cp - 0x306F) % 3;
         if (rem != 0) return cp - rem;
     }
@@ -263,6 +265,8 @@ bool kana_prefix_matches(const std::vector<uint32_t>& target, size_t offset, con
     }
     return true;
 }
+
+namespace {
 
 /// Collect every candidate reading (On + Kun) for one kanji as hiragana
 /// codepoint sequences, longest-first, for the reading-split solver.
@@ -341,6 +345,8 @@ std::string get_primary_standalone_kun(sqlite3* db, uint32_t cp) {
     return best;
 }
 
+} // namespace
+
 /// Backtracking solver that partitions the kana reading of a kanji compound
 /// into per-kanji chunks.
 ///
@@ -378,6 +384,8 @@ bool solve_kanji_reading_split(
     }
     return false;
 }
+
+namespace {
 
 // Lookup sub-compound readings (e.g. `山車` -> `だし` inside `矛山車` = `ほこだし`)
 std::vector<std::vector<uint32_t>> lookup_subword_readings(sqlite3* db, const std::string& sub_kanji) {
@@ -572,6 +580,9 @@ std::vector<OwnedWordHit> db_search_words(
 
     std::string query = raw_query;
     bool use_english_fts = false;
+    // True when we transliterated romaji -> kana and searched the kana form. Used
+    // to trigger the English fallback below if that kana search yields nothing.
+    bool tried_kana = false;
 
     if (mode == DJ_SEARCH_AUTO && is_ascii_romaji(raw_query)) {
         std::string kana = romaji_to_kana(raw_query, false);
@@ -584,9 +595,19 @@ std::vector<OwnedWordHit> db_search_words(
         }
         if (clean_kana) {
             query = kana;
+            tried_kana = true;
         } else {
             use_english_fts = true;
         }
+    }
+
+    // `DJ_SEARCH_ENGLISH` bypasses the romaji→kana step entirely and runs the
+    // English-gloss FTS index against the raw query. This is how the UI surfaces
+    // an English-gloss match for a romaji query that also names a real English
+    // word (e.g. "sake" -> 酒/鮭 in the main list, but 為 "benefit" in a
+    // separate "Also in English glosses" section).
+    if (mode == DJ_SEARCH_ENGLISH) {
+        use_english_fts = true;
     }
 
     std::string name_filter = include_names ? "" : "AND e.is_name = 0 ";
@@ -689,6 +710,101 @@ std::vector<OwnedWordHit> db_search_words(
         }
     }
 
+    // Fallback: a clean-romaji query (e.g. "bore" -> kana "ぼれ") can have no
+    // kana/prefix hits at all, yet still name a real English word. In that case
+    // the user almost certainly meant the English term, so re-run the FTS index
+    // against the ORIGINAL romaji and surface those results instead.
+    if (results.empty() && mode == DJ_SEARCH_AUTO && tried_kana) {
+        std::string name_filter2 = include_names ? "" : "AND e.is_name = 0 ";
+        std::string sql2 =
+            "SELECT e.entry_id, COALESCE(e.kanji_head, '') AS kanji_head, e.kana_head, COALESCE(e.alt_forms, ''), "
+            "       COALESCE((SELECT en_glosses FROM senses s WHERE s.entry_id = e.entry_id AND s.sense_idx = 0), ''), "
+            "       e.pos_mask, e.pitch_accent, e.freq_overall, COALESCE(e.pair_entry_id, 0), e.is_name "
+            "FROM entries_fts f "
+            "JOIN entries e ON e.entry_id = f.rowid "
+            "WHERE entries_fts MATCH ?1 " + name_filter2 +
+            "ORDER BY e.freq_overall ASC LIMIT ?2;";
+        sqlite3_stmt* stmt2 = nullptr;
+        if (sqlite3_prepare_v2(db, sql2.c_str(), -1, &stmt2, nullptr) == SQLITE_OK) {
+            std::string fts_q2 = "\"" + raw_query + "\"*";
+            size_t fts_limit = std::max<size_t>(limit * 6, 200);
+            sqlite3_bind_text(stmt2, 1, fts_q2.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int64(stmt2, 2, static_cast<sqlite3_int64>(fts_limit));
+            while (sqlite3_step(stmt2) == SQLITE_ROW) {
+                OwnedWordHit h;
+                bind_hit_from_row(stmt2, h);
+                results.push_back(std::move(h));
+            }
+            sqlite3_finalize(stmt2);
+
+            std::string q_low = to_lower_ascii(raw_query);
+            std::stable_sort(results.begin(), results.end(), [&](const OwnedWordHit& a, const OwnedWordHit& b) {
+                int ta = english_gloss_relevance_tier(a.primary_gloss, q_low);
+                int tb = english_gloss_relevance_tier(b.primary_gloss, q_low);
+                if (ta != tb) return ta < tb;
+                bool a_has_kanji = !a.kanji_head.empty();
+                bool b_has_kanji = !b.kanji_head.empty();
+                if (ta == 0 && a_has_kanji != b_has_kanji) return a_has_kanji > b_has_kanji;
+                return a.freq_rank < b.freq_rank;
+            });
+            if (results.size() > limit) {
+                results.resize(limit);
+            }
+        }
+    }
+
+    return results;
+}
+
+std::vector<OwnedWordHit> db_get_random_words(
+    sqlite3* db,
+    uint32_t max_freq,
+    bool include_names,
+    size_t limit) {
+
+    std::vector<OwnedWordHit> results;
+    if (!db || limit == 0) return results;
+
+    std::string sql;
+    if (max_freq > 0 && max_freq < 150000) {
+        sql =
+            "SELECT e.entry_id, COALESCE(e.kanji_head, \x27\x27) AS kanji_head, e.kana_head, COALESCE(e.alt_forms, \x27\x27), "
+            "       COALESCE((SELECT en_glosses FROM senses s WHERE s.entry_id = e.entry_id AND s.sense_idx = 0), \x27\x27), "
+            "       e.pos_mask, e.pitch_accent, e.freq_overall, COALESCE(e.pair_entry_id, 0), e.is_name "
+            "FROM entries e "
+            "WHERE (?1 = 1 OR e.is_name = 0) AND e.freq_overall <= ?2 "
+            "ORDER BY RANDOM() LIMIT ?3;";
+    } else {
+        sql =
+            "SELECT e.entry_id, COALESCE(e.kanji_head, \x27\x27) AS kanji_head, e.kana_head, COALESCE(e.alt_forms, \x27\x27), "
+            "       COALESCE((SELECT en_glosses FROM senses s WHERE s.entry_id = e.entry_id AND s.sense_idx = 0), \x27\x27), "
+            "       e.pos_mask, e.pitch_accent, e.freq_overall, COALESCE(e.pair_entry_id, 0), e.is_name "
+            "FROM entries e "
+            "WHERE (?1 = 1 OR e.is_name = 0) "
+            "ORDER BY RANDOM() LIMIT ?2;";
+    }
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        return results;
+    }
+
+    sqlite3_bind_int(stmt, 1, include_names ? 1 : 0);
+    if (max_freq > 0 && max_freq < 150000) {
+        sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(max_freq));
+        sqlite3_bind_int64(stmt, 3, static_cast<sqlite3_int64>(limit));
+    } else {
+        sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(limit));
+    }
+
+    results.reserve(limit);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        OwnedWordHit h;
+        bind_hit_from_row(stmt, h);
+        results.push_back(std::move(h));
+    }
+
+    sqlite3_finalize(stmt);
     return results;
 }
 
@@ -1078,6 +1194,195 @@ std::vector<uint32_t> db_search_radicals(
         out.push_back(static_cast<uint32_t>(sqlite3_column_int64(stmt, 0)));
     }
     sqlite3_finalize(stmt);
+    return out;
+}
+
+std::vector<OwnedIdiom> db_get_kanji_idioms(
+    sqlite3* db,
+    uint32_t codepoint,
+    size_t limit) {
+
+    std::vector<OwnedIdiom> out;
+    if (!db || codepoint == 0 || limit == 0) return out;
+
+    char glyph_buf[8];
+    encode_utf8(codepoint, glyph_buf);
+    std::string glyph(glyph_buf);
+    if (glyph.empty()) return out;
+
+    const char* sql =
+        "SELECT i.entry_id, i.idiom_kind, COALESCE(e.kanji_head, ''), e.kana_head, "
+        "       i.figurative_gloss, i.anchor_lemmas "
+        "FROM idioms i "
+        "JOIN entries e ON e.entry_id = i.entry_id "
+        "WHERE i.anchor_lemmas LIKE ?1 "
+        "ORDER BY e.freq_overall ASC, i.idiom_kind ASC, e.entry_id ASC;";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) return out;
+
+    std::string pat = "%" + glyph + "%";
+    sqlite3_bind_text(stmt, 1, pat.c_str(), -1, SQLITE_TRANSIENT);
+
+    while (out.size() < limit && sqlite3_step(stmt) == SQLITE_ROW) {
+        const auto* anchors_raw = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+        std::string anchors = anchors_raw ? anchors_raw : "";
+        if (!anchor_lemmas_contains(anchors, glyph)) continue;
+
+        OwnedIdiom item;
+        item.entry_id = static_cast<uint32_t>(sqlite3_column_int64(stmt, 0));
+        item.idiom_kind = static_cast<uint8_t>(sqlite3_column_int(stmt, 1));
+        const auto* kh = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        const auto* ka = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        const auto* fg = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        item.kanji_head = kh ? kh : "";
+        item.kana_head = ka ? ka : "";
+        item.figurative_gloss = fg ? fg : "";
+        item.anchor_lemmas = std::move(anchors);
+        out.push_back(std::move(item));
+    }
+    sqlite3_finalize(stmt);
+    return out;
+}
+
+std::vector<OwnedIdiom> db_get_entry_idioms(
+    sqlite3* db,
+    uint32_t entry_id,
+    size_t limit) {
+
+    std::vector<OwnedIdiom> out;
+    if (!db || entry_id == 0 || limit == 0) return out;
+
+    // 1. Direct idiom match on this entry_id (if the entry itself is an idiom/kotowaza/yoji).
+    const char* exact_sql =
+        "SELECT i.entry_id, i.idiom_kind, COALESCE(e.kanji_head, ''), e.kana_head, "
+        "       i.figurative_gloss, i.anchor_lemmas "
+        "FROM idioms i "
+        "JOIN entries e ON e.entry_id = i.entry_id "
+        "WHERE i.entry_id = ?1 LIMIT 1;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, exact_sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(entry_id));
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            OwnedIdiom item;
+            item.entry_id = static_cast<uint32_t>(sqlite3_column_int64(stmt, 0));
+            item.idiom_kind = static_cast<uint8_t>(sqlite3_column_int(stmt, 1));
+            const auto* kh = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            const auto* ka = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+            const auto* fg = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+            const auto* al = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+            item.kanji_head = kh ? kh : "";
+            item.kana_head = ka ? ka : "";
+            item.figurative_gloss = fg ? fg : "";
+            item.anchor_lemmas = al ? al : "";
+            out.push_back(std::move(item));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    if (out.size() >= limit) return out;
+
+    // 2. Fetch the entry's kanji headword and extract unique kanji glyphs (up to 6).
+    std::string kanji_head;
+    const char* head_sql = "SELECT COALESCE(kanji_head, '') FROM entries WHERE entry_id = ?1 LIMIT 1;";
+    if (sqlite3_prepare_v2(db, head_sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(entry_id));
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const auto* kh = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            if (kh) kanji_head = kh;
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    std::vector<std::string> glyphs;
+    for (uint32_t cp : utf8_to_cps(kanji_head)) {
+        if (is_kanji_cp(cp) && cp != 0x3005) {
+            char buf[8];
+            encode_utf8(cp, buf);
+            std::string g(buf);
+            if (!g.empty() && std::find(glyphs.begin(), glyphs.end(), g) == glyphs.end()) {
+                glyphs.push_back(std::move(g));
+                if (glyphs.size() >= 6) break;
+            }
+        }
+    }
+    if (glyphs.empty()) return out;
+
+    // 3. Query idioms matching any of the entry's kanji, ranking by:
+    //    - full headword containment inside the idiom's kanji_head,
+    //    - number of shared anchor kanji,
+    //    - corpus frequency.
+    std::string sql =
+        "SELECT i.entry_id, i.idiom_kind, COALESCE(e.kanji_head, ''), e.kana_head, "
+        "       i.figurative_gloss, i.anchor_lemmas, e.freq_overall "
+        "FROM idioms i "
+        "JOIN entries e ON e.entry_id = i.entry_id "
+        "WHERE i.entry_id != ?1 AND (";
+    for (size_t i = 0; i < glyphs.size(); ++i) {
+        if (i > 0) sql += " OR ";
+        sql += "i.anchor_lemmas LIKE ?" + std::to_string(i + 2);
+    }
+    sql += ") ORDER BY e.freq_overall ASC LIMIT 200;";
+
+    struct Candidate {
+        OwnedIdiom idiom;
+        int score;
+        uint32_t freq;
+    };
+    std::vector<Candidate> candidates;
+
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(entry_id));
+        for (size_t i = 0; i < glyphs.size(); ++i) {
+            std::string pat = "%" + glyphs[i] + "%";
+            sqlite3_bind_text(stmt, static_cast<int>(i + 2), pat.c_str(), -1, SQLITE_TRANSIENT);
+        }
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const auto* al = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+            std::string anchors = al ? al : "";
+
+            int shared = 0;
+            for (const auto& g : glyphs) {
+                if (anchor_lemmas_contains(anchors, g)) ++shared;
+            }
+            if (shared == 0) continue;
+
+            OwnedIdiom item;
+            item.entry_id = static_cast<uint32_t>(sqlite3_column_int64(stmt, 0));
+            item.idiom_kind = static_cast<uint8_t>(sqlite3_column_int(stmt, 1));
+            const auto* kh = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            const auto* ka = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+            const auto* fg = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+            item.kanji_head = kh ? kh : "";
+            item.kana_head = ka ? ka : "";
+            item.figurative_gloss = fg ? fg : "";
+            item.anchor_lemmas = std::move(anchors);
+
+            int bonus = (!kanji_head.empty() && item.kanji_head.find(kanji_head) != std::string::npos) ? 10 : 0;
+            uint32_t freq = static_cast<uint32_t>(sqlite3_column_int64(stmt, 6));
+            candidates.push_back({std::move(item), bonus + shared, freq});
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        if (a.score != b.score) return a.score > b.score;
+        if (a.freq != b.freq) return a.freq < b.freq;
+        return a.idiom.entry_id < b.idiom.entry_id;
+    });
+
+    for (auto& c : candidates) {
+        if (out.size() >= limit) break;
+        bool dup = false;
+        for (const auto& existing : out) {
+            if (existing.entry_id == c.idiom.entry_id) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) out.push_back(std::move(c.idiom));
+    }
+
     return out;
 }
 

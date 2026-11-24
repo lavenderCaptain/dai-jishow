@@ -92,6 +92,42 @@ size_t dj_dict_search(
     return engine->abi_hits.size();
 }
 
+size_t dj_dict_get_random_words(
+    dj_engine_t*          engine,
+    uint32_t              max_freq_rank,
+    bool                  include_names,
+    size_t                limit,
+    const dj_word_hit_t** out_hits) {
+
+    if (out_hits) *out_hits = nullptr;
+    if (!engine || !engine->db || limit == 0) return 0;
+
+    engine->owned_hits = dj::db_get_random_words(engine->db, max_freq_rank, include_names, limit);
+
+    engine->abi_hits.clear();
+    engine->abi_hits.reserve(engine->owned_hits.size());
+
+    for (const auto& h : engine->owned_hits) {
+        dj_word_hit_t abi{};
+        abi.entry_id      = h.entry_id;
+        abi.kanji_head    = h.kanji_head.c_str();
+        abi.kana_head     = h.kana_head.c_str();
+        abi.alt_forms     = h.alt_forms.c_str();
+        abi.primary_gloss = h.primary_gloss.c_str();
+        abi.pos_mask      = h.pos_mask;
+        abi.pitch_accent  = h.pitch_accent;
+        abi.freq_rank     = h.freq_rank;
+        abi.pair_entry_id = h.pair_entry_id;
+        abi.is_name       = h.is_name;
+        engine->abi_hits.push_back(abi);
+    }
+
+    if (out_hits && !engine->abi_hits.empty()) {
+        *out_hits = engine->abi_hits.data();
+    }
+    return engine->abi_hits.size();
+}
+
 bool dj_dict_get_entry_detail(
     dj_engine_t*       engine,
     uint32_t           entry_id,
@@ -241,6 +277,51 @@ size_t dj_kanji_search_radicals(
         *out_codepoints = engine->abi_radical_cps.data();
     }
     return engine->abi_radical_cps.size();
+}
+
+static size_t marshal_idioms(dj_engine_t* engine, const dj_idiom_t** out_idioms) {
+    engine->abi_idioms.clear();
+    engine->abi_idioms.reserve(engine->owned_idioms.size());
+    for (const auto& idm : engine->owned_idioms) {
+        dj_idiom_t abi{};
+        abi.entry_id         = idm.entry_id;
+        abi.idiom_kind       = idm.idiom_kind;
+        abi.kanji_head       = idm.kanji_head.c_str();
+        abi.kana_head        = idm.kana_head.c_str();
+        abi.figurative_gloss = idm.figurative_gloss.c_str();
+        abi.anchor_lemmas    = idm.anchor_lemmas.c_str();
+        engine->abi_idioms.push_back(abi);
+    }
+    if (out_idioms && !engine->abi_idioms.empty()) {
+        *out_idioms = engine->abi_idioms.data();
+    }
+    return engine->abi_idioms.size();
+}
+
+size_t dj_dict_get_kanji_idioms(
+    dj_engine_t*       engine,
+    uint32_t           codepoint,
+    size_t             limit,
+    const dj_idiom_t** out_idioms) {
+
+    if (out_idioms) *out_idioms = nullptr;
+    if (!engine || !engine->db || codepoint == 0 || limit == 0) return 0;
+
+    engine->owned_idioms = dj::db_get_kanji_idioms(engine->db, codepoint, limit);
+    return marshal_idioms(engine, out_idioms);
+}
+
+size_t dj_dict_get_entry_idioms(
+    dj_engine_t*       engine,
+    uint32_t           entry_id,
+    size_t             limit,
+    const dj_idiom_t** out_idioms) {
+
+    if (out_idioms) *out_idioms = nullptr;
+    if (!engine || !engine->db || entry_id == 0 || limit == 0) return 0;
+
+    engine->owned_idioms = dj::db_get_entry_idioms(engine->db, entry_id, limit);
+    return marshal_idioms(engine, out_idioms);
 }
 
 size_t dj_graph_solve_fisheye(

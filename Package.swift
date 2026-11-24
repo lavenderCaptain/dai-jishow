@@ -1,7 +1,7 @@
 // swift-tools-version: 5.9
-// Zero-Xcode-project Swift Package Manager manifest for Dai-Jishow.
+// Swift Package Manager manifest for Dai-Jishow (alongside DaiJishow.xcodeproj).
 // Compiles the C++20 `core/` engine directly and links it into the native
-// macOS SwiftUI + Liquid Glass application (`DaiJishowMac`).
+// macOS SwiftUI glass-material application (`DaiJishowMac`).
 
 import PackageDescription
 
@@ -35,11 +35,32 @@ let package = Package(
             ]
         ),
 
-        // 2. Native macOS SwiftUI + Canvas Liquid Glass shell
+        // 2. Pure Swift morphology core (conjugation + POS + pitch), extracted from
+        //    the executable so it can be unit-tested. SwiftPM cannot `@testable`
+        //    import an executable target, so this logic lives in its own library.
+        //    Dependency-free: no engine, no DB, no UI, no MainActor.
+        .target(
+            name: "DaiJishowMorph",
+            path: "Sources/DaiJishowMorph"
+        ),
+
+        // 3. Native macOS SwiftUI + Canvas glass-material shell
         .executableTarget(
             name: "DaiJishowMac",
-            dependencies: ["DaiJishowCore"],
-            path: "platform-apple/macOS"
+            dependencies: ["DaiJishowCore", "DaiJishowMorph"],
+            path: "platform-apple/macOS",
+            exclude: [
+                "DaiJishow.entitlements",
+                "PrivacyInfo.xcprivacy"
+            ]
+        ),
+
+        // 4. Regression tests for the morphology core (Swift Testing). Locked in by
+        //    `swift test` in tools/build_app_bundle.sh so a broken conjugation/POS
+        //    change cannot ship a DMG.
+        .testTarget(
+            name: "DaiJishowMorphTests",
+            dependencies: ["DaiJishowMorph"]
         )
     ]
 )

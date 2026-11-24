@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+#
+# build_app_bundle.sh — assemble a distributable Dai-Jishow.app from the SwiftPM
+# build, so the app carries its own icon, a self-contained corpus, and a real
+# Info.plist (and shows a Dock icon in Finder).
+#
+# Layout produced under build/Dai-Jishow.app:
+#   Contents/MacOS/DaiJishowMac       compiled executable
+#   Contents/Resources/AppIcon.icns   the app icon (generated on demand)
+#   Contents/Resources/daijishow.db   the bundled corpus (self-contained)
+#   Contents/Info.plist              bundle metadata + icon reference
+#
+# Usage:
+#   ./tools/build_app_bundle.sh            # debug build, DB copied in, + DMG
+#   ./tools/build_app_bundle.sh --release  # release build (slower)
+#   ./tools/build_app_bundle.sh --no-db    # skip bundling the ~221 MB corpus
+#   ./tools/build_app_bundle.sh --symlink-db  # link the DB instead of copying
+#   ./tools/build_app_bundle.sh --no-dmg   # skip the drag-to-Applications .dmg
+#   ./tools/build_app_bundle.sh --skip-tests      # skip the swift-test gate (dev only)
+#   ./tools/build_app_bundle.sh --skip-cpp-tests  # skip the C++ core tests (dev only)
+#
+# The DMG (build/Dai-Jishow-<version>.dmg) is the standard "drag the app into the
+# Applications folder" installer: it contains the .app plus a symlink to
+# /Applications, so you drag-and-drop to install.
+#
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+APP_NAME="Dai-Jishow"
+BINARY="DaiJishowMac"
+BUNDLE_ID="org.daijishow.mac"
+MIN_OS="14.0"
+BUILD_DIR="build"
+APP_DIR="$BUILD_DIR/$APP_NAME.app"
+
+# --- version (single source of truth: the git release tag) -------------
+# Capture the version from the latest git tag so the About page, Info.plist,
+# and the DMG filename all agree — there is no hand-maintained version string
+# to drift. Info.plist uses numeric CFBundleShortVersionString / CFBundleVersion
+# for App Store compatibility.
+capture_version() {
+  local tag
+  tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+  if [[ -z "$tag" ]]; then
+    tag="0.2.0"                       # no git tags at all — sane default
+  fi
+  tag="${tag#v}"                    # drop the conventional leading "v"
+  if [[ "$tag" == *-* ]]; then
+    SHORT_VERSION="${tag%%-*}"      # marketing part,  e.g. 0.9ß
+    BUILD_VERSION="${tag#*-}"       # RC/build suffix, e.g. rc3
+  else
+    SHORT_VERSION="$tag"
+    BUILD_VERSION="$tag"            # no suffix → About shows just the short
+  fi
+  FULL_VERSION="$SHORT_VERSION"
+  if [[ "$BUILD_VERSION" != "$SHORT_VERSION" ]]; then
+    FULL_VERSION="${SHORT_VERSION}-${BUILD_VERSION}"
+  fi
+  # Apple CFBundleShortVersionString / CFBundleVersion must be ASCII integers
+  # separated by dots (no Greek/non-numeric suffixes).
+  PLIST_SHORT_VERSION="${SHORT_VERSION//[^0-9.]/}"
+  if [[ "$PLIST_SHORT_VERSION" =~ ^[0-9]+$ ]]; then
+    PLIST_SHORT_VERSION="${PLIST_SHORT_VERSION}.0.0"
+  elif [[ "$PLIST_SHORT_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    PLIST_SHORT_VERSION="${PLIST_SHORT_VERSION}.0"
+  elif [[ -z "$PLIST_SHORT_VERSION" ]]; then
+    PLIST_SHORT_VERSION="0.2.0"
+  fi
+  PLIST_BUILD_VERSION="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+}
+capture_version
+echo "==> version: $FULL_VERSION  (Info.plist: $PLIST_SHORT_VERSION build $PLIST_BUILD_VERSION)"
+
+CONFIG="debug"
+BUNDLE_DB=1
+LINK_DB=0
+MAKE_DMG=1
+SKIP_TESTS=0
+SKIP_CPP_TESTS=0
+for arg in "$@"; do
+  case "$arg" in
+    --release)      CONFIG="release" ;;
+    --no-db)        BUNDLE_DB=0 ;;
+    --symlink-db)   BUNDLE_DB=1; LINK_DB=1 ;;
+    --no-dmg)       MAKE_DMG=0 ;;
+    --skip-tests)   SKIP_TESTS=1 ;;
+    --skip-cpp-tests) SKIP_CPP_TESTS=1 ;;
+    -h|--help)
+      grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown flag: $arg" >&2; exit 1 ;;
+  esac
+done
+
+echo "==> swift build -c $CONFIG"
+swift build -c "$CONFIG"
+BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)"
+EXEC="$BIN_PATH/$BINARY"
+[[ -f "$EXEC" ]] || { echo "executable not found: $EXEC" >&2; exit 1; }
+
+# --- regression tests (gate) --------------------------------------------
+# Run the Swift Testing suite (DaiJishowMorphTests) BEFORE assembling the .app so
+# a broken conjugation / part-of-speech / pitch-accent change cannot ship a DMG.
+# This is the "don't break things further as we iterate" gate. With `set -e`
+# (line 24) above, a failing `swift test` aborts the whole build. The suite only
+# depends on the pure, dependency-free DaiJishowMorph library, so it is fast and
+# hermetic (no ~221 MB corpus, no engine). Bypass for fast local iteration with
+# `--skip-tests` — use only while actively editing the morphology.
+if [[ "$SKIP_TESTS" == "1" ]]; then
+  echo "==> skipping tests (--skip-tests)"
+else
+  echo "==> swift test"
+  swift test
+fi
+
+# --- C++ core regression tests (gate) --------------------------------------
+# Run the native C++ regression suite after the Swift tests. These lock the pure,
+# no-DB logic of core/dj_nlp + core/dj_graph that `swift test` (which builds only
+# the Swift DaiJishowMorph library) never compiles, so a broken romaji
+# transliteration or fisheye pair-head choice cannot ship a DMG. The runner exits
+# non-zero on any failed CHECK, and with `set -e` (line 24) that aborts the build.
+# Bypass for fast local iteration with --skip-cpp-tests.
+if [[ "$SKIP_CPP_TESTS" == "1" ]]; then
+  echo "==> skipping C++ core tests (--skip-cpp-tests)"
+else
+  ./tools/build_cpp_tests.sh
+fi
+
+# --- icon ---------------------------------------------------------------
+ensure_icon() {
+  local icns="$BUILD_DIR/AppIcon.icns"
+  if [[ -f "$icns" ]]; then return 0; fi
+  echo "==> generating AppIcon.icns (missing)"
+  swift tools/make_icon.swift "$BUILD_DIR/AppIcon.iconset" "$icns" \
+    && iconutil -c icns "$BUILD_DIR/AppIcon.iconset" -o "$icns"
+  [[ -f "$icns" ]]
+}
+
+# --- assemble -----------------------------------------------------------
+echo "==> assembling $APP_DIR"
+rm -rf "$APP_DIR"
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+
+cp "$EXEC" "$APP_DIR/Contents/MacOS/$BINARY"
+
+if ensure_icon; then
+  cp "$BUILD_DIR/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+  echo "    + AppIcon.icns"
+else
+  echo "    ! AppIcon.icns unavailable (icon will be the generic executable)"
+fi
+
+if [[ "$BUNDLE_DB" -eq 1 ]]; then
+  if [[ -f "$BUILD_DIR/daijishow.db" ]]; then
+    if [[ "$LINK_DB" -eq 1 ]]; then
+      ln -sf "$(pwd)/$BUILD_DIR/daijishow.db" "$APP_DIR/Contents/Resources/daijishow.db"
+      echo "    + daijishow.db (symlink)"
+    else
+      cp "$BUILD_DIR/daijishow.db" "$APP_DIR/Contents/Resources/daijishow.db"
+      echo "    + daijishow.db ($(du -h "$APP_DIR/Contents/Resources/daijishow.db" | cut -f1))"
+    fi
+  else
+    echo "    ! build/daijishow.db missing (app will show the 'db not found' banner)"
+  fi
+fi
+
+# --- Legal / License notices & Privacy Manifest -------------------------
+for doc in LICENSE NOTICE platform-apple/macOS/PrivacyInfo.xcprivacy; do
+  if [[ -f "$doc" ]]; then
+    base="$(basename "$doc")"
+    cp "$doc" "$APP_DIR/Contents/Resources/$base"
+    echo "    + $base"
+  fi
+done
+
+# --- Info.plist ---------------------------------------------------------
+cat > "$APP_DIR/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>            <string>${APP_NAME}</string>
+    <key>CFBundleDisplayName</key>     <string>${APP_NAME}</string>
+    <key>CFBundleExecutable</key>      <string>$BINARY</string>
+    <key>CFBundleIdentifier</key>      <string>$BUNDLE_ID</string>
+    <key>CFBundlePackageType</key>     <string>APPL</string>
+    <key>CFBundleShortVersionString</key> <string>$PLIST_SHORT_VERSION</string>
+    <key>CFBundleVersion</key>         <string>$PLIST_BUILD_VERSION</string>
+    <key>CFBundleInfoDictionaryVersion</key> <string>6.0</string>
+    <key>CFBundleIconFile</key>        <string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key>  <string>$MIN_OS</string>
+    <key>LSApplicationCategoryType</key> <string>public.app-category.education</string>
+    <key>ITSAppUsesNonExemptEncryption</key> <false/>
+    <key>NSHumanReadableCopyright</key> <string>Copyright © 2026 Dai-Jishow Contributors. Code: MIT; Corpus: CC BY-SA 4.0 / 3.0 &amp; CC BY 2.0.</string>
+    <key>NSHighResolutionCapable</key> <true/>
+    <key>NSPrincipalClass</key>        <string>NSApplication</string>
+    <key>NSSupportsAutomaticTermination</key> <false/>
+    <key>NSSupportsSuddenTermination</key> <false/>
+</dict>
+</plist>
+PLIST
+echo "    + Info.plist"
+
+# --- code sign (ad-hoc with App Sandbox entitlements) -------------------
+echo "==> codesign (ad-hoc)"
+ENTITLEMENTS="platform-apple/macOS/DaiJishow.entitlements"
+if [[ -f "$ENTITLEMENTS" ]] && codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP_DIR" 2>/dev/null; then
+  echo "    signed (sandbox + hardened runtime)"
+elif codesign --force --deep --sign - "$APP_DIR" 2>/dev/null; then
+  echo "    signed"
+else
+  echo "    (codesign unavailable or failed — app still runs locally)"
+fi
+
+# --- DMG (drag-to-Applications installer) --------------------------------
+# The standard "drag the app into Applications" package: the .app plus a
+# symlink to /Applications. Open the .dmg, drag Dai-Jishow onto the
+# Applications icon, done.
+if [[ "$MAKE_DMG" -eq 1 ]]; then
+  echo "==> creating DMG (drag-to-Applications)"
+  STAGE_PARENT="$(mktemp -d -t daijishow-dmg-XXXXXX)"
+  DMG_DIR="$STAGE_PARENT/stage"
+  mkdir -p "$DMG_DIR"
+  cp -R "$APP_DIR" "$DMG_DIR/"
+  ln -s /Applications "$DMG_DIR/Applications"
+
+  # Deterministic layout: drop any stray Finder state.
+  find "$DMG_DIR" -name .DS_Store -delete 2>/dev/null || true
+
+  DMG_NAME="${APP_NAME}-${FULL_VERSION}.dmg"
+  DMG_OUT="$BUILD_DIR/$DMG_NAME"
+  rm -f "$DMG_OUT"
+
+  if hdiutil create \
+      -volname "${APP_NAME}" \
+      -srcfolder "$DMG_DIR" \
+      -ov -format UDZO \
+      -imagekey zlib-level=9 \
+      "$DMG_OUT" >/dev/null; then
+    echo "    + $DMG_NAME ($(du -h "$DMG_OUT" | cut -f1))"
+    echo "    open \"$DMG_OUT\"   # then drag Dai-Jishow onto the Applications icon"
+  else
+    echo "    ! DMG creation failed (hdiutil unavailable or disk full)"
+  fi
+
+  rm -rf "$STAGE_PARENT"
+fi
+
+echo "==> done: $APP_DIR"
+echo "    open \"$APP_DIR\""

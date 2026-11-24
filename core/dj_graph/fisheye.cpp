@@ -83,7 +83,7 @@ std::vector<uint32_t> utf8_to_cps_local(const std::string& s) {
 }
 
 // Computes the exclusive upper bound for a UTF-8 prefix so SQLite can execute a pure B-tree range scan
-std::string utf8_prefix_upper_bound(const std::string& prefix) {
+std::string utf8_prefix_upper_bound_local(const std::string& prefix) {
     std::string upper = prefix;
     while (!upper.empty()) {
         unsigned char last = static_cast<unsigned char>(upper.back());
@@ -111,6 +111,7 @@ struct KanjiEdgesSchema {
     std::string weight_col;
     std::string entry_col;
     bool has_precomputed_names = false;
+    bool has_alt_forms = false;   // `entries` carries JMdict alternate kanji spellings
     bool detected = false;
 };
 
@@ -167,6 +168,23 @@ KanjiEdgesSchema detect_kanji_edges_schema(sqlite3* db) {
                 }
                 sqlite3_finalize(chk);
             }
+        }
+
+        // Probe the `entries` table for an `alt_forms` column (JMdict bundles a
+        // word's alternate kanji spellings into one record, e.g. 海星's entry
+        // also carries 人手|海盤車|ヒトデ). When present, the standard compound
+        // edge load can substitute the alt form that actually fits a (center,
+        // neighbor) pair instead of the entry's primary head. Guarded so older
+        // corpus builds without the column keep working unchanged.
+        sqlite3_stmt* alt_stmt = nullptr;
+        if (sqlite3_prepare_v2(db, "PRAGMA table_info(entries);", -1, &alt_stmt, nullptr) == SQLITE_OK) {
+            while (sqlite3_step(alt_stmt) == SQLITE_ROW) {
+                const auto* name = reinterpret_cast<const char*>(sqlite3_column_text(alt_stmt, 1));
+                if (name && std::string(name) == "alt_forms") {
+                    cached.has_alt_forms = true;
+                }
+            }
+            sqlite3_finalize(alt_stmt);
         }
         cached.detected = true;
     }
@@ -322,13 +340,22 @@ void populate_fisheye_batch_cache(sqlite3* db, uint32_t center_cp, dj_fisheye_mo
         const bool is_edge_kind_schema = (schema.edge_type_col == "edge_kind");
 
         // 1. Batch-load both Left (0) and Right (1) standard compound edges in a single JOIN query
+        //
+        // When the corpus carries `alt_forms` (JMdict alternate kanji spellings),
+        // we pull it in as a final column so a row's displayed head can be
+        // corrected to the alt form that actually fits the (center, neighbor)
+        // pair — see `select_pair_head` below. The clause is appended only when
+        // the column exists, so older corpus builds keep working unchanged.
+        const bool has_alt = schema.has_alt_forms;
+        const std::string alt_clause = has_alt ? ", COALESCE(e.alt_forms, '')" : "";
         std::string sql;
         if (is_edge_kind_schema) {
             sql =
                 "SELECT ke.neighbor_cp, ke.edge_kind, " + schema.weight_col + ", ke.top_entry_id, "
                 "       COALESCE(e.kanji_head, e.kana_head, ''), COALESCE(e.kana_head, ''), "
-                "       COALESCE(s.en_glosses, ''), COALESCE(e.freq_overall, 999999), COALESCE(k.grade, 1) "
-                "FROM kanji_edges ke "
+                "       COALESCE(s.en_glosses, ''), COALESCE(e.freq_overall, 999999), COALESCE(k.grade, 1)"
+                + alt_clause +
+                " FROM kanji_edges ke "
                 "LEFT JOIN entries e ON e.entry_id = ke.top_entry_id "
                 "LEFT JOIN senses s ON s.entry_id = ke.top_entry_id AND s.sense_idx = 0 "
                 "LEFT JOIN kanji k ON k.codepoint = ke.neighbor_cp "
@@ -345,8 +372,9 @@ void populate_fisheye_batch_cache(sqlite3* db, uint32_t center_cp, dj_fisheye_mo
             sql =
                 "SELECT ke.neighbor_cp, " + side_expr + ", " + weight_expr + ", " + entry_expr + ", "
                 "       COALESCE(e.kanji_head, e.kana_head, ''), COALESCE(e.kana_head, ''), "
-                "       COALESCE(s.en_glosses, ''), COALESCE(e.freq_overall, 999999), COALESCE(k.grade, 1) "
-                "FROM kanji_edges ke "
+                "       COALESCE(s.en_glosses, ''), COALESCE(e.freq_overall, 999999), COALESCE(k.grade, 1)"
+                + alt_clause +
+                " FROM kanji_edges ke "
                 "LEFT JOIN entries e ON e.entry_id = " + entry_expr + " "
                 "LEFT JOIN senses s ON s.entry_id = " + entry_expr + " AND s.sense_idx = 0 "
                 "LEFT JOIN kanji k ON k.codepoint = ke.neighbor_cp " +
@@ -384,6 +412,13 @@ void populate_fisheye_batch_cache(sqlite3* db, uint32_t center_cp, dj_fisheye_mo
                 const auto* ck = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
                 const auto* cg = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
                 n.compound_word = cw ? cw : "";
+                // When the primary head doesn't fit this (center, neighbor) pair
+                // (JMdict bundled the compound under a different spelling), show
+                // the alt form that does instead — see `select_pair_head`.
+                if (has_alt && !n.compound_word.empty()) {
+                    const auto* alts = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
+                    n.compound_word = select_pair_head(n.compound_word, alts ? alts : "", center_cp, ncp);
+                }
                 n.compound_kana = ck ? ck : "";
                 n.compound_gloss = cg ? cg : "";
                 uint32_t freq_overall = static_cast<uint32_t>(sqlite3_column_int64(stmt, 7));
@@ -463,7 +498,7 @@ void populate_fisheye_batch_cache(sqlite3* db, uint32_t center_cp, dj_fisheye_mo
                 char center_utf8[8];
                 encode_utf8(center_cp, center_utf8);
                 std::string prefix_lo(center_utf8);
-                std::string prefix_hi = utf8_prefix_upper_bound(prefix_lo);
+                std::string prefix_hi = utf8_prefix_upper_bound_local(prefix_lo);
 
                 // Side 1 (center + suffix): uses idx_entries_kanji(is_name, kanji_head, freq_overall) range scan
                 const char* suffix_name_sql =
@@ -567,6 +602,47 @@ void populate_fisheye_batch_cache(sqlite3* db, uint32_t center_cp, dj_fisheye_mo
     }
 }
 } // namespace
+
+/// Pick the headword to *display* for a `(center, neighbor)` compound edge.
+///
+/// JMdict bundles a word's alternate kanji spellings into one entry (e.g. entry
+/// 2194790 has `kanji_head` 海星 but also the alt forms 人手 | 海盤車 | ヒトデ;
+/// 2572910 has 獄 with 人屋 | 囚獄 | ひとや). The corpus stores only the *primary*
+/// head, so a fisheye edge (人, 手) that resolves to that entry would render 海星 —
+/// the wrong word for the pair the user hovered. When the primary head contains
+/// *neither* kanji of the pair, substitute the alt form that contains *both*
+/// (the shortest such form wins, so 人手 beats the longer 海盤車). The entry's
+/// senses/glosses are shared across all its spellings, so only the displayed
+/// head changes. Returns the primary head unchanged when it already fits or when
+/// no alt form matches (a small population with no alt form at all).
+///
+/// (Promoted out of the anonymous namespace to external linkage so the C++
+/// regression suite can lock it — see `core/dj_internal.hpp`.)
+std::string select_pair_head(const std::string& primary, const std::string& alt_forms,
+                             uint32_t center_cp, uint32_t neighbor_cp) {
+    auto contains_both = [&](const std::string& s) {
+        auto cps = utf8_to_cps_local(s);
+        bool has_center = false, has_neighbor = false;
+        for (uint32_t cp : cps) {
+            if (cp == center_cp) has_center = true;
+            if (cp == neighbor_cp) has_neighbor = true;
+        }
+        return has_center && has_neighbor;
+    };
+    if (contains_both(primary)) return primary;
+    std::string best;
+    size_t start = 0;
+    for (size_t i = 0; i <= alt_forms.size(); ++i) {
+        if (i == alt_forms.size() || alt_forms[i] == '|') {
+            std::string form = alt_forms.substr(start, i - start);
+            start = i + 1;
+            if (!form.empty() && contains_both(form) && (best.empty() || form.size() < best.size())) {
+                best = form;
+            }
+        }
+    }
+    return best.empty() ? primary : best;
+}
 
 /// Lay out the fisheye bubbles for one center kanji and return them.
 ///

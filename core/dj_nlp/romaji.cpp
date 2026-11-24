@@ -213,4 +213,25 @@ std::string romaji_to_kana(const std::string& input, bool katakana) {
     return katakana ? hiragana_to_katakana(hira) : hira;
 }
 
+bool anchor_lemmas_contains(const std::string& anchor_lemmas, const std::string& token) {
+    if (anchor_lemmas.empty() || token.empty()) return false;
+    size_t start = 0;
+    while (start <= anchor_lemmas.size()) {
+        size_t comma = anchor_lemmas.find(',', start);
+        size_t end = (comma == std::string::npos) ? anchor_lemmas.size() : comma;
+        while (start < end && (anchor_lemmas[start] == ' ' || anchor_lemmas[start] == '\t')) {
+            ++start;
+        }
+        while (end > start && (anchor_lemmas[end - 1] == ' ' || anchor_lemmas[end - 1] == '\t')) {
+            --end;
+        }
+        if (end - start == token.size() && anchor_lemmas.compare(start, end - start, token) == 0) {
+            return true;
+        }
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return false;
+}
+
 } // namespace dj

@@ -1,0 +1,70 @@
+DAI-JISHOW CORPUS NOTICES & THIRD-PARTY ATTRIBUTIONS
+====================================================
+
+The Dai-Jishow software source code is licensed under the MIT License (see LICENSE).
+The bundled offline dictionary database (`daijishow.db`) incorporates and
+transforms the open linguistic datasets listed below and is distributed under
+the Creative Commons Attribution-ShareAlike 4.0 International License
+(https://creativecommons.org/licenses/by-sa/4.0/).
+
+1. JMdict_e (Japanese-Multilingual Dictionary)
+   Copyright: James William Breen and The Electronic Dictionary Research and
+              Development Group (EDRG)
+   License:   Creative Commons Attribution-ShareAlike 4.0 (CC BY-SA 4.0)
+   License URL: https://creativecommons.org/licenses/by-sa/4.0/
+   EDRDG Licence: https://www.edrdg.org/edrdg/licence.html
+   Source URL: http://ftp.edrdg.org/pub/Nihongo/JMdict_e.gz
+   Modifications: Parsed from XML, mapped POS/register flags to bitmasks,
+   indexed for prefix/FTS5 lookup, and compiled into SQLite (`daijishow.db`).
+
+2. JMnedict / ENAMDICT (Japanese Names Dictionary)
+   Copyright: James William Breen and The Electronic Dictionary Research and
+              Development Group (EDRG)
+   License:   Creative Commons Attribution-ShareAlike 4.0 (CC BY-SA 4.0)
+   License URL: https://creativecommons.org/licenses/by-sa/4.0/
+   EDRDG Licence: https://www.edrdg.org/edrdg/licence.html
+   Source URL: http://ftp.edrdg.org/pub/Nihongo/JMnedict.xml.gz
+   Modifications: Parsed from XML, flagged as proper-name entries (`is_name = 1`),
+   precomputed compound edges, and compiled into SQLite (`daijishow.db`).
+
+3. KANJIDIC2 (Kanji Information Database)
+   Copyright: James William Breen and The Electronic Dictionary Research and
+              Development Group (EDRG)
+   License:   Creative Commons Attribution-ShareAlike 4.0 (CC BY-SA 4.0)
+   License URL: https://creativecommons.org/licenses/by-sa/4.0/
+   EDRDG Licence: https://www.edrdg.org/edrdg/licence.html
+   Source URL: http://ftp.edrdg.org/pub/Nihongo/kanjidic2.xml.gz
+   Modifications: Parsed readings, meanings, radicals, stroke counts, SKIP,
+   4-Corner, and legacy pre-2010 JLPT levels into SQLite (`daijishow.db`).
+
+4. KanjiVG (Kanji Vector Graphics)
+   Copyright: Copyright (C) 2009-2013 Ulrich Apel
+   License:   Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
+   License URL: https://creativecommons.org/licenses/by-sa/3.0/
+   Website:   https://kanjivg.tagaini.net
+   Source URL: https://github.com/KanjiVG/kanjivg
+   Modifications: Parsed SVG stroke paths and component sub-radicals, quantized
+   coordinates to uint16 polylines, and stored in SQLite (`daijishow.db`).
+
+5. Kanjium (Pitch Accent Data)
+   Copyright: Uros O. (mifunetoshiro)
+   Attribution: The pitch accent notation (`accents.txt`) was provided by
+                Uros O. through the Kanjium project.
+   License:   Creative Commons Attribution-ShareAlike 4.0 (CC BY-SA 4.0)
+   License URL: https://creativecommons.org/licenses/by-sa/4.0/
+   Source URL: https://github.com/mifunetoshiro/kanjium
+   Modifications: Mapped word-reading pitch downstep positions onto matching
+   JMdict entries in SQLite (`daijishow.db`).
+
+6. Tatoeba (Japanese-English Example Sentences)
+   Copyright: Tatoeba Contributors (https://tatoeba.org)
+   License:   Creative Commons Attribution 2.0 France (CC BY 2.0)
+   License URL: https://creativecommons.org/licenses/by/2.0/
+   Source URL: https://downloads.tatoeba.org
+   Modifications: Filtered and indexed a subset of up to 80,000 Japanese-English
+   sentence pairs with pre-tokenized byte spans in SQLite (`daijishow.db`).
+
+Rebuilding / Obtaining Source Corpus & ETL Scripts:
+The Python ETL pipeline that builds `daijishow.db` from these upstream sources
+is included in `tools/corpus-builder/` of the repository:
+https://github.com/lavenderCaptain/dai-jishow

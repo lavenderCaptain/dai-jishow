@@ -1,0 +1,6020 @@
+import SwiftUI
+import DaiJishowCore
+// Pure morphology core (PitchAccentContour, InflectionForm, KanaNormalizer) lives
+// in the DaiJishowMorph library so it can be unit-tested.
+import DaiJishowMorph
+#if os(macOS)
+import AppKit
+#endif
+
+// MARK: - Glass Surface Primitive
+
+enum CardSurfaceStyle {
+    case glass
+    case content
+}
+
+struct GlassCard<Content: View>: View {
+    var cornerRadius: CGFloat = 20
+    var highlightOpacity: Double = 0.28
+    var surface: CardSurfaceStyle = .glass
+    @ViewBuilder var content: () -> Content
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        let highContrast = (contrast == .increased)
+        let borderWidth: CGFloat = highContrast ? 1.35 : 1.0
+        content()
+            .background {
+                if surface == .content {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(DJTheme.contentCardFill(for: colorScheme, reduceTransparency: reduceTransparency, highContrast: highContrast))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                                .strokeBorder(
+                                    LinearGradient(
+                                        colors: [
+                                            DJTheme.hairlineColor(for: colorScheme, baseOpacity: highlightOpacity * 0.65, highContrast: highContrast),
+                                            DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.08, highContrast: highContrast)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    lineWidth: borderWidth
+                                )
+                        }
+                } else {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(reduceTransparency ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme)) : AnyShapeStyle(.ultraThinMaterial))
+                        .overlay {
+                            if !reduceTransparency {
+                                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                                    .fill(DJTheme.glassSheenGradient(for: colorScheme))
+                            }
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                                .strokeBorder(
+                                    LinearGradient(
+                                        colors: [
+                                            DJTheme.hairlineColor(for: colorScheme, baseOpacity: highlightOpacity, highContrast: highContrast),
+                                            DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.08, highContrast: highContrast)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    lineWidth: borderWidth
+                                )
+                        }
+                }
+            }
+            .shadow(
+                color: Color.black.opacity(colorScheme == .dark ? (surface == .content ? 0.20 : 0.28) : (surface == .content ? 0.08 : 0.14)),
+                radius: surface == .content ? 12 : 18,
+                x: 0,
+                y: surface == .content ? 5 : 8
+            )
+    }
+}
+
+// MARK: - Ruby Text Layout (Furigana Above Kanji)
+
+struct RubyWordView: View {
+    let cells: [RubyCell]
+    let hideKana: Bool
+    let fontSize: CGFloat
+    var onTapKanji: ((UInt32) -> Void)?
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(cells) { cell in
+                let cellView = VStack(spacing: 1) {
+                    Text(hideKana || cell.furigana.isEmpty ? " " : cell.furigana)
+                        .font(.system(size: max(11, fontSize * 0.30), weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .opacity(hideKana || cell.furigana.isEmpty ? 0 : 0.95)
+                        .lineLimit(1)
+                        .fixedSize()
+
+                    Text(cell.surface)
+                        .font(.system(size: fontSize, weight: .bold))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, cell.kanjiCodepoint > 0 ? 3 : 0)
+                        .background {
+                            if cell.kanjiCodepoint > 0 {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.primary.opacity(0.07))
+                            }
+                        }
+                }
+                .contentShape(Rectangle())
+
+                if cell.kanjiCodepoint > 0, let onTapKanji {
+                    Button {
+                        onTapKanji(cell.kanjiCodepoint)
+                    } label: {
+                        cellView
+                    }
+                    .buttonStyle(.plain)
+                    .djAccessibleControl(
+                        label: cell.furigana.isEmpty || hideKana ? cell.surface : "\(cell.surface), reading \(cell.furigana)",
+                        hint: "Open kanji detail for \(cell.surface)"
+                    )
+                } else {
+                    cellView
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Z-Stack Coverflow History Overlay (Scaled Live Previews + Smooth Focus)
+
+struct ZStackHistoryOverlay: View {
+    @ObservedObject var engine: DaiJishowEngine
+    @State private var dragDelta: CGFloat = 0
+    @State private var scrollAccumulator: CGFloat = 0
+    @State private var scrollMonitor: Any?
+    @FocusState private var deckFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private let baseCardWidth: CGFloat = 860
+    private let baseCardHeight: CGFloat = 540
+
+    var body: some View {
+        ZStack {
+            Group {
+                if reduceTransparency {
+                    Color.black.opacity(0.86)
+                } else {
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .background(Color.black.opacity(0.62))
+                }
+            }
+            .ignoresSafeArea()
+            .onTapGesture {
+                djWithAnimation(reduceMotion, .spring(response: 0.30, dampingFraction: 0.85)) {
+                    engine.isZStackOpen = false
+                }
+            }
+
+            VStack(spacing: 14) {
+                HStack(spacing: 14) {
+                    Label("Navigation Deck", systemImage: "square.stack.3d.down.right")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.white)
+
+                    if !engine.history.isEmpty {
+                        Text("\(engine.zStackFocusedIndex + 1) of \(engine.history.count)")
+                            .font(.caption.monospacedDigit().weight(.medium))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.primary.opacity(0.12)))
+                    }
+
+                    Spacer()
+
+                    Text("← / → or Scroll • Enter to Open • Esc to Close")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.65))
+
+                    Button {
+                        djWithAnimation(reduceMotion, .spring(response: 0.28, dampingFraction: 0.86)) {
+                            engine.isZStackOpen = false
+                        }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.white.opacity(0.82))
+                    }
+                    .buttonStyle(.plain)
+                    .djAccessibleControl(label: "Close navigation deck", hint: "Press Escape or click to return")
+                }
+                .padding(.horizontal, 36)
+                .padding(.top, 20)
+
+                if engine.history.isEmpty {
+                    Spacer()
+                    Text("No history entries yet. Explore a Kanji or Word first.")
+                        .foregroundStyle(.white.opacity(0.7))
+                    Spacer()
+                } else {
+                    GeometryReader { geo in
+                        let availW = max(320, geo.size.width - 80)
+                        let availH = max(240, geo.size.height - 28)
+                        let cardScale = min(availW / baseCardWidth, availH / baseCardHeight, 0.92)
+                        let cardW = baseCardWidth * cardScale
+                        let cardH = baseCardHeight * cardScale
+                        let stepSpacing = min(145, cardW * 0.24)
+                        let focused = CGFloat(engine.zStackFocusedIndex) - (dragDelta / max(80, stepSpacing))
+
+                        ZStack {
+                            ForEach(Array(engine.history.enumerated()), id: \.element.id) { idx, item in
+                                let rel = CGFloat(idx) - focused
+                                let absRel = abs(rel)
+
+                                if absRel <= 5.5 {
+                                    let depthScale = max(0.56, 1.0 - absRel * 0.115)
+                                    let xOffset = rel * stepSpacing + (rel > 0 ? 18 : (rel < 0 ? -18 : 0))
+                                    let yOffset = absRel * 10
+                                    let yawDegrees = reduceMotion ? 0 : Double(max(-36, min(36, -rel * 16)))
+                                    let cardOpacity = max(0.0, 1.0 - Double(absRel) * 0.21)
+                                    let isFocused = (idx == engine.zStackFocusedIndex)
+
+                                    ZStackScreenSnapshotCard(
+                                        engine: engine,
+                                        item: item,
+                                        index: idx,
+                                        isActiveCurrent: idx == engine.historyIndex,
+                                        isFocused: isFocused,
+                                        renderScale: cardScale,
+                                        baseWidth: baseCardWidth,
+                                        baseHeight: baseCardHeight
+                                    )
+                                    .frame(width: cardW, height: cardH)
+                                    .scaleEffect(depthScale)
+                                    .rotation3DEffect(
+                                        .degrees(yawDegrees),
+                                        axis: (x: 0, y: 1, z: 0),
+                                        perspective: 0.55
+                                    )
+                                    .offset(x: xOffset, y: yOffset)
+                                    .opacity(cardOpacity)
+                                    .zIndex(100 - Double(absRel) * 10)
+                                    .focusable(interactions: .activate)
+                                    .djAccessibleControl(
+                                        label: "\(item.label), \(item.subtitle)",
+                                        hint: isFocused ? "Open this history screen" : "Focus this history screen",
+                                        selected: isFocused,
+                                        isButton: true
+                                    )
+                                    .onTapGesture {
+                                        if isFocused {
+                                            djWithAnimation(reduceMotion, .spring(response: 0.30, dampingFraction: 0.85)) {
+                                                engine.jumpToHistory(index: idx)
+                                            }
+                                        } else {
+                                            djWithAnimation(reduceMotion, .interactiveSpring(response: 0.28, dampingFraction: 0.82)) {
+                                                engine.zStackFocusedIndex = idx
+                                                engine.ensureHistorySnapshot(at: idx)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 8)
+                                .onChanged { value in
+                                    dragDelta = value.translation.width
+                                }
+                                .onEnded { value in
+                                    let predicted = value.predictedEndTranslation.width
+                                    let steps = Int((-predicted / max(80, stepSpacing)).rounded())
+                                    withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.82)) {
+                                        dragDelta = 0
+                                        if steps != 0 {
+                                            engine.stepZStack(by: steps)
+                                        }
+                                    }
+                                }
+                        )
+                    }
+
+                    DJGlassContainer(spacing: 20) {
+                        HStack(spacing: 20) {
+                            Button {
+                                djWithAnimation(reduceMotion, .interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
+                                    engine.stepZStack(by: -1)
+                                }
+                            } label: {
+                                Label("Previous", systemImage: "chevron.left")
+                                    .font(.subheadline.weight(.medium))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .djGlassCapsule(interactive: true)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(engine.zStackFocusedIndex <= 0)
+                            .opacity(engine.zStackFocusedIndex <= 0 ? 0.4 : 1)
+                            .djAccessibleControl(label: "Previous card")
+
+                            Button {
+                                djWithAnimation(reduceMotion, .spring(response: 0.30, dampingFraction: 0.85)) {
+                                    engine.jumpToHistory(index: engine.zStackFocusedIndex)
+                                }
+                            } label: {
+                                Label("Open Selected Card", systemImage: "arrow.up.forward.app.fill")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 9)
+                                    .background(Capsule().fill(Color.accentColor))
+                            }
+                            .buttonStyle(.plain)
+                            .djAccessibleControl(label: "Open selected card")
+
+                            Button {
+                                djWithAnimation(reduceMotion, .interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
+                                    engine.stepZStack(by: 1)
+                                }
+                            } label: {
+                                Label("Next", systemImage: "chevron.right")
+                                    .font(.subheadline.weight(.medium))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .djGlassCapsule(interactive: true)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(engine.zStackFocusedIndex + 1 >= engine.history.count)
+                            .opacity(engine.zStackFocusedIndex + 1 >= engine.history.count ? 0.4 : 1)
+                            .djAccessibleControl(label: "Next card")
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.bottom, 22)
+                }
+            }
+        }
+        .focusable()
+        .focused($deckFocused)
+        .onAppear {
+            deckFocused = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                deckFocused = true
+            }
+            #if os(macOS)
+            if scrollMonitor == nil {
+                scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+                    guard engine.isZStackOpen else { return event }
+                    let primary = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+                        ? event.scrollingDeltaX
+                        : event.scrollingDeltaY
+                    scrollAccumulator += primary
+                    let threshold: CGFloat = event.hasPreciseScrollingDeltas ? 36 : 1
+                    if abs(scrollAccumulator) >= threshold {
+                        let dir = scrollAccumulator > 0 ? -1 : 1
+                        scrollAccumulator = 0
+                        withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.82)) {
+                            engine.stepZStack(by: dir)
+                        }
+                    }
+                    if event.phase == .ended || event.phase == .cancelled {
+                        scrollAccumulator = 0
+                    }
+                    return nil
+                }
+            }
+            #endif
+        }
+        .onDisappear {
+            #if os(macOS)
+            if let monitor = scrollMonitor {
+                NSEvent.removeMonitor(monitor)
+                scrollMonitor = nil
+            }
+            #endif
+        }
+    }
+}
+
+private struct ZStackScreenSnapshotCard: View {
+    @ObservedObject var engine: DaiJishowEngine
+    let item: NavBreadcrumb
+    let index: Int
+    let isActiveCurrent: Bool
+    let isFocused: Bool
+    let renderScale: CGFloat
+    let baseWidth: CGFloat
+    let baseHeight: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        let highContrast = (contrast == .increased)
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: iconForKind(item.kind))
+                    .foregroundStyle(isFocused ? Color.accentColor : Color.secondary)
+                Text(item.label)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text("•")
+                    .foregroundStyle(.tertiary)
+                Text(item.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                if isActiveCurrent {
+                    Text("Current")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.85)))
+                        .foregroundStyle(.white)
+                }
+                Text("#\(index + 1)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(DJTheme.contentCardFill(for: colorScheme, reduceTransparency: reduceTransparency, highContrast: highContrast))
+
+            ZStack {
+                DJTheme.workspaceBackground(for: colorScheme, reduceTransparency: reduceTransparency, highContrast: highContrast)
+
+                snapshotContent
+                    .frame(width: baseWidth, height: baseHeight - 40)
+                    .scaleEffect(renderScale, anchor: .center)
+                    .allowsHitTesting(false)
+            }
+            .clipped()
+        }
+        .background(DJTheme.solidGlassFallbackFill(for: colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(
+                    isFocused ? Color.accentColor.opacity(0.95) : DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.24, highContrast: highContrast),
+                    lineWidth: isFocused ? 2.5 : 1
+                )
+        }
+        .shadow(color: Color.black.opacity(isFocused ? 0.65 : 0.40), radius: isFocused ? 28 : 16, x: 0, y: 14)
+        .onAppear {
+            engine.ensureHistorySnapshot(at: index)
+        }
+    }
+
+    @ViewBuilder
+    private var snapshotContent: some View {
+        switch engine.snapshot(for: item) {
+        case .wordEntry(let detail):
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .bottom, spacing: 18) {
+                    RubyWordView(cells: detail.rubyCells, hideKana: false, fontSize: 64)
+                    if detail.header.pitchAccent != 255 {
+                        Text("[\(detail.header.pitchAccent)]")
+                            .font(.title2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.bottom, 10)
+                    }
+                    Spacer()
+                }
+                Divider().opacity(0.25)
+                ForEach(detail.senses.prefix(4)) { sense in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text("\(sense.id + 1).")
+                            .font(.headline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        Text(sense.enGlosses)
+                            .font(.title3)
+                            .lineLimit(2)
+                    }
+                }
+                if let firstSent = detail.sentences.first {
+                    Spacer(minLength: 4)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(firstSent.jpText)
+                            .font(.headline)
+                            .lineLimit(2)
+                        Text(firstSent.enText)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.06)))
+                }
+                Spacer()
+            }
+            .padding(28)
+
+        case .kanjiDetail(let kanji):
+            HStack(spacing: 28) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(Color.primary.opacity(0.06))
+                    KanjiVectorDiagram(polylines: kanji.strokePolylines, visibleCount: kanji.strokePolylines.count)
+                        .padding(24)
+                }
+                .frame(width: 240, height: 240)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 12) {
+                        Text(kanji.glyph)
+                            .font(.system(size: 56, weight: .bold))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(kanji.meanings.isEmpty ? (kanji.specialCaseTitle ?? kanji.unicodeHex) : kanji.meanings)
+                                .font(.title2.weight(.bold))
+                                .lineLimit(2)
+                            Text(kanji.strokes > 0 ? "\(kanji.strokes) strokes • Radical #\(kanji.radicalId)" : "\(kanji.unicodeHex) • \(kanji.unicodeBlockLabel)")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if !kanji.onReadings.isEmpty {
+                        Text("On: \(kanji.onReadings.joined(separator: "、"))")
+                            .font(.headline)
+                    }
+                    if !kanji.kunReadings.isEmpty {
+                        Text("Kun: \(kanji.kunReadings.joined(separator: "、"))")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let firstWord = kanji.relatedWords.first {
+                        Text("Top Word: \(firstWord.displayHeadword) (\(firstWord.kanaHead)) — \(firstWord.primaryGloss)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                }
+                Spacer()
+            }
+            .padding(28)
+
+        case .fisheye(let kanji, let nodes, let leftOv, let rightOv):
+            GeometryReader { g in
+                let w = g.size.width
+                let h = g.size.height
+                let cx = w * 0.5
+                let cy = h * 0.5
+                let nodeFontSize: CGFloat = min(28, max(16, min(w, h) * 0.048))
+
+                ZStack {
+                    ForEach(nodes) { node in
+                        let nx = cx + node.normX * (w * 0.46)
+                        let ny = cy + node.normY * (h * 0.44)
+                        Path { path in
+                            path.move(to: CGPoint(x: cx, y: cy))
+                            path.addQuadCurve(
+                                to: CGPoint(x: nx, y: ny),
+                                control: CGPoint(x: (cx + nx) * 0.5, y: cy)
+                            )
+                        }
+                        .stroke(node.tierColor.opacity(0.32), lineWidth: 1.5)
+                    }
+
+                    ForEach(nodes) { node in
+                        let nx = cx + node.normX * (w * 0.46)
+                        let ny = cy + node.normY * (h * 0.44)
+                        VStack(spacing: 1) {
+                            Text(node.glyph)
+                                .font(.system(size: nodeFontSize, weight: .bold))
+                                .foregroundStyle(.primary)
+                            Text(node.shareText)
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                                .foregroundStyle(node.tierColor)
+                        }
+                        .frame(width: nodeFontSize * 1.9, height: nodeFontSize * 1.9)
+                        .background(Circle().fill(.ultraThinMaterial))
+                        .overlay(Circle().strokeBorder(node.tierColor.opacity(0.75), lineWidth: 1.5))
+                        .scaleEffect(node.scale)
+                        .position(x: nx, y: ny)
+                    }
+
+                    VStack(spacing: 2) {
+                        Text(kanji.glyph)
+                            .font(.system(size: min(56, min(w, h) * 0.11), weight: .heavy))
+                            .foregroundStyle(.primary)
+                        Text(kanji.meanings.split(separator: ";").first.map(String.init) ?? "")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(width: 112, height: 112)
+                    .background(Circle().fill(Color.accentColor.opacity(0.24)))
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.42), lineWidth: 2))
+                    .position(x: cx, y: cy)
+
+                    if leftOv > 0 {
+                        Text("+\(leftOv) left")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.primary.opacity(0.14)))
+                            .position(x: 68, y: h - 26)
+                    }
+                    if rightOv > 0 {
+                        Text("+\(rightOv) right")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.primary.opacity(0.14)))
+                            .position(x: w - 68, y: h - 26)
+                    }
+                }
+            }
+
+        case .radicalBuilder(let sel, let strokes, let matches):
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 12) {
+                    Text("7-Slot Radical Builder")
+                        .font(.title2.weight(.bold))
+                    if strokes > 0 {
+                        Text("• \(strokes) strokes")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                HStack(spacing: 12) {
+                    ForEach(0..<7, id: \.self) { idx in
+                        let isFilled = idx < sel.count
+                        Text(isFilled ? RadicalCatalog.glyph(for: sel[idx]) : "＋")
+                            .font(.system(size: 28, weight: .bold))
+                            .frame(width: 56, height: 56)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(isFilled ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.06)))
+                    }
+                }
+                Text("\(matches.count) Matching Kanji")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 54))], spacing: 10) {
+                    ForEach(matches.prefix(24), id: \.self) { cp in
+                        Text(String(UnicodeScalar(cp)!))
+                            .font(.system(size: 26, weight: .semibold))
+                            .frame(width: 52, height: 52)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
+                    }
+                }
+                Spacer()
+            }
+            .padding(28)
+
+        case .kanjiLookup(let mode, let strokeCount, let sortOrder, let results):
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 12) {
+                    Text("Kanji Index")
+                        .font(.title2.weight(.bold))
+                    Text("• \(mode.rawValue) • \(sortOrder.rawValue)")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                    if mode == .strokes {
+                        Text("(\(strokeCount) strokes)")
+                            .font(.headline)
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+                Text("\(results.count) Indexed Kanji")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 64))], spacing: 10) {
+                    ForEach(results.prefix(24)) { item in
+                        VStack(spacing: 2) {
+                            Text(item.glyph)
+                                .font(.system(size: 28, weight: .bold))
+                            Text("\(item.strokes)画")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(width: 62, height: 62)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
+                    }
+                }
+                Spacer()
+            }
+            .padding(28)
+
+        case .wordCosmos(let words, let tier, let layout, let colorMode):
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 12) {
+                    Text("Word Cloud")
+                        .font(.title2.weight(.bold))
+                    Text("• \(tier.label) • \(layout.label) • \(colorMode.label)")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                }
+                Text("\(words.count) Sampled Words")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 110))], spacing: 10) {
+                    ForEach(words.prefix(12)) { word in
+                        VStack(spacing: 2) {
+                            Text(word.displayHeadword)
+                                .font(.headline.weight(.bold))
+                                .lineLimit(1)
+                            if !word.kanaHead.isEmpty {
+                                Text(word.kanaHead)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
+                    }
+                }
+                Spacer()
+            }
+            .padding(28)
+
+        case .compoundWord(let entryId):
+            if let detail = engine.fetchEntryDetail(entryId) {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "square.split.2x2.fill")
+                            .font(.title2)
+                            .foregroundStyle(Color.accentColor)
+                        Text("Compound Kanji Breakdown")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                    }
+                    RubyWordView(cells: detail.rubyCells, hideKana: false, fontSize: 54)
+                    Text(detail.header.primaryGloss)
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Spacer()
+                }
+                .padding(28)
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: "square.split.2x2.fill")
+                        .font(.system(size: 34, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                    Text(item.label)
+                        .font(.system(size: 52, weight: .bold))
+                    Text("Compound Kanji")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+        case .studyLibrary(let deckCount, let itemCount):
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 12) {
+                    Image(systemName: "star.square.on.square.fill")
+                        .font(.title2)
+                        .foregroundStyle(Color.yellow)
+                    Text("Saved Study Decks")
+                        .font(.title2.weight(.bold))
+                }
+                Text("\(deckCount) \(deckCount == 1 ? "deck" : "decks") • \(itemCount) saved items")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                if let items = engine.studyStore.decks.first?.items, !items.isEmpty {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 140))], spacing: 10) {
+                        ForEach(items.prefix(8)) { saved in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(saved.headword)
+                                    .font(.headline.weight(.bold))
+                                Text(saved.gloss)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
+                        }
+                    }
+                }
+                Spacer()
+            }
+            .padding(28)
+
+        case .none:
+            VStack(spacing: 10) {
+                Text(item.label)
+                    .font(.system(size: 54, weight: .bold))
+                Text(item.subtitle)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func iconForKind(_ kind: ActiveScreenKind) -> String {
+        switch kind {
+        case .fisheye: return "circle.hexagongrid.fill"
+        case .wordEntry: return "text.book.closed.fill"
+        case .kanjiDetail: return "character.book.closed.fill"
+        case .radicalBuilder: return "puzzlepiece.extension.fill"
+        case .kanjiLookup: return "list.bullet.rectangle.portrait.fill"
+        case .wordCosmos: return "sparkles"
+        case .compoundKanji: return "square.split.2x2.fill"
+        case .studyLibrary: return "star.square.on.square.fill"
+        }
+    }
+}
+
+// MARK: - Fisheye Kanji Graph View (Adaptive Sizing + Interactive Hover & Selection)
+
+// MARK: - Fisheye Kanji Graph View (Adaptive Sizing + Interactive Hover & Escalating Overflow Fan)
+
+private struct OverflowPlacedBubble: Identifiable {
+    let node: FisheyeNode
+    let pos: CGPoint
+    var id: String { node.id }
+}
+
+private struct OverflowFanLayout {
+    let placed: [OverflowPlacedBubble]
+    let maxRadius: CGFloat
+    let totalAvailable: Int
+}
+
+struct FisheyeGraphView: View {
+    @ObservedObject var engine: DaiJishowEngine
+    @State private var focusPoint: CGPoint?
+    @State private var expandedOverflowSide: UInt8?
+    @State private var overflowStage: Int = 0
+    @State private var overflowPinnedByTap: Bool = false
+    @State private var overflowPointerPos: CGPoint?
+    @State private var hoveredOverflowPos: CGPoint?
+    @State private var peekCenterGloss: Bool = false
+    @State private var controlsHeight: CGFloat = 46
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var activeInspectorNode: FisheyeNode? {
+        engine.hoveredFisheyeNode ?? engine.selectedFisheyeNode
+    }
+
+    private func tierStrokeStyle(for tier: UInt8, highlighted: Bool) -> StrokeStyle {
+        let w: CGFloat = highlighted ? 2.8 : (tier == 0 ? 2.0 : 1.5)
+        switch tier {
+        case 2:
+            return StrokeStyle(lineWidth: w, dash: [4, 2.5])
+        case 3...:
+            return StrokeStyle(lineWidth: w, dash: [2, 2.5])
+        default:
+            return StrokeStyle(lineWidth: w)
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let minDim = min(w, h)
+            let cx = w * 0.5
+            let cy = h * 0.5
+            let aspectRatio = Float(max(0.5, w / max(1.0, h)))
+
+            let highContrast = (contrast == .increased)
+            let centerDiameter: CGFloat = min(132, max(88, minDim * 0.165))
+            let centerGlyphSize: CGFloat = centerDiameter * 0.48
+            let nodeDiameter: CGFloat = min(56, max(36, minDim * 0.068))
+            let nodeGlyphSize: CGFloat = nodeDiameter * 0.48
+            let nodePctSize: CGFloat = max(10, nodeDiameter * 0.20)
+
+            let leftAnchor = CGPoint(x: 54, y: h - 50)
+            let rightAnchor = CGPoint(x: w - 54, y: h - 50)
+            let isFanOpen = (expandedOverflowSide != nil && overflowStage > 0)
+
+            let activeFan: OverflowFanLayout? = {
+                guard let side = expandedOverflowSide, overflowStage > 0 else { return nil }
+                let anchor = (side == 0) ? leftAnchor : rightAnchor
+                return computeOverflowFan(side: side, stage: overflowStage, anchor: anchor)
+            }()
+
+            ZStack {
+                // Background radial connections
+                ForEach(engine.fisheyeNodes) { node in
+                    let nx = cx + node.normX * (w * 0.455)
+                    let ny = cy + node.normY * (h * 0.435)
+                    let isHighlighted = !isFanOpen && activeInspectorNode?.id == node.id
+
+                    Path { path in
+                        path.move(to: CGPoint(x: cx, y: cy))
+                        path.addQuadCurve(
+                            to: CGPoint(x: nx, y: ny),
+                            control: CGPoint(x: (cx + nx) * 0.5, y: cy)
+                        )
+                    }
+                    .stroke(
+                        node.tierColor.opacity(isFanOpen ? 0.05 : (isHighlighted ? 0.85 : 0.30 * node.opacity)),
+                        lineWidth: isHighlighted ? 2.6 : 1.5
+                    )
+                }
+
+                // Normal fisheye nodes
+                ForEach(engine.fisheyeNodes) { node in
+                    let nx = cx + node.normX * (w * 0.455)
+                    let ny = cy + node.normY * (h * 0.435)
+                    let isHighlighted = !isFanOpen && activeInspectorNode?.id == node.id
+
+                    Button {
+                        if engine.selectedFisheyeNode?.id == node.id {
+                            engine.openFisheye(codepoint: node.codepoint, recordHistory: true)
+                        } else {
+                            djWithAnimation(reduceMotion, .spring(response: 0.25, dampingFraction: 0.8)) {
+                                engine.selectedFisheyeNode = node
+                            }
+                        }
+                    } label: {
+                        VStack(spacing: 1) {
+                            Text(node.glyph)
+                                .font(.system(size: nodeGlyphSize, weight: .bold))
+                                .foregroundStyle(.primary)
+
+                            if engine.showFisheyePercentages {
+                                Text(node.shareText)
+                                    .font(.system(size: nodePctSize, weight: .bold, design: .rounded))
+                                    .foregroundStyle(node.tierColor)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .frame(width: nodeDiameter, height: nodeDiameter)
+                        .background {
+                            Circle()
+                                .fill(reduceTransparency ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme)) : AnyShapeStyle(.ultraThinMaterial))
+                                .overlay(
+                                    Circle()
+                                        .fill(isHighlighted ? node.tierColor.opacity(0.24) : Color.clear)
+                                )
+                                .overlay(
+                                    Circle()
+                                        .strokeBorder(
+                                            node.tierColor.opacity(isHighlighted ? 1.0 : 0.72),
+                                            style: tierStrokeStyle(for: node.commonalityTier, highlighted: isHighlighted)
+                                        )
+                                )
+                        }
+                        .shadow(color: node.tierColor.opacity(isHighlighted ? 0.45 : 0.16), radius: isHighlighted ? 14 : 8)
+                    }
+                    .buttonStyle(.plain)
+                    .djAccessibleControl(
+                        label: "\(node.glyph), \(node.tierLabel), \(node.shareText)",
+                        hint: engine.selectedFisheyeNode?.id == node.id ? "Re-center graph on \(node.glyph)" : "Select \(node.glyph) to inspect",
+                        value: node.compoundWord.isEmpty ? nil : node.compoundWord,
+                        selected: engine.selectedFisheyeNode?.id == node.id
+                    )
+                    .scaleEffect(node.scale * (isHighlighted ? 1.12 : 1.0))
+                    .opacity(isFanOpen ? 0.12 : node.opacity)
+                    .allowsHitTesting(!isFanOpen)
+                    .position(x: nx, y: ny)
+                }
+
+                // Center Kanji glyph
+                if let kanji = engine.activeKanji {
+                    let hideCenterGloss = (engine.recallMode == .hideGloss && !peekCenterGloss)
+                    Button {
+                        if isFanOpen {
+                            collapseOverflow()
+                        } else {
+                            engine.openKanjiDetail(codepoint: kanji.codepoint)
+                        }
+                    } label: {
+                        VStack(spacing: 2) {
+                            Text(kanji.glyph)
+                                .font(.system(size: centerGlyphSize, weight: .heavy))
+                                .foregroundStyle(.primary)
+                            if hideCenterGloss {
+                                Text("•••")
+                                    .font(.system(size: max(10, centerDiameter * 0.095), weight: .bold))
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text(kanji.meanings.split(separator: ";").first.map(String.init) ?? "")
+                                    .font(.system(size: max(10, centerDiameter * 0.095), weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 8)
+                            }
+                        }
+                        .frame(width: centerDiameter, height: centerDiameter)
+                        .background {
+                            Circle()
+                                .fill(reduceTransparency ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme)) : AnyShapeStyle(.regularMaterial))
+                                .overlay {
+                                    Circle()
+                                        .strokeBorder(
+                                            LinearGradient(
+                                                colors: [
+                                                    DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.48, highContrast: highContrast),
+                                                    DJTheme.hairlineColor(for: colorScheme, baseOpacity: 0.12, highContrast: highContrast)
+                                                ],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            ),
+                                            lineWidth: highContrast ? 2.4 : 2
+                                        )
+                                }
+                        }
+                        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.32 : 0.14), radius: 22, x: 0, y: 10)
+                    }
+                    .buttonStyle(.plain)
+                    .djAccessibleControl(
+                        label: "Center kanji \(kanji.glyph)",
+                        hint: isFanOpen ? "Collapse overflow fan" : "Open kanji detail for \(kanji.glyph)"
+                    )
+                    .position(x: cx, y: cy)
+                    .zIndex(15)
+                }
+
+                // Subtle center dividing guide line
+                Path { p in
+                    p.move(to: CGPoint(x: cx, y: controlsHeight + 26))
+                    p.addLine(to: CGPoint(x: cx, y: h - 56))
+                }
+                .stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 6]))
+                .foregroundStyle(Color.primary.opacity(0.14))
+
+                // Faint directional hints (← PREFIX + CENTER and CENTER + SUFFIX →)
+                HStack {
+                    Text("← PREFIX + CENTER")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Color.primary.opacity(0.45))
+                    Spacer()
+                    Text("CENTER + SUFFIX →")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Color.primary.opacity(0.45))
+                }
+                .padding(.horizontal, 28)
+                .padding(.top, controlsHeight + 24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+                // Overflow Fan-out bubbles
+                if let fan = activeFan {
+                    ForEach(fan.placed) { item in
+                        let sub = item.node
+                        let dockScale: CGFloat = {
+                            guard let pt = overflowPointerPos else { return 0.94 }
+                            let dist = hypot(item.pos.x - pt.x, item.pos.y - pt.y)
+                            let radius: CGFloat = 76.0
+                            if dist < radius {
+                                let t = cos((dist / radius) * (.pi / 2.0))
+                                return 1.0 + 0.46 * t * t
+                            } else {
+                                return 0.90
+                            }
+                        }()
+
+                        let baseSize: CGFloat = engine.showFisheyePercentages ? 42.0 : 36.0
+                        let diam = baseSize * dockScale
+                        let isSelected = engine.selectedFisheyeNode?.id == sub.id
+                        let isHov = engine.hoveredFisheyeNode?.id == sub.id
+                        let active = isSelected || isHov
+
+                        Button {
+                            if isSelected {
+                                engine.openFisheye(codepoint: sub.codepoint, recordHistory: true)
+                            } else {
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                    engine.selectedFisheyeNode = sub
+                                }
+                            }
+                        } label: {
+                            VStack(spacing: 0) {
+                                Text(sub.glyph)
+                                    .font(.system(size: 15.0 * dockScale, weight: active ? .bold : .semibold))
+                                    .foregroundStyle(.primary)
+                                if engine.showFisheyePercentages {
+                                    Text(sub.shareText)
+                                        .font(.system(size: max(10, 8.5 * dockScale), weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(sub.tierColor)
+                                }
+                            }
+                            .frame(width: diam, height: diam)
+                            .background {
+                                Circle()
+                                    .fill(reduceTransparency ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme)) : AnyShapeStyle(.ultraThinMaterial))
+                                    .overlay(Circle().fill(sub.tierColor.opacity(active ? 0.36 : 0.18)))
+                                    .overlay(
+                                        Circle().strokeBorder(
+                                            active ? Color.primary : sub.tierColor.opacity(0.85),
+                                            style: tierStrokeStyle(for: sub.commonalityTier, highlighted: active)
+                                        )
+                                    )
+                            }
+                            .shadow(color: active ? sub.tierColor.opacity(0.55) : Color.black.opacity(colorScheme == .dark ? 0.35 : 0.14), radius: 8)
+                        }
+                        .buttonStyle(.plain)
+                        .djAccessibleControl(
+                            label: "\(sub.glyph), \(sub.tierLabel), \(sub.shareText)",
+                            hint: isSelected ? "Re-center graph on \(sub.glyph)" : "Select \(sub.glyph) to inspect",
+                            selected: isSelected
+                        )
+                        .frame(width: diam, height: diam)
+                        .contentShape(Circle())
+                        .position(item.pos)
+                        .zIndex(25.0 + Double(dockScale * 10.0))
+                        .transition(.scale(scale: 0.35).combined(with: .opacity))
+                    }
+                }
+
+                // Escalating overflow trigger buttons
+                if engine.leftOverflowCount > 0 {
+                    overflowTriggerButton(
+                        side: 0,
+                        totalOverflow: engine.leftOverflowCount,
+                        shownCount: expandedOverflowSide == 0 ? (activeFan?.placed.count ?? 0) : 0,
+                        anchor: leftAnchor
+                    )
+                }
+
+                if engine.rightOverflowCount > 0 {
+                    overflowTriggerButton(
+                        side: 1,
+                        totalOverflow: engine.rightOverflowCount,
+                        shownCount: expandedOverflowSide == 1 ? (activeFan?.placed.count ?? 0) : 0,
+                        anchor: rightAnchor
+                    )
+                }
+
+                // Overlaid controls and bottom inspector card
+                VStack {
+                    WrappingHStack(alignment: .center, horizontalSpacing: 12, verticalSpacing: 8) {
+                        let modePicker = Picker("Graph Mode", selection: $engine.fisheyeMode) {
+                            Text("Compounds").tag(DJ_EDGE_COMPOUNDS)
+                            Text("Yojijukugo").tag(DJ_EDGE_YOJIJUKUGO)
+                            Text("Components").tag(DJ_EDGE_COMPONENTS)
+                        }
+                        .pickerStyle(.segmented)
+                        .fixedSize()
+                        .onChange(of: engine.fisheyeMode) { _, _ in
+                            collapseOverflow()
+                            if let cp = engine.activeKanji?.codepoint {
+                                engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: aspectRatio)
+                            }
+                        }
+
+                        if w < 1100 {
+                            modePicker.labelsHidden().accessibilityLabel("Graph Mode")
+                        } else {
+                            modePicker
+                        }
+
+                        DJGlassContainer(spacing: 10) {
+                            Menu {
+                                ForEach([6, 10, 12, 16, 24], id: \.self) { count in
+                                    Button("Show Top \(count) per side") {
+                                        collapseOverflow()
+                                        engine.maxFisheyePerSide = count
+                                        if let cp = engine.activeKanji?.codepoint {
+                                            engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: aspectRatio)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Label("Top \(engine.maxFisheyePerSide)/side", systemImage: "slider.horizontal.3")
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 10)
+                                    .frame(height: 26)
+                                    .djGlassCapsule(interactive: true)
+                            }
+                            .menuStyle(.borderlessButton)
+                            .fixedSize()
+                            .help("Top-N per side — how many neighbor kanji to show on each side of the center kanji. More = fuller graph; fewer = calmer view.")
+
+                            Button {
+                                engine.showFisheyePercentages.toggle()
+                            } label: {
+                                Label("% Share", systemImage: engine.showFisheyePercentages ? "percent" : "circle")
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 10)
+                                    .frame(height: 26)
+                                    .djGlassCapsule(
+                                        interactive: true,
+                                        tint: engine.showFisheyePercentages ? Color.accentColor : nil
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .fixedSize()
+                            .djAccessibleControl(
+                                label: "Show Percentage Share",
+                                value: engine.showFisheyePercentages ? "On" : "Off",
+                                selected: engine.showFisheyePercentages
+                            )
+                            .help("Toggle % Share — show each node's share of the center kanji's compound frequency in addition to its commonality tier color.")
+
+                            if let kanji = engine.activeKanji {
+                                BookmarkDeckControl(
+                                    engine: engine,
+                                    studyStore: engine.studyStore,
+                                    item: engine.studyItem(for: kanji),
+                                    compact: true
+                                )
+                            }
+
+                            HStack(spacing: 12) {
+                                legendDot(color: Color(red: 0.22, green: 0.74, blue: 0.97), label: "Core",
+                                          help: "Core kanji — overall frequency rank ≤ 2,500. Solid thick ring.")
+                                legendDot(color: Color(red: 0.20, green: 0.83, blue: 0.60), label: "Jōyō",
+                                          help: "Jōyō kanji — overall frequency rank ≤ 12,000. Solid ring.")
+                                legendDot(color: Color(red: 0.98, green: 0.75, blue: 0.14), label: "Literary",
+                                          help: "Literary kanji — overall frequency rank > 12,000. Dashed ring.")
+                                legendDot(color: Color(red: 0.65, green: 0.55, blue: 0.98), label: "Kyūjitai",
+                                          help: "Kyūjitai / non-Jōyō — ungraded legacy characters. Dotted ring.")
+                            }
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .frame(height: 26)
+                            .djGlassCapsule()
+                            .fixedSize()
+                        }
+                    }
+                    .frame(maxWidth: max(1, w - 32))
+                    .background(
+                        GeometryReader { barGeo in
+                            Color.clear
+                                .onAppear { controlsHeight = barGeo.size.height }
+                                .onChange(of: barGeo.size.height) { _, newH in controlsHeight = newH }
+                        }
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+
+                    Spacer()
+
+                    HStack(alignment: .bottom, spacing: 14) {
+                        Spacer()
+
+                        if let active = activeInspectorNode {
+                            GlassCard(cornerRadius: 18) {
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack(spacing: 8) {
+                                            Text(active.compoundWord.isEmpty ? active.glyph : active.compoundWord)
+                                                .font(.title3.weight(.bold))
+                                                .lineLimit(1)
+                                            if !active.compoundKana.isEmpty && engine.recallMode != .hideKana {
+                                                Text("(\(active.compoundKana))")
+                                                    .font(.subheadline)
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(1)
+                                            }
+                                            Text("\(active.tierLabel) • \(active.shareText)")
+                                                .font(.caption2.weight(.bold))
+                                                .padding(.horizontal, 7)
+                                                .padding(.vertical, 2)
+                                                .background(Capsule().fill(active.tierColor.opacity(0.22)))
+                                                .foregroundStyle(active.tierColor)
+                                                .fixedSize()
+                                        }
+                                        if engine.recallMode != .hideGloss {
+                                            Text(active.compoundGloss.isEmpty ? "Tap to inspect kanji or word entry" : active.compoundGloss)
+                                                .font(.callout)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                    }
+
+                                    let speakTarget = active.compoundKana.isEmpty ? active.glyph : active.compoundKana
+                                    SpeakerButton(text: speakTarget, variant: .compact, extraHelp: "Hear compound reading aloud")
+                                        .fixedSize()
+
+                                    if active.topEntryId > 0 {
+                                        Button {
+                                            engine.openWordEntry(entryId: active.topEntryId)
+                                        } label: {
+                                            Label("Word", systemImage: "book.fill")
+                                                .font(.subheadline.weight(.semibold))
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 7)
+                                                .background(Capsule().fill(Color.accentColor))
+                                                .foregroundStyle(.white)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .fixedSize()
+                                    }
+
+                                    Button {
+                                        engine.openKanjiDetail(codepoint: active.codepoint)
+                                    } label: {
+                                        Label("Kanji", systemImage: "character.book.closed")
+                                            .font(.subheadline.weight(.semibold))
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 7)
+                                            .background(Capsule().fill(Color.primary.opacity(0.14)))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .fixedSize()
+
+                                    Button {
+                                        engine.openFisheye(codepoint: active.codepoint)
+                                    } label: {
+                                        Label("Re-Center", systemImage: "scope")
+                                            .font(.subheadline.weight(.semibold))
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 7)
+                                            .background(Capsule().fill(Color.primary.opacity(0.14)))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .fixedSize()
+                                }
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 11)
+                            }
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        } else {
+                            HStack(spacing: 10) {
+                                Text("Hover or drag to focus · Tap node to inspect · Tap again to re-center")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                if engine.recallMode == .hideGloss {
+                                    Button(peekCenterGloss ? "Hide Center" : "Peek Center") {
+                                        peekCenterGloss.toggle()
+                                    }
+                                    .font(.caption.weight(.semibold))
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(Color.accentColor)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .djGlassCapsule()
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 84)
+                    .padding(.bottom, 16)
+                }
+            }
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { value in
+                        guard let cp = engine.activeKanji?.codepoint else { return }
+                        let loc = value.location
+                        let fx = Float((loc.x - cx) / max(1.0, w * 0.5))
+                        let fy = Float((loc.y - cy) / max(1.0, h * 0.5))
+                        focusPoint = loc
+                        engine.solveFisheye(center: cp, hasFocus: true, focusX: fx, focusY: fy, aspectRatio: aspectRatio, animated: false)
+                    }
+                    .onEnded { _ in
+                        guard let cp = engine.activeKanji?.codepoint else { return }
+                        focusPoint = nil
+                        engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: aspectRatio, animated: true)
+                    }
+            )
+            .onContinuousHover { phase in
+                guard let cp = engine.activeKanji?.codepoint else { return }
+                switch phase {
+                case .active(let loc):
+                    let nearLeftTrigger = engine.leftOverflowCount > 0 && hypot(loc.x - leftAnchor.x, loc.y - leftAnchor.y) <= 36.0
+                    let nearRightTrigger = engine.rightOverflowCount > 0 && hypot(loc.x - rightAnchor.x, loc.y - rightAnchor.y) <= 36.0
+
+                    if nearLeftTrigger || nearRightTrigger {
+                        let targetSide: UInt8 = nearLeftTrigger ? 0 : 1
+                        if expandedOverflowSide != targetSide || overflowStage == 0 {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                                expandedOverflowSide = targetSide
+                                overflowStage = 1
+                                overflowPinnedByTap = false
+                            }
+                        }
+                        overflowPointerPos = loc
+                        hoveredOverflowPos = nil
+                        if engine.hoveredFisheyeNode?.isOverflowPreview == true {
+                            engine.hoveredFisheyeNode = nil
+                        }
+                        return
+                    }
+
+                    if let activeSide = expandedOverflowSide, overflowStage > 0 {
+                        let anchor = (activeSide == 0) ? leftAnchor : rightAnchor
+                        let fan = computeOverflowFan(side: activeSide, stage: overflowStage, anchor: anchor)
+                        let distFromAnchor = hypot(loc.x - anchor.x, loc.y - anchor.y)
+                        let withinHemisphere = (activeSide == 0) ? (loc.x <= cx + 48.0) : (loc.x >= cx - 48.0)
+
+                        if withinHemisphere && distFromAnchor <= fan.maxRadius + 60.0 {
+                            overflowPointerPos = loc
+                            let baseSize: CGFloat = engine.showFisheyePercentages ? 42.0 : 36.0
+                            var bestSub: FisheyeNode?
+                            var bestPos: CGPoint?
+                            var bestDist: CGFloat = .greatestFiniteMagnitude
+
+                            for item in fan.placed {
+                                let d = hypot(item.pos.x - loc.x, item.pos.y - loc.y)
+                                let dockScale: CGFloat = d < 76.0 ? (1.0 + 0.46 * pow(cos((d / 76.0) * (.pi / 2.0)), 2)) : 0.90
+                                let hitR = (baseSize * dockScale) * 0.58
+                                if d <= hitR && d < bestDist {
+                                    bestDist = d
+                                    bestSub = item.node
+                                    bestPos = item.pos
+                                }
+                            }
+
+                            hoveredOverflowPos = bestPos
+                            if engine.hoveredFisheyeNode?.id != bestSub?.id {
+                                engine.hoveredFisheyeNode = bestSub
+                            }
+                            return
+                        } else if !overflowPinnedByTap {
+                            collapseOverflow()
+                        }
+                    }
+
+                    let fx = Float((loc.x - cx) / max(1.0, w * 0.5))
+                    let fy = Float((loc.y - cy) / max(1.0, h * 0.5))
+                    let nearCenter = hypot(Double(fx * aspectRatio), Double(fy)) < 0.12
+
+                    if nearCenter {
+                        engine.hoveredFisheyeNode = nil
+                        if focusPoint != nil {
+                            focusPoint = nil
+                            engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: aspectRatio, animated: true)
+                        }
+                    } else {
+                        let wasFocused = (focusPoint != nil)
+                        focusPoint = loc
+                        engine.solveFisheye(center: cp, hasFocus: true, focusX: fx, focusY: fy, aspectRatio: aspectRatio, animated: !wasFocused)
+
+                        var bestNode: FisheyeNode?
+                        var bestDist: CGFloat = .greatestFiniteMagnitude
+                        for node in engine.fisheyeNodes {
+                            let bx = cx + node.normX * (w * 0.455)
+                            let by = cy + node.normY * (h * 0.435)
+                            let d = hypot(loc.x - bx, loc.y - by)
+                            let hitRadius = (nodeDiameter * node.scale) * 0.60
+                            if d <= hitRadius && d < bestDist {
+                                bestDist = d
+                                bestNode = node
+                            }
+                        }
+                        if engine.hoveredFisheyeNode?.id != bestNode?.id {
+                            engine.hoveredFisheyeNode = bestNode
+                        }
+                    }
+
+                case .ended:
+                    focusPoint = nil
+                    engine.hoveredFisheyeNode = nil
+                    if !overflowPinnedByTap {
+                        collapseOverflow()
+                    }
+                    engine.solveFisheye(center: cp, hasFocus: false, focusX: 0, focusY: 0, aspectRatio: aspectRatio, animated: true)
+                }
+            }
+            .onChange(of: engine.activeKanji?.codepoint) { _, _ in
+                focusPoint = nil
+                peekCenterGloss = false
+                collapseOverflow()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func overflowTriggerButton(side: UInt8, totalOverflow: Int, shownCount: Int, anchor: CGPoint) -> some View {
+        let isExpanded = (expandedOverflowSide == side && overflowStage > 0)
+        let remaining = max(0, totalOverflow - shownCount)
+
+        Button {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.76)) {
+                if expandedOverflowSide != side || overflowStage == 0 {
+                    expandedOverflowSide = side
+                    overflowStage = 1
+                    overflowPinnedByTap = true
+                } else if overflowStage == 1 && remaining > 0 {
+                    overflowStage = 2
+                    overflowPinnedByTap = true
+                } else if overflowStage == 2 && remaining > 0 {
+                    overflowStage = 3
+                    overflowPinnedByTap = true
+                } else {
+                    expandedOverflowSide = nil
+                    overflowStage = 0
+                    overflowPinnedByTap = false
+                }
+            }
+        } label: {
+            VStack(spacing: 1) {
+                Text(!isExpanded ? "+\(totalOverflow)" : (remaining > 0 ? "+\(remaining)" : "All \(totalOverflow)"))
+                    .font(.caption.bold())
+                    .foregroundStyle(.primary)
+                Text(!isExpanded ? "more" : (remaining > 0 ? "expand" : "close"))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 52, height: 52)
+            .background(
+                Circle().fill(reduceTransparency ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme)) : AnyShapeStyle(.ultraThinMaterial))
+            )
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        Color.cyan.opacity(0.85),
+                        style: StrokeStyle(lineWidth: 1.5, dash: isExpanded ? [] : [3, 3])
+                    )
+            )
+            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.25 : 0.12), radius: 8)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Circle())
+        .djAccessibleControl(
+            label: isExpanded
+                ? (remaining > 0 ? "Expand \(side == 0 ? "prefix" : "suffix") overflow (\(remaining) left)" : "Collapse \(side == 0 ? "prefix" : "suffix") overflow")
+                : "Show \(totalOverflow) more \(side == 0 ? "prefix" : "suffix") kanji"
+        )
+        .help(!isExpanded ? "Hover or tap to expand more kanji" : (remaining > 0 ? "Tap again to expand further" : "Tap to collapse"))
+        .position(anchor)
+        .zIndex(45)
+    }
+
+    private func computeOverflowFan(side: UInt8, stage: Int, anchor: CGPoint) -> OverflowFanLayout {
+        let allItems = engine.overflowPreviewNodes.filter { $0.side == side }
+        let maxRings: Int = {
+            switch stage {
+            case 1: return 2
+            case 2: return 4
+            default: return 99
+            }
+        }()
+
+        let dir: CGFloat = (side == 0) ? 1.0 : -1.0
+        let arcSpanDeg: CGFloat = 84.0
+        let arcSpanRad: CGFloat = arcSpanDeg * .pi / 180.0
+        let minArcSpacing: CGFloat = 40.0
+
+        var rings: [[FisheyeNode]] = []
+        var cursor = 0
+        var ringIdx = 0
+        while cursor < allItems.count && ringIdx < maxRings {
+            let r = 68.0 + CGFloat(ringIdx) * 43.0
+            let cap = max(3, Int(floor((r * arcSpanRad) / minArcSpacing)))
+            let end = min(allItems.count, cursor + cap)
+            rings.append(Array(allItems[cursor..<end]))
+            cursor = end
+            ringIdx += 1
+        }
+
+        var placed: [OverflowPlacedBubble] = []
+        var outerRadius: CGFloat = 68.0
+
+        for (rIdx, ringNodes) in rings.enumerated() {
+            let r = 68.0 + CGFloat(rIdx) * 43.0
+            outerRadius = r
+            let count = ringNodes.count
+            for (i, node) in ringNodes.enumerated() {
+                let t = count <= 1 ? 0.5 : CGFloat(i) / CGFloat(count - 1)
+                let angleDeg = -86.0 + t * arcSpanDeg
+                let rad = angleDeg * .pi / 180.0
+                let pos = CGPoint(
+                    x: anchor.x + dir * cos(rad) * r,
+                    y: anchor.y + sin(rad) * r
+                )
+                placed.append(OverflowPlacedBubble(node: node, pos: pos))
+            }
+        }
+
+        return OverflowFanLayout(placed: placed, maxRadius: outerRadius, totalAvailable: allItems.count)
+    }
+
+    private func collapseOverflow() {
+        if expandedOverflowSide != nil || overflowStage != 0 || overflowPinnedByTap {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                expandedOverflowSide = nil
+                overflowStage = 0
+                overflowPinnedByTap = false
+                overflowPointerPos = nil
+                hoveredOverflowPos = nil
+            }
+        }
+    }
+
+    private func legendDot(color: Color, label: String, help: String? = nil) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(label).foregroundStyle(.secondary)
+        }
+        .help(help ?? "")
+    }
+}
+
+// MARK: - Word Cosmos View (Randomized Prevalence Bubble Cloud)
+
+/// A deterministic, seed-driven RNG (splitmix64) so the cloud re-flows to a
+/// *new* but *stable* arrangement on every dice-roll instead of jumping to a
+/// fresh random layout on each re-render.
+private struct SeededRNG: RandomNumberGenerator {
+    private var state: UInt64
+    init(seed: UInt64) {
+        state = seed == 0 ? 0x9E3779B97F4A7C15 : seed
+    }
+    mutating func next() -> UInt64 {
+        state = state &+ 0x9E3779B97F4A7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        return z ^ (z >> 31)
+    }
+    mutating func fraction() -> Double {
+        Double(next() & 0xFFFFFFFF) / Double(0xFFFFFFFF)
+    }
+}
+
+/// Halton low-discrepancy sequence — even 2D coverage with no rejection cost,
+/// used as the base of the "Cloud" Poisson-ish scatter.
+private func halton(_ index: Int, base: Int) -> Double {
+    var f = 1.0
+    var r = 0.0
+    var i = index
+    while i > 0 {
+        f /= Double(base)
+        r += f * Double(i % base)
+        i /= base
+    }
+    return r
+}
+
+/// Mirrors the cockpit's WordTelemetry tier → ratio → color mapping, but derived
+/// straight from a raw `WordHit` (freqRank / isName) so the cosmos can size and
+/// tint bubbles without loading a full entry detail.
+enum CosmosTierInfo {
+    static func of(_ word: WordHit) -> (ratio: Double, color: Color, label: String, rankStr: String) {
+        let rank = word.freqRank
+        if word.isName {
+            return (0.35, Color.purple, "Proper Name", rank < 999_999 ? "#\(rank)" : "Name")
+        } else if rank <= 500 {
+            return (1.0, Color(red: 0.22, green: 0.74, blue: 0.97), "Core Top 500", "#\(rank)")
+        } else if rank <= 2500 {
+            return (0.84, Color(red: 0.22, green: 0.74, blue: 0.97), "Core Top 2,500", "#\(rank)")
+        } else if rank <= 10_000 {
+            return (0.66, Color(red: 0.20, green: 0.83, blue: 0.60), "Jōyō Common", "#\(rank)")
+        } else if rank <= 35_000 {
+            return (0.45, Color(red: 0.98, green: 0.75, blue: 0.14), "Standard", "#\(rank)")
+        } else if rank < 999_999 {
+            return (0.26, Color(red: 0.65, green: 0.55, blue: 0.98), "Literary", "#\(rank)")
+        } else {
+            return (0.16, Color.secondary, "Unranked", "—")
+        }
+    }
+}
+
+/// One placed bubble: a sampled word with its deterministic position + tier.
+private struct CosmosBubble: Identifiable {
+    let word: WordHit
+    var id: UInt32 { word.id }
+    let pos: CGPoint
+    let ratio: Double
+    let color: Color
+    let tierLabel: String
+    let rankStr: String
+    let hasKanji: Bool
+    let diameter: CGFloat
+}
+
+/// Lay the current sample out for a given layout + seed + canvas.
+/// `cloud` = Halton-jittered scatter; `constellation` = concentric rings by tier.
+private func cosmosLayout(
+    words: [WordHit],
+    seed: UInt64,
+    layout: WordCosmosLayout,
+    colorFor: (WordHit) -> Color,
+    w: CGFloat,
+    h: CGFloat,
+    topMargin: CGFloat = 78
+) -> [CosmosBubble] {
+    guard w > 0, h > 0, !words.isEmpty else { return [] }
+
+    let bottomMargin: CGFloat = 96   // clears the bottom inspector ribbon
+    let sideMargin: CGFloat = 56
+    let minDim = min(w, h)
+
+    // Shrink bubble footprint as the sample grows so a 300-word roll stays legible.
+    let countFactor = pow(50.0 / Double(max(1, words.count)), 0.35)
+    let base = minDim * 0.135 * CGFloat(countFactor)
+
+    var rng = SeededRNG(seed: seed)
+    var bubbles: [CosmosBubble] = []
+    bubbles.reserveCapacity(words.count)
+
+    if layout == .constellation {
+        let cx = w * 0.5
+        let cy = topMargin + (h - topMargin - bottomMargin) * 0.5
+        let maxR = minDim * 0.40
+
+        // Group words into the six tier rings (ring 0 = innermost = most common).
+        var rings: [[WordHit]] = Array(repeating: [], count: 6)
+        for word in words {
+            let info = CosmosTierInfo.of(word)
+            let t = max(0.0, min(1.0, (info.ratio - 0.16) / (1.0 - 0.16))) // 1 = inner
+            let ring = Int((1.0 - t) * 5.999)
+            rings[max(0, min(5, ring))].append(word)
+        }
+
+        for (ring, group) in rings.enumerated() where !group.isEmpty {
+            var ordered = group
+            ordered.shuffle(using: &rng)
+            let r = maxR * (CGFloat(ring) / 5.0 + 0.14)
+            let n = ordered.count
+            for (i, word) in ordered.enumerated() {
+                let info = CosmosTierInfo.of(word)
+                let angle = (2 * .pi * CGFloat(i) / CGFloat(n)) + rng.fraction() * 0.35
+                let jitter = 1.0 + (rng.fraction() - 0.5) * 0.12
+                let pos = CGPoint(x: cx + cos(angle) * r * CGFloat(jitter),
+                                  y: cy + sin(angle) * r * CGFloat(jitter))
+                bubbles.append(CosmosBubble(
+                    word: word,
+                    pos: pos,
+                    ratio: info.ratio,
+                    color: colorFor(word),
+                    tierLabel: info.label,
+                    rankStr: info.rankStr,
+                    hasKanji: word.firstKanjiCodepoint != nil,
+                    diameter: max(22, base * CGFloat(info.ratio))
+                ))
+            }
+        }
+    } else {
+        let innerW = max(1, w - sideMargin * 2)
+        let innerH = max(1, h - topMargin - bottomMargin)
+        for (i, word) in words.enumerated() {
+            let info = CosmosTierInfo.of(word)
+            let hx = halton(i + 1, base: 2)
+            let hy = halton(i + 1, base: 3)
+            let jx = (rng.fraction() - 0.5) * 0.16
+            let jy = (rng.fraction() - 0.5) * 0.16
+            let x = sideMargin + innerW * min(1.0, max(0.0, hx + jx))
+            let y = topMargin + innerH * min(1.0, max(0.0, hy + jy))
+            bubbles.append(CosmosBubble(
+                word: word,
+                pos: CGPoint(x: x, y: y),
+                ratio: info.ratio,
+                color: colorFor(word),
+                tierLabel: info.label,
+                rankStr: info.rankStr,
+                hasKanji: word.firstKanjiCodepoint != nil,
+                diameter: max(22, base * CGFloat(info.ratio))
+            ))
+        }
+    }
+
+    return bubbles
+}
+
+struct WordCosmosView: View {
+    @ObservedObject var engine: DaiJishowEngine
+
+    @State private var pointerPos: CGPoint?
+    @State private var hoveredWord: WordHit?
+    @State private var selectedWord: WordHit?
+
+    @State private var controlBarHeight: CGFloat = 62
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var activeWord: WordHit? { hoveredWord ?? selectedWord }
+
+    var body: some View {
+        GeometryReader { viewGeo in
+            let availableWidth = viewGeo.size.width
+            ZStack {
+                if engine.wordCosmosMode == .ranked {
+                    rankedListView
+                } else {
+                    cosmosCloudView
+                }
+            }
+            .frame(width: viewGeo.size.width, height: viewGeo.size.height)
+            .overlay(alignment: .top) {
+                controlBar(availableWidth: availableWidth)
+            }
+            .overlay(alignment: .bottom) {
+                if engine.wordCosmosMode == .cosmos {
+                    inspectorRibbon(availableWidth: availableWidth)
+                }
+            }
+        }
+    }
+
+    // MARK: - Cosmos / Constellation cloud
+
+    @ViewBuilder
+    private var cosmosCloudView: some View {
+        GeometryReader { geo in
+            let cloudTopMargin = max(78, controlBarHeight + 16)
+            let bubbles = cosmosLayout(
+                words: engine.wordCosmosWords,
+                seed: engine.wordCosmosSeed,
+                layout: engine.wordCosmosLayout,
+                colorFor: { engine.cosmosColor(for: $0) },
+                w: geo.size.width,
+                h: geo.size.height,
+                topMargin: cloudTopMargin
+            )
+
+            ZStack {
+                if engine.wordCosmosLayout == .constellation {
+                    constellationGuides(w: geo.size.width, h: geo.size.height, topMargin: cloudTopMargin)
+                }
+
+                if bubbles.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(bubbles) { b in
+                        bubble(for: b)
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { value in
+                        pointerPos = value.location
+                        var best: CosmosBubble?
+                        var bestDist: CGFloat = .greatestFiniteMagnitude
+                        for b in bubbles {
+                            let d = hypot(b.pos.x - value.location.x, b.pos.y - value.location.y)
+                            let hitR = b.diameter * 0.65
+                            if d <= hitR && d < bestDist {
+                                bestDist = d
+                                best = b
+                            }
+                        }
+                        if let found = best {
+                            selectedWord = found.word
+                        }
+                    }
+                    .onEnded { _ in
+                        pointerPos = nil
+                    }
+            )
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let loc):
+                    pointerPos = loc
+                    var best: CosmosBubble?
+                    var bestDist: CGFloat = .greatestFiniteMagnitude
+                    for b in bubbles {
+                        let d = hypot(b.pos.x - loc.x, b.pos.y - loc.y)
+                        let hitR = b.diameter * 0.62
+                        if d <= hitR && d < bestDist {
+                            bestDist = d
+                            best = b
+                        }
+                    }
+                    if hoveredWord?.id != best?.word.id {
+                        hoveredWord = best?.word
+                    }
+                case .ended:
+                    pointerPos = nil
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        hoveredWord = nil
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func bubble(for b: CosmosBubble) -> some View {
+        let isHovered = (hoveredWord?.id == b.id)
+        let isSelected = (selectedWord?.id == b.id)
+        let isActive = isHovered || isSelected
+        let diameter = b.diameter
+
+        // Fisheye lens: magnify bubbles near the pointer with a cosine bell (disabled if Reduce Motion)
+        let lensScale: CGFloat = {
+            guard !reduceMotion, let p = pointerPos else { return 1.0 }
+            let d = hypot(b.pos.x - p.x, b.pos.y - p.y)
+            let reach = diameter + 96
+            if d < reach {
+                let t = cos((d / reach) * (.pi / 2.0))
+                return 1.0 + 0.55 * t * t
+            }
+            return 1.0
+        }()
+        let scaled = diameter * lensScale
+        let fontSize = max(10, scaled * 0.34)
+        let showKana = b.hasKanji && !b.word.kanaHead.isEmpty
+            && engine.recallMode != .hideKana && scaled >= 38
+        let nonColorTag: String? = {
+            guard scaled >= 38 else { return nil }
+            switch engine.wordCosmosColorMode {
+            case .jlpt:
+                if let jlpt = engine.derivedDifficultyChips(for: b.word).jlptLevel {
+                    return "N\(jlpt)"
+                }
+                return nil
+            case .grade:
+                if let g = engine.derivedDifficultyChips(for: b.word).gradeLevel {
+                    return "G\(g)"
+                }
+                return nil
+            case .prevalence:
+                return nil
+            }
+        }()
+        let strokeStyle = b.hasKanji
+            ? StrokeStyle(lineWidth: isActive ? 2.4 : 1.5)
+            : StrokeStyle(lineWidth: isActive ? 2.2 : 1.3, dash: [3, 2.5])
+
+        VStack(spacing: 1) {
+            Text(b.word.displayHeadword)
+                .font(.system(size: fontSize, weight: .bold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            if showKana {
+                Text(b.word.kanaHead)
+                    .font(.system(size: max(10, fontSize * 0.36), weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            } else if let tag = nonColorTag {
+                Text(tag)
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(b.color)
+            }
+        }
+        .frame(width: scaled, height: scaled)
+        .background {
+            Circle()
+                .fill(reduceTransparency ? AnyShapeStyle(DJTheme.solidGlassFallbackFill(for: colorScheme)) : AnyShapeStyle(.ultraThinMaterial))
+                .overlay(Circle().fill(b.color.opacity(isActive ? 0.34 : 0.18)))
+                .overlay(
+                    Circle().strokeBorder(
+                        isActive ? Color.primary : b.color.opacity(0.82),
+                        style: strokeStyle
+                    )
+                )
+        }
+        .shadow(color: b.color.opacity(isActive ? 0.5 : 0.14), radius: isActive ? 12 : 6)
+        .contentShape(Circle())
+        .focusable(interactions: .activate)
+        .djAccessibleControl(
+            label: b.word.kanaHead.isEmpty ? "\(b.word.displayHeadword), \(b.tierLabel)" : "\(b.word.displayHeadword), \(b.word.kanaHead), \(b.tierLabel)",
+            hint: isSelected ? "Open detailed word entry" : "Select word",
+            value: b.word.primaryGloss,
+            selected: isSelected,
+            isButton: true
+        )
+        // Tap selects immediately (zero gesture timeout); tapping the selected bubble opens it.
+        .onTapGesture {
+            if selectedWord?.id == b.word.id {
+                djWithAnimation(reduceMotion, .spring(response: 0.30, dampingFraction: 0.82)) {
+                    engine.openWordFromCosmos(b.word)
+                }
+            } else {
+                djWithAnimation(reduceMotion, .spring(response: 0.24, dampingFraction: 0.82)) {
+                    selectedWord = b.word
+                }
+            }
+        }
+        .position(b.pos)
+        .zIndex(isActive ? 30 : 10 + Double(b.ratio))
+        .transition(.scale(scale: 0.3).combined(with: .opacity))
+    }
+
+    @ViewBuilder
+    private func constellationGuides(w: CGFloat, h: CGFloat, topMargin: CGFloat) -> some View {
+        let cx = w * 0.5
+        let cy = topMargin + (h - topMargin - 96) * 0.5
+        let maxR = min(w, h) * 0.40
+        ZStack {
+            ForEach(0...5, id: \.self) { ring in
+                Circle()
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                    .frame(
+                        width: maxR * 2 * (CGFloat(ring) / 5.0 + 0.14),
+                        height: maxR * 2 * (CGFloat(ring) / 5.0 + 0.14)
+                    )
+                    .position(x: cx, y: cy)
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 44, weight: .thin))
+                .foregroundStyle(.secondary)
+            Text("The cloud is empty")
+                .font(.title2.weight(.semibold))
+            Text("Roll the dice to summon a randomized cloud of words")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    engine.diceRollWordCosmos()
+                }
+            } label: {
+                Label("Roll the Dice", systemImage: "dice")
+                    .font(.headline)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(Color.accentColor))
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(30)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+    }
+
+    // MARK: - Ranked "words by prevalence" list
+
+    @ViewBuilder
+    private var rankedListView: some View {
+        let sorted = engine.wordCosmosWords.sorted { $0.freqRank < $1.freqRank }
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(sorted.enumerated()), id: \.element.id) { index, word in
+                    rankedRow(word: word, rank: index + 1)
+                }
+            }
+            .padding(16)
+            .textSelection(.enabled)
+        }
+        .padding(.top, controlBarHeight + 14)   // clear the control bar even when wrapped
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private func rankedRow(word: WordHit, rank: Int) -> some View {
+        let info = CosmosTierInfo.of(word)
+        // Derived JLPT / grade for this word (nil when it has no head kanji).
+        // Computed once per row; the catalog is loaded lazily on first use.
+        let chips = engine.derivedDifficultyChips(for: word)
+        HStack(spacing: 12) {
+            Text("#\(rank)")
+                .font(.caption.monospaced().weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .trailing)
+
+            Text(word.displayHeadword)
+                .font(.title3.weight(.bold))
+                .frame(minWidth: 90, alignment: .leading)
+
+            if engine.recallMode != .hideKana {
+                Text(word.kanaHead)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.accentColor)
+                    .frame(minWidth: 96, alignment: .leading)
+            }
+
+            if engine.recallMode != .hideGloss {
+                Text(word.primaryGloss)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            // Right-side difficulty chips: the corpus frequency tier (always),
+            // plus the derived JLPT level and grade when the word has a head
+            // kanji to derive them from. Each chip carries a tooltip, so the
+            // JLPT/grade colours stay self-documenting even in a dense list.
+            HStack(spacing: 6) {
+                Text("\(info.label) · \(info.rankStr)")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(info.color.opacity(0.2)))
+                    .foregroundStyle(info.color)
+                    .help("\(info.label) — corpus frequency rank \(info.rankStr).")
+
+                if let n = chips.jlptLevel {
+                    let jlptColor = DaiJishowEngine.cosmosJlptRamp(n)
+                    Text("N\(n)")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(jlptColor.opacity(0.22)))
+                        .foregroundStyle(jlptColor)
+                        .help("JLPT N\(n) — \(DaiJishowEngine.jlptLevelDescription(n)) (the word's hardest head kanji.)")
+                }
+
+                if let g = chips.gradeLevel {
+                    let gradeColor = DaiJishowEngine.cosmosGradeRamp(g)
+                    Text("G\(g)")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(gradeColor.opacity(0.22)))
+                        .foregroundStyle(gradeColor)
+                        .help("Grade \(g) — the school year the word's hardest head kanji is typically taught.")
+                }
+            }
+
+            SpeakerButton(
+                text: word.kanaHead.isEmpty ? word.displayHeadword : word.kanaHead,
+                variant: .compact,
+                extraHelp: "Hear pronunciation"
+            )
+
+            BookmarkDeckControl(
+                engine: engine,
+                studyStore: engine.studyStore,
+                item: engine.studyItem(for: word),
+                compact: true
+            )
+
+            Button {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                    engine.openWordFromCosmos(word)
+                }
+            } label: {
+                Label("Open", systemImage: "book.fill")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.accentColor))
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+
+            if word.firstKanjiCodepoint != nil {
+                Button {
+                    withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                        engine.pivotCosmosToKanjiFisheye(word)
+                    }
+                } label: {
+                    Image(systemName: "scope")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.primary.opacity(0.10)))
+                }
+                .buttonStyle(.plain)
+                .djAccessibleControl(label: "Open Kanji Fisheye for \(word.displayHeadword)")
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill((hoveredWord?.id == word.id) ? Color.primary.opacity(0.06) : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                engine.openWordFromCosmos(word)
+            }
+        }
+        .onHover { inside in
+            if inside { hoveredWord = word }
+        }
+    }
+
+    // MARK: - Top control bar
+
+    private func controlBar(availableWidth: CGFloat) -> some View {
+        let cosmosCompact = availableWidth < 1180
+        let hidePickerLabels = availableWidth < 1280
+
+        return WrappingHStack(alignment: .center, horizontalSpacing: 10, verticalSpacing: 8) {
+            let layoutPicker = Picker("Layout", selection: $engine.wordCosmosLayout) {
+                ForEach(WordCosmosLayout.allCases) { l in
+                    Text(l.label).tag(l)
+                }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .opacity(engine.wordCosmosMode == .cosmos ? 1 : 0.35)
+            .help("Layout: Constellation or Cloud")
+
+            if hidePickerLabels {
+                layoutPicker.labelsHidden().accessibilityLabel("Layout")
+            } else {
+                layoutPicker
+            }
+
+            let viewPicker = Picker("View", selection: $engine.wordCosmosMode) {
+                ForEach(WordCosmosMode.allCases) { m in
+                    Text(m == .cosmos ? "Cloud" : "Ranked").tag(m)
+                }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .help("View: Cloud bubbles or Ranked frequency list")
+
+            if hidePickerLabels {
+                viewPicker.labelsHidden().accessibilityLabel("View Mode")
+            } else {
+                viewPicker
+            }
+
+            let tierPicker = Picker("Tier", selection: $engine.wordCosmosTier) {
+                ForEach(WordCosmosTier.allCases) { t in
+                    Text(t.label).tag(t)
+                }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .onChange(of: engine.wordCosmosTier) { _, new in
+                engine.setWordCosmosTier(new)
+            }
+            .help("Tier: Core, Common, or All corpus words")
+
+            if hidePickerLabels {
+                tierPicker.labelsHidden().accessibilityLabel("Frequency Tier")
+            } else {
+                tierPicker
+            }
+
+            Menu {
+                ForEach([50, 150, 300], id: \.self) { count in
+                    Button("Sample \(count) words") {
+                        engine.sampleWordCosmos(count: count)
+                    }
+                }
+            } label: {
+                if cosmosCompact {
+                    HStack(spacing: 4) {
+                        Image(systemName: "number")
+                        Text("\(engine.wordCosmosCount)")
+                            .monospacedDigit()
+                    }
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(.ultraThinMaterial))
+                } else {
+                    Label("\(engine.wordCosmosCount) words", systemImage: "number")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(.ultraThinMaterial))
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Sample size — how many words to draw into the cloud (50 / 150 / 300)")
+
+            Button {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    engine.diceRollWordCosmos()
+                }
+            } label: {
+                if cosmosCompact {
+                    Image(systemName: "dice")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.accentColor))
+                        .foregroundStyle(.white)
+                } else {
+                    Label("Roll", systemImage: "dice")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.accentColor))
+                        .foregroundStyle(.white)
+                }
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .djAccessibleControl(label: "Roll New Word Sample", hint: "Shuffle a new randomized sample of words")
+            .help("Re-roll a fresh randomized sample")
+
+            Toggle(isOn: Binding(
+                get: { engine.includeNames },
+                set: { engine.setNamesIncluded($0, userInitiated: true) }
+            )) {
+                Text("Names").font(.caption.weight(.semibold))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .fixedSize()
+
+            Menu {
+                ForEach(WordCosmosColorMode.allCases) { mode in
+                    Button(mode.label) {
+                        engine.wordCosmosColorMode = mode
+                    }
+                }
+            } label: {
+                if cosmosCompact {
+                    Image(systemName: "paintpalette")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(.ultraThinMaterial))
+                } else {
+                    Label("Color: \(engine.wordCosmosColorMode.label)", systemImage: "paintpalette")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(.ultraThinMaterial))
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Tint bubbles by prevalence, JLPT level, or kanji grade")
+
+            cosmosLegend
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .djGlassCapsule()
+                .fixedSize()
+        }
+        .frame(maxWidth: max(1, availableWidth - 68))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .opacity(0.65)
+                .background(
+                    GeometryReader { barGeo in
+                        Color.clear
+                            .onAppear { controlBarHeight = barGeo.size.height + 8 }
+                            .onChange(of: barGeo.size.height) { _, newH in controlBarHeight = newH + 8 }
+                    }
+                )
+        )
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+    }
+
+    /// The colour legend, matched to the active `wordCosmosColorMode`: the
+    /// frequency tiers for `prevalence`, a green→red N5…N1 ramp for JLPT, and a
+    /// light→deep slate ramp for grade. Kana-only words always show a neutral dot.
+    @ViewBuilder
+    private var cosmosLegend: some View {
+        switch engine.wordCosmosColorMode {
+        case .prevalence:
+            HStack(spacing: 10) {
+                legendDot(color: Color.purple, label: "Names",
+                          help: "Names — proper names (人名), tinted purple.")
+                legendDot(color: Color(red: 0.22, green: 0.74, blue: 0.97), label: "Core",
+                          help: "Core — overall frequency rank ≤ 2,500; the most common words.")
+                legendDot(color: Color(red: 0.20, green: 0.83, blue: 0.60), label: "Jōyō",
+                          help: "Jōyō — overall frequency rank ≤ 12,000; common modern-use words.")
+                legendDot(color: Color(red: 0.98, green: 0.75, blue: 0.14), label: "Std",
+                          help: "Standard — outside the Jōyō band but still in everyday written use.")
+                legendDot(color: Color(red: 0.65, green: 0.55, blue: 0.98), label: "Lit",
+                          help: "Literary — rare, classical, or literary-register words.")
+            }
+            .help("Bubble colours by prevalence tier. Hover any dot for its meaning — the labels hide when the window is narrow, so the dots alone carry the legend.")
+        case .jlpt:
+            HStack(spacing: 10) {
+                legendDot(color: DaiJishowEngine.cosmosJlptRamp(5), label: "N5",
+                          help: "JLPT N5 — \(DaiJishowEngine.jlptLevelDescription(5))")
+                legendDot(color: DaiJishowEngine.cosmosJlptRamp(4), label: "N4",
+                          help: "JLPT N4 — \(DaiJishowEngine.jlptLevelDescription(4))")
+                legendDot(color: DaiJishowEngine.cosmosJlptRamp(3), label: "N3",
+                          help: "JLPT N3 — \(DaiJishowEngine.jlptLevelDescription(3))")
+                legendDot(color: DaiJishowEngine.cosmosJlptRamp(2), label: "N2",
+                          help: "JLPT N2 — \(DaiJishowEngine.jlptLevelDescription(2))")
+                legendDot(color: DaiJishowEngine.cosmosJlptRamp(1), label: "N1",
+                          help: "JLPT N1 — \(DaiJishowEngine.jlptLevelDescription(1))")
+                legendDot(color: Color(white: 0.62), label: "Kana",
+                          help: "Kana-only words (no head kanji) carry a neutral dot — they have no JLPT band.")
+            }
+            .help("Bubble colours by JLPT level (green→red, N5→N1) from each word's hardest head kanji. Hover any dot for what that level covers — the labels hide when the window is narrow.")
+        case .grade:
+            HStack(spacing: 9) {
+                legendDot(color: DaiJishowEngine.cosmosGradeRamp(1), label: "G1",
+                          help: "Grade 1 — the earliest band; the word's hardest head kanji is taught in 1st grade of elementary school (小学 1年生), i.e. the most basic kanji.")
+                legendDot(color: DaiJishowEngine.cosmosGradeRamp(4), label: "G4",
+                          help: "Grade 4 — a mid band by the school year the head kanji is first taught.")
+                legendDot(color: DaiJishowEngine.cosmosGradeRamp(7), label: "G7",
+                          help: "Grade 7 — a later band; in KANJIDIC2 grade 7 marks high-school (高校) kanji.")
+                legendDot(color: DaiJishowEngine.cosmosGradeRamp(10), label: "G10",
+                          help: "Grade 10 — the latest band; the word's hardest head kanji is taught well into school (grades 8–10 are Jōyō/Jinmeiyō/variant, not a single year).")
+                legendDot(color: Color(white: 0.55), label: "Kana",
+                          help: "Kana-only words (no head kanji) carry a neutral dot — they have no grade.")
+            }
+            .help("Bubble colours by head-kanji study grade (light→deep slate, G1→G10): earlier grades (G1, light) are the most basic kanji, later grades (G10, deep) the most advanced. Hover any dot for its meaning — the labels hide when the window is narrow.")
+        }
+    }
+
+    // MARK: - Bottom inspector ribbon
+
+    @ViewBuilder
+    private func inspectorRibbon(availableWidth: CGFloat) -> some View {
+        let compactRibbon = availableWidth < 920
+        HStack(alignment: .bottom, spacing: 14) {
+            Spacer()
+
+            if let word = activeWord {
+                let info = CosmosTierInfo.of(word)
+                // The pill reflects the active colour mode: the frequency tier for
+                // `prevalence`, otherwise the word's derived JLPT level / grade.
+                let pillColor = engine.cosmosColor(for: word)
+                let pillText = engine.wordCosmosColorMode == .prevalence
+                    ? "\(info.label) • \(info.rankStr)"
+                    : engine.cosmosDifficultyLabel(for: word)
+                GlassCard(cornerRadius: 18) {
+                    HStack(spacing: compactRibbon ? 10 : 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 8) {
+                                Text(word.displayHeadword)
+                                    .font(.title3.weight(.bold))
+                                    .lineLimit(1)
+                                if engine.recallMode != .hideKana && !word.kanaHead.isEmpty {
+                                    Text("(\(word.kanaHead))")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Text(pillText)
+                                    .font(.caption2.weight(.bold))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(pillColor.opacity(0.22)))
+                                    .foregroundStyle(pillColor)
+                                    .fixedSize()
+                            }
+                            if engine.recallMode != .hideGloss {
+                                Text(word.primaryGloss.isEmpty ? "Tap to open the Detailed view" : word.primaryGloss)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+
+                        SpeakerButton(
+                            text: word.kanaHead.isEmpty ? word.displayHeadword : word.kanaHead,
+                            variant: .compact,
+                            extraHelp: "Hear pronunciation"
+                        )
+                        .fixedSize()
+
+                        BookmarkDeckControl(
+                            engine: engine,
+                            studyStore: engine.studyStore,
+                            item: engine.studyItem(for: word),
+                            compact: true
+                        )
+                        .fixedSize()
+
+                        Button {
+                            withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                                engine.openWordFromCosmos(word)
+                            }
+                        } label: {
+                            Label("Detailed", systemImage: "book.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(Capsule().fill(Color.accentColor))
+                                .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                        .fixedSize()
+
+                        if word.firstKanjiCodepoint != nil {
+                            Button {
+                                withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                                    engine.pivotCosmosToKanjiFisheye(word)
+                                }
+                            } label: {
+                                Label(compactRibbon ? "Fisheye" : "Kanji Fisheye", systemImage: "scope")
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(Capsule().fill(Color.primary.opacity(0.14)))
+                            }
+                            .buttonStyle(.plain)
+                            .fixedSize()
+                        }
+                    }
+                    .padding(.horizontal, compactRibbon ? 14 : 18)
+                    .padding(.vertical, 11)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                Text("Hover or drag to preview · Tap once to select · Tap again to open Detailed")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .djGlassCapsule()
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, availableWidth < 960 ? 20 : 64)
+        .padding(.bottom, 16)
+    }
+
+    private func legendDot(color: Color, label: String, help: String? = nil) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(label).foregroundStyle(.secondary)
+        }
+        .help(help ?? "")
+    }
+}
+
+// MARK: - Word Entry Cockpit View (Reader + Cockpit Modes)
+
+struct WordEntryView: View {
+    @ObservedObject var engine: DaiJishowEngine
+    let entry: EntryDetail
+
+    @State private var showAllSentences: Bool = false
+
+    // Top-10 expansion toggles for the cockpit pill lists (compounds + homonyms).
+    // Reset when the active entry changes so each word starts collapsed.
+    @State private var showAllPrefixCompounds: Bool = false
+    @State private var showAllSuffixCompounds: Bool = false
+    @State private var showAllHomonyms: Bool = false
+
+    @State private var selectedCollocation: CollocationPattern? = nil
+    @State private var showCollocationGuide: Bool = false
+    @State private var peekedGloss: Bool = false
+    @State private var peekedKana: Bool = false
+    @State private var copiedInflectionId: String? = nil
+    @State private var entryToast: String? = nil
+    @State private var heroWidth: CGFloat = 1000
+
+    private var insights: WordLexicalInsights {
+        if let active = engine.activeWordInsights, active.entryId == entry.header.id {
+            return active
+        }
+        return engine.ensureWordInsights(for: entry)
+    }
+
+    private var pitchContour: PitchAccentContour? {
+        guard engine.recallMode != .hideKana || peekedKana else { return nil }
+        // Render the trailing が particle only for nouns (posMask bit0); it reads
+        // ungrammatically after conjugated verbs/adjectives (taberu-ga, takai-ga).
+        let isNoun = (entry.header.posMask & 1) != 0
+        return PitchAccentContour.build(kana: entry.header.kanaHead, pitchAccent: entry.header.pitchAccent, showParticle: isNoun)
+    }
+
+    private var activeSentences: [SentenceItem] {
+        entry.sentences.isEmpty ? insights.fallbackSentences : entry.sentences
+    }
+
+    private var displayedSentences: [SentenceItem] {
+        guard let col = selectedCollocation else { return activeSentences }
+        let cleanParticle = col.pattern
+            .replacingOccurrences(of: "〜", with: "")
+            .replacingOccurrences(of: entry.header.displayHeadword, with: "")
+            .replacingOccurrences(of: insights.fallbackSourceWord ?? "", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanParticle.isEmpty else { return activeSentences }
+        let matched = activeSentences.filter { $0.jpText.contains(cleanParticle) }
+        return matched.isEmpty ? activeSentences : matched
+    }
+
+    private var hideKanaActive: Bool {
+        engine.recallMode == .hideKana && !peekedKana
+    }
+
+    private var hideGlossActive: Bool {
+        engine.recallMode == .hideGloss && !peekedGloss
+    }
+
+    /// The headline meaning — the most-common sense's gloss — shown at the top of
+    /// the hero card beside the headword. Respects the gloss-language picker
+    /// (EN / 国語 / Both) and is hidden in Hide-Gloss recall mode so the
+    /// self-quiz stays honest.
+    private var primaryTranslation: String? {
+        guard !hideGlossActive else { return nil }
+        let mode = engine.glossLanguageMode
+        let showEn = (mode == .english || mode == .both || !entry.hasJapaneseGlosses)
+        let showJa = (mode == .japanese || mode == .both)
+        var parts: [String] = []
+        if let first = entry.senses.first {
+            if showEn {
+                let en = first.enGlosses.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !en.isEmpty { parts.append(en) }
+            }
+            if showJa {
+                let ja = first.jaGlosses.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !ja.isEmpty { parts.append(ja) }
+            }
+        }
+        if parts.isEmpty {
+            let fallback = entry.header.primaryGloss.trimmingCharacters(in: .whitespacesAndNewlines)
+            return fallback.isEmpty ? nil : fallback
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                headerHeroCard
+                if engine.isWordCockpitExpanded {
+                    cockpitDashboardContent
+                } else {
+                    readerCompactContent
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 1080)
+            .frame(maxWidth: .infinity)
+            .textSelection(.enabled)
+            .contextMenu {
+                Button {
+                    SpeechEngine.shared.speak(entry.header.kanaHead)
+                } label: {
+                    Label("Speak Headword", systemImage: "speaker.wave.2.fill")
+                }
+                .disabled(!SpeechEngine.shared.japaneseVoiceAvailable
+                          || entry.header.kanaHead.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Divider()
+                Button {
+                    engine.copyText(entry.copyText)
+                } label: {
+                    Label("Copy Entry", systemImage: "doc.on.doc")
+                }
+                Button {
+                    let tsv = engine.studyStore.exportSingleItemText(engine.studyItem(for: entry, insights: insights), format: .ankiTSV)
+                    engine.copyText(tsv)
+                    flashToast("Copied Flashcard TSV")
+                } label: {
+                    Label("Copy Flashcard (TSV)", systemImage: "rectangle.stack")
+                }
+                Divider()
+                Button {
+                    engine.copyText(entry.header.displayHeadword)
+                } label: {
+                    Label("Copy Headword", systemImage: "text.cursor")
+                }
+            }
+        }
+        .onAppear {
+            resetTransientState()
+            _ = engine.ensureWordInsights(for: entry)
+        }
+        .onChange(of: entry.header.id) { _, _ in
+            resetTransientState()
+            _ = engine.ensureWordInsights(for: entry)
+        }
+        .onChange(of: engine.recallMode) { _, _ in
+            peekedGloss = false
+            peekedKana = false
+        }
+    }
+
+    private func resetTransientState() {
+        showAllSentences = false
+        showAllPrefixCompounds = false
+        showAllSuffixCompounds = false
+        showAllHomonyms = false
+        selectedCollocation = nil
+        showCollocationGuide = false
+        peekedGloss = false
+        peekedKana = false
+        copiedInflectionId = nil
+        entryToast = nil
+    }
+
+    private func flashToast(_ message: String) {
+        withAnimation { entryToast = message }
+        Task {
+            try? await Task.sleep(for: .seconds(2.0))
+            await MainActor.run {
+                if entryToast == message {
+                    withAnimation { entryToast = nil }
+                }
+            }
+        }
+    }
+
+    // MARK: - 1. Hero Lexical Card (Headword + Pitch Contour + Telemetry + Mode Switch)
+
+    private var heroHeadwordCluster: some View {
+        HStack(alignment: .center, spacing: 14) {
+            RubyWordView(
+                cells: entry.rubyCells,
+                hideKana: hideKanaActive,
+                fontSize: 48
+            ) { cp in
+                engine.openKanjiDetail(codepoint: cp)
+            }
+
+            SpeakerButton(
+                text: entry.header.kanaHead,
+                variant: .headword,
+                extraHelp: "Hear '\(entry.header.kanaHead)' read aloud in Japanese."
+            )
+
+            if let primary = primaryTranslation {
+                Text(primary)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 440, alignment: .leading)
+                    .help("Primary meaning — the most common sense. See every sense in the Definitions card below.")
+            } else if hideGlossActive {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { peekedGloss = true }
+                } label: {
+                    Label("Reveal Meaning", systemImage: "eye")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.primary.opacity(0.10)))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var heroControlsCluster: some View {
+        VStack(alignment: isRowCompact(heroWidth, threshold: 780) ? .leading : .trailing, spacing: 10) {
+            HStack(spacing: 8) {
+                BookmarkDeckControl(
+                    engine: engine,
+                    studyStore: engine.studyStore,
+                    item: engine.studyItem(for: entry, insights: insights),
+                    compact: false
+                )
+
+                Menu {
+                    Button {
+                        engine.copyText(entry.copyText)
+                        flashToast("Copied entry")
+                    } label: {
+                        Label("Copy Plain Entry", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        let tsv = engine.studyStore.exportSingleItemText(
+                            engine.studyItem(for: entry, insights: insights),
+                            format: .ankiTSV
+                        )
+                        engine.copyText(tsv)
+                        flashToast("Copied Flashcard TSV")
+                    } label: {
+                        Label("Copy Flashcard (TSV)", systemImage: "rectangle.stack")
+                    }
+                    Button {
+                        let item = engine.studyItem(for: entry, insights: insights)
+                        let tsv = engine.studyStore.exportSingleItemText(item, format: .ankiTSV)
+                        engine.studyStore.saveExportFile(
+                            content: tsv,
+                            suggestedName: entry.header.displayHeadword,
+                            format: .ankiTSV
+                        )
+                    } label: {
+                        Label("Save Flashcard .tsv…", systemImage: "square.and.arrow.down")
+                    }
+                    Button {
+                        let item = engine.studyItem(for: entry, insights: insights)
+                        let csv = engine.studyStore.exportSingleItemText(item, format: .csv)
+                        engine.studyStore.saveExportFile(
+                            content: csv,
+                            suggestedName: entry.header.displayHeadword,
+                            format: .csv
+                        )
+                    } label: {
+                        Label("Save CSV…", systemImage: "tablecells")
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .background(
+                            Circle()
+                                .fill(Color.primary.opacity(0.08))
+                                .overlay(
+                                    Circle()
+                                        .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
+                                )
+                        )
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .djAccessibleControl(label: "Copy or Export Entry", hint: "Copy plain text, Flashcard TSV, or save CSV")
+                .help("Copy or export this entry as Flashcard TSV (Anki-compatible) / CSV")
+
+                // Reader vs. Detailed Toggle (Persisted in UserDefaults)
+                Picker("View Mode", selection: $engine.isWordCockpitExpanded) {
+                    Label("Reader", systemImage: "doc.plaintext")
+                        .tag(false)
+                    Label("Detailed", systemImage: "rectangle.3.group.fill")
+                        .tag(true)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .help("View Mode: Reader shows just the definitions; Detailed reveals the full analysis dashboard (homonyms, compounds, collocations, idioms, conjugations, …).")
+
+                if entry.hasJapaneseGlosses {
+                    Picker("Gloss Language", selection: $engine.glossLanguageMode) {
+                        ForEach(GlossLanguageMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .help("Show definitions in English, Japanese, or both.")
+                }
+            }
+
+            if let entryToast {
+                Text(entryToast)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.green)
+                    .transition(.opacity)
+            }
+
+            if engine.recallMode == .hideKana {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { peekedKana.toggle() }
+                } label: {
+                    Label(peekedKana ? "Hide Kana Peek" : "Peek Kana", systemImage: peekedKana ? "eye.slash" : "eye")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Telemetry Pills
+            WrappingHStack(alignment: .center, horizontalSpacing: 6, verticalSpacing: 6) {
+                telemetryPill(
+                    text: "\(insights.telemetry.frequencyTier) (\(insights.telemetry.frequencyRankText))",
+                    tint: insights.telemetry.tierColor
+                )
+                .help("Corpus frequency tier — how often this word appears, from the most common words down to rare ones.")
+                if let jlpt = insights.telemetry.jlptLabel {
+                    telemetryPill(text: jlpt, tint: .cyan)
+                        .help("JLPT level — the Japanese-Language Proficiency Test tier this word is associated with.")
+                }
+                if let grade = insights.telemetry.gradeLabel {
+                    telemetryPill(text: grade, tint: .green)
+                        .help("Grade — the Japanese school year in which this kanji is typically taught.")
+                }
+                if insights.telemetry.totalStrokes > 0 {
+                    telemetryPill(text: "\(insights.telemetry.totalStrokes)画", tint: .orange)
+                        .help("Total strokes — the number of strokes in the word's kanji (画 means 'stroke').")
+                }
+            }
+        }
+    }
+
+    private var headerHeroCard: some View {
+        GlassCard(cornerRadius: 22, surface: .content) {
+            VStack(alignment: .leading, spacing: 14) {
+                Group {
+                    if isRowCompact(heroWidth, threshold: 780) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            heroHeadwordCluster
+                            heroControlsCluster
+                        }
+                    } else {
+                        HStack(alignment: .top, spacing: 16) {
+                            heroHeadwordCluster
+                            Spacer(minLength: 12)
+                            heroControlsCluster
+                        }
+                    }
+                }
+                .measureWidth(into: $heroWidth)
+
+                // Pitch Accent Visual Contour & Popularity Meter
+                if pitchContour != nil || !entry.header.variantList.isEmpty {
+                    HStack(alignment: .center, spacing: 16) {
+                        if let contour = pitchContour {
+                            PitchAccentContourView(contour: contour)
+                                .help("Pitch-accent contour — the rise/fall of the spoken syllables; the bracketed number is the accent nucleus position.")
+                        }
+
+                        Spacer(minLength: 8)
+
+                        // Popularity Meter Bar
+                        VStack(alignment: .trailing, spacing: 4) {
+                            Text("Corpus Frequency")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            GeometryReader { barGeo in
+                                ZStack(alignment: .leading) {
+                                    Capsule()
+                                        .fill(Color.primary.opacity(0.10))
+                                    Capsule()
+                                        .fill(insights.telemetry.tierColor)
+                                        .frame(width: max(12, barGeo.size.width * insights.telemetry.popularityRatio))
+                                }
+                            }
+                            .frame(width: 112, height: 6)
+                        }
+                        .help("Corpus frequency meter — how common this word is in the corpus, from rare (short bar) to very common (full bar).")
+                    }
+                }
+
+                // Alternative Orthographic Forms (表記ゆれ)
+                if !entry.header.variantList.isEmpty {
+                    HStack(spacing: 8) {
+                        Text("Also written:")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .help("Alternative spellings of this word (表記ゆれ). Click one to open that variant.")
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(entry.header.variantList, id: \.self) { variant in
+                                    Button {
+                                        engine.openVariantForm(variant)
+                                    } label: {
+                                        Text(variant)
+                                            .font(.subheadline.weight(.medium))
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 4)
+                                            .background(Capsule().fill(Color.primary.opacity(0.08)))
+                                            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Open the variant form \(variant)")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(20)
+        }
+    }
+
+    // MARK: - 2A. Reader Mode (Clean Distraction-Free Definitions + Sentences)
+
+    private var readerCompactContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            definitionsSection
+            transitivityPairBanner
+            if !activeSentences.isEmpty {
+                sentencesSection
+            }
+        }
+    }
+
+    // MARK: - 2B. Cockpit Mode (Full Multi-Dimensional Lexical Dashboard)
+
+    private var cockpitDashboardContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            // Kanji DNA Strip (Per-Kanji Breakdown + Active Reading Highlight)
+            if !insights.kanjiDNA.isEmpty {
+                kanjiDNASection
+            }
+
+            // Contextual Senses + Transitivity Pair
+            definitionsSection
+            transitivityPairBanner
+
+            // Homonyms (同音異義語)
+            if !insights.homonyms.isEmpty {
+                homonymsSection
+            }
+
+            // Word Family (Prefix & Suffix Compounds)
+            if !insights.prefixCompounds.isEmpty || !insights.suffixCompounds.isEmpty {
+                wordFamilySection
+            }
+
+            // Idioms, Yojijukugo & Proverbs
+            if !insights.idioms.isEmpty {
+                idiomsSection
+            }
+
+            // Corpus Collocations + Example Sentences
+            if !insights.collocations.isEmpty || !activeSentences.isEmpty {
+                sentencesAndCollocationsSection
+            }
+
+            // Verb / Adjective Inflection Matrix
+            if !insights.inflections.isEmpty, let header = insights.inflectionHeader {
+                inflectionMatrixSection(title: header, forms: insights.inflections)
+            }
+        }
+    }
+
+    // MARK: - Kanji DNA Breakdown Strip
+
+    private var kanjiDNASection: some View {
+        GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Kanji DNA", systemImage: "square.grid.2x2.fill")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .help("The individual kanji that make up this word, with their meanings, stroke counts, and JLPT level. Click one to open its detail page.")
+                    Spacer()
+                    Button {
+                        engine.openCompoundKanji(seedEntryId: insights.entryId)
+                    } label: {
+                        Label("Open compound breakdown", systemImage: "arrow.up.right.square.fill")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .help("Open the full Compound Kanji screen, seeded with this word")
+                }
+
+                WrappingHStack(alignment: .top, horizontalSpacing: 12, verticalSpacing: 12) {
+                    ForEach(insights.kanjiDNA) { k in
+                        Button {
+                            engine.openKanjiDetail(codepoint: k.codepoint)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text(k.glyph)
+                                    .font(.system(size: 36, weight: .bold))
+                                    .frame(width: 54, height: 54)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(Color.primary.opacity(0.08))
+                                    )
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 6) {
+                                        Text(hideGlossActive ? "Kanji" : (k.meanings.split(separator: ";").first.map(String.init) ?? "Kanji"))
+                                            .font(.subheadline.weight(.bold))
+                                            .lineLimit(1)
+                                        if k.strokes > 0 {
+                                            Text("\(k.strokes)画")
+                                                .font(.caption2.weight(.semibold))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        if !k.jlptLabel.isEmpty {
+                                            Text(k.jlptLabel)
+                                                .font(.caption2.weight(.bold))
+                                                .foregroundStyle(.cyan)
+                                        }
+                                        if k.isJukujikun && !hideKanaActive {
+                                            Text("熟字訓")
+                                                .font(.caption2.weight(.bold))
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 1)
+                                                .background(Capsule().fill(Color.orange.opacity(0.22)))
+                                                .foregroundStyle(.orange)
+                                        }
+                                    }
+
+                                    if !hideKanaActive {
+                                        if !k.onReadings.isEmpty {
+                                            readingTokenRow(
+                                                label: "音",
+                                                tokens: k.onReadings.prefix(4).map { $0 },
+                                                matchedNormalized: k.matchedReadingNormalized
+                                            )
+                                        }
+                                        if !k.kunReadings.isEmpty {
+                                            readingTokenRow(
+                                                label: "訓",
+                                                tokens: k.kunReadings.prefix(4).map { $0 },
+                                                matchedNormalized: k.matchedReadingNormalized
+                                            )
+                                        }
+                                    } else {
+                                        Text("Readings hidden (Recall Mode)")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                            }
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(Color.primary.opacity(0.05))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open \(k.glyph)")
+                    }
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    private func readingTokenRow(label: String, tokens: [String], matchedNormalized: String?) -> some View {
+        HStack(spacing: 5) {
+            Text(label)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
+
+            ForEach(tokens, id: \.self) { tok in
+                let stem = KanaNormalizer.stemBeforeDot(tok)
+                let isActive = (matchedNormalized != nil && !stem.isEmpty && stem == matchedNormalized)
+                Text(tok)
+                    .font(.caption.weight(isActive ? .bold : .regular))
+                    .foregroundStyle(isActive ? Color.accentColor : .secondary)
+                    .padding(.horizontal, isActive ? 6 : 2)
+                    .padding(.vertical, 1)
+                    .background {
+                        if isActive {
+                            Capsule().fill(Color.accentColor.opacity(0.20))
+                        }
+                    }
+            }
+        }
+    }
+
+    // MARK: - Contextual Senses Section
+
+    private var definitionsSection: some View {
+        GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Label("Definitions", systemImage: "book.pages.fill")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .help("The dictionary senses of this word, in order of frequency. Each numbered item is a distinct meaning.")
+                    Spacer()
+                    if engine.recallMode == .hideGloss {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.18)) { peekedGloss.toggle() }
+                        } label: {
+                            Label(peekedGloss ? "Hide Definitions" : "Peek Definitions", systemImage: peekedGloss ? "eye.slash" : "eye")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Text("\(entry.senses.count) \(entry.senses.count == 1 ? "sense" : "senses")")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                if hideGlossActive {
+                    HStack(spacing: 10) {
+                        Image(systemName: "eye.slash.fill")
+                        Text("Definitions hidden in Recall Mode.")
+                        Spacer()
+                        Button("Tap to Reveal") {
+                            withAnimation(.easeInOut(duration: 0.18)) { peekedGloss = true }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 6)
+                } else {
+                    ForEach(entry.senses) { sense in
+                        let primaryTags = insights.senseTags[sense.id] ?? []
+                        let registerTags = Morph.registerTags(posMask: sense.posMask).filter { !primaryTags.contains($0) }
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .top, spacing: 10) {
+                                Text("\(sense.id + 1)")
+                                    .font(.caption.monospacedDigit().weight(.bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 22, height: 22)
+                                    .background(Circle().fill(Color.accentColor.opacity(0.75)))
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    if !primaryTags.isEmpty || !registerTags.isEmpty {
+                                        WrappingHStack(alignment: .center, horizontalSpacing: 6, verticalSpacing: 4) {
+                                            ForEach(primaryTags, id: \.self) { tag in
+                                                Text(tag)
+                                                    .font(.caption2.weight(.semibold))
+                                                    .foregroundStyle(.secondary)
+                                                    .padding(.horizontal, 8)
+                                                    .padding(.vertical, 2)
+                                                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+                                            }
+                                            ForEach(registerTags, id: \.self) { reg in
+                                                Text(reg)
+                                                    .font(.caption2.weight(.semibold))
+                                                    .foregroundStyle(Color.cyan)
+                                                    .padding(.horizontal, 8)
+                                                    .padding(.vertical, 2)
+                                                    .background(Capsule().fill(Color.cyan.opacity(0.14)))
+                                            }
+                                        }
+                                    }
+
+                                    let showEn = (engine.glossLanguageMode == .english || engine.glossLanguageMode == .both || !entry.hasJapaneseGlosses)
+                                    let showJa = (engine.glossLanguageMode == .japanese || engine.glossLanguageMode == .both) && !sense.jaGlosses.isEmpty
+
+                                    if showEn && !sense.enGlosses.isEmpty {
+                                        Text(sense.enGlosses)
+                                            .font(.body)
+                                            .textSelection(.enabled)
+                                    }
+
+                                    if showJa {
+                                        Text(sense.jaGlosses)
+                                            .font(showEn ? .callout : .body)
+                                            .foregroundStyle(showEn ? .secondary : .primary)
+                                            .textSelection(.enabled)
+                                    }
+                                }
+                            }
+                        }
+                        if sense.id != entry.senses.last?.id {
+                            Divider().opacity(0.25)
+                        }
+                    }
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    // MARK: - Transitivity Pair Banner (自他ペア)
+
+    @ViewBuilder
+    private var transitivityPairBanner: some View {
+        if entry.header.pairEntryId > 0 {
+            GlassCard(cornerRadius: 16, surface: .content) {
+                HStack(spacing: 12) {
+                    Label("自他ペア", systemImage: "arrow.left.arrow.right.circle.fill")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+                        .help("A self/other verb pair (自他動詞): this verb and its counterpart that flips between the subject acting on itself vs. on something else. Click to open the pair.")
+
+                    Text("Paired Verb:")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        engine.openWordEntry(entryId: entry.header.pairEntryId)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(entry.pairedKanji.isEmpty ? entry.pairedKana : entry.pairedKanji)
+                                .font(.headline.weight(.bold))
+                            if !entry.pairedKanji.isEmpty && !entry.pairedKana.isEmpty && !hideKanaActive {
+                                Text("(\(entry.pairedKana))")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Image(systemName: "arrow.right")
+                                .font(.caption.bold())
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+            }
+        }
+    }
+
+    // MARK: - Homonyms Section (同音異義語)
+
+    private var homonymsSection: some View {
+        let limit = 10
+        let items = insights.homonyms
+        let visible = showAllHomonyms ? items : Array(items.prefix(limit))
+        let hasMore = items.count > limit
+        return GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Homonyms • 同音異義語 (\(hideKanaActive ? "•••" : entry.header.kanaHead))", systemImage: "waveform.and.magnifyingglass")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .help("Other words that share the same reading but differ in meaning. Click a pill to open that word.")
+                    Spacer()
+                    Text("\(items.count) entries")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 168, maximum: 240), spacing: 10, alignment: .top)],
+                    alignment: .leading,
+                    spacing: 10
+                ) {
+                    ForEach(visible) { hit in
+                        Button {
+                            engine.openWordEntry(entryId: hit.id)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Text(hit.displayHeadword)
+                                        .font(.headline.weight(.bold))
+                                        .lineLimit(1)
+                                    if hit.pitchAccent != 255 && !hideKanaActive {
+                                        Text("[\(hit.pitchAccent)]")
+                                            .font(.caption2.monospacedDigit().weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                if !hideGlossActive {
+                                    Text(hit.primaryGloss)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.primary.opacity(0.06))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .strokeBorder(Color.primary.opacity(0.11), lineWidth: 1)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                if hasMore {
+                    Button {
+                        showAllHomonyms.toggle()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(showAllHomonyms ? "Show Less" : "Show more (\(items.count - limit) more)")
+                            Image(systemName: showAllHomonyms ? "chevron.up" : "chevron.down")
+                        }
+                        .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.top, 2)
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    // MARK: - Word Family Section (Prefix & Suffix Compounds)
+
+    private var wordFamilySection: some View {
+        GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(alignment: .leading, spacing: 14) {
+                Label("Word Family • Compounds", systemImage: "point.3.connected.trianglepath.dotted")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .help("Other words built from this headword: compounds that start with it (prefixes) and compounds that end with it (suffixes). Click a pill to open that word.")
+
+                if !insights.prefixCompounds.isEmpty {
+                    compoundGroupRow(title: "Starts with \(entry.header.displayHeadword)〜", items: insights.prefixCompounds, isExpanded: $showAllPrefixCompounds)
+                }
+
+                if !insights.suffixCompounds.isEmpty {
+                    compoundGroupRow(title: "Ends with 〜\(entry.header.displayHeadword)", items: insights.suffixCompounds, isExpanded: $showAllSuffixCompounds)
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    private func compoundGroupRow(title: String, items: [WordHit], isExpanded: Binding<Bool>) -> some View {
+        let limit = 10
+        let visible = isExpanded.wrappedValue ? items : Array(items.prefix(limit))
+        let hasMore = items.count > limit
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .help(title)
+                Spacer()
+                if hasMore {
+                    Text(isExpanded.wrappedValue ? "\(items.count) total" : "showing \(visible.count) of \(items.count)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 164, maximum: 240), spacing: 10, alignment: .top)],
+                alignment: .leading,
+                spacing: 10
+            ) {
+                ForEach(visible) { hit in
+                    Button {
+                        engine.openWordEntry(entryId: hit.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(hit.displayHeadword)
+                                .font(.headline.weight(.bold))
+                                .lineLimit(1)
+                            if !hideKanaActive {
+                                Text(hit.kanaHead)
+                                    .font(.caption)
+                                    .foregroundStyle(Color.accentColor)
+                                    .lineLimit(1)
+                            }
+                            if !hideGlossActive {
+                                Text(hit.primaryGloss)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.primary.opacity(0.055))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if hasMore {
+                Button {
+                    isExpanded.wrappedValue.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(isExpanded.wrappedValue ? "Show Less" : "Show more (\(items.count - limit) more)")
+                        Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
+                    }
+                    .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .padding(.top, 2)
+            }
+        }
+    }
+
+    // MARK: - Idioms, Yojijukugo & Proverbs Section
+
+    private var idiomsSection: some View {
+        GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Idioms, Yojijukugo & Proverbs", systemImage: "quote.opening")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(insights.idioms.count) expressions")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: 10, alignment: .top)],
+                    alignment: .leading,
+                    spacing: 10
+                ) {
+                    ForEach(insights.idioms) { idiom in
+                        Button {
+                            engine.openWordEntry(entryId: idiom.entryId)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Text(idiom.displayHeadword)
+                                        .font(.headline.weight(.bold))
+                                        .lineLimit(1)
+                                    Text(idiom.shortKindLabel)
+                                        .font(.caption2.weight(.bold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Capsule().fill(Color.orange.opacity(0.18)))
+                                        .foregroundStyle(.orange)
+                                        .fixedSize()
+                                }
+                                if !hideKanaActive && !idiom.kanaHead.isEmpty {
+                                    Text(idiom.kanaHead)
+                                        .font(.caption)
+                                        .foregroundStyle(Color.accentColor)
+                                        .lineLimit(1)
+                                }
+                                if !hideGlossActive && !idiom.figurativeGloss.isEmpty {
+                                    Text(idiom.figurativeGloss)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.primary.opacity(0.055))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .strokeBorder(Color.primary.opacity(0.11), lineWidth: 1)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    // MARK: - Corpus Collocations & Sentences Section
+
+    private var sentencesAndCollocationsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if !insights.collocations.isEmpty {
+                GlassCard(cornerRadius: 18, surface: .content) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Label("Corpus Collocations", systemImage: "link")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.secondary)
+                            Button {
+                                showCollocationGuide.toggle()
+                            } label: {
+                                Image(systemName: "questionmark.circle")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .djAccessibleControl(label: "Collocation Guide", hint: "Explain corpus collocation patterns")
+                            .popover(isPresented: $showCollocationGuide, arrowEdge: .bottom) {
+                                Text("Particles that appear directly beside this word in example sentences. Tap a chip to filter matching sentences below.")
+                                    .font(.caption)
+                                    .frame(width: 260)
+                                    .padding(12)
+                            }
+                            Spacer()
+                            if let sel = selectedCollocation {
+                                Button("Show all sentences") {
+                                    selectedCollocation = nil
+                                }
+                                .font(.caption.weight(.semibold))
+                                .buttonStyle(.plain)
+                                .foregroundStyle(Color.accentColor)
+                                .help("Clear filter for \(sel.pattern)")
+                            }
+                        }
+
+                        WrappingHStack(alignment: .center, horizontalSpacing: 8, verticalSpacing: 8) {
+                            ForEach(insights.collocations) { col in
+                                let active = selectedCollocation?.id == col.id
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.16)) {
+                                        selectedCollocation = active ? nil : col
+                                    }
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Text(col.pattern)
+                                            .font(.subheadline.weight(.bold))
+                                        Text("×\(col.count)")
+                                            .font(.caption2.monospacedDigit().weight(.bold))
+                                            .foregroundStyle(active ? .white : Color.accentColor)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Capsule().fill(active ? Color.accentColor : Color.primary.opacity(0.08)))
+                                    .foregroundStyle(active ? .white : .primary)
+                                }
+                                .buttonStyle(.plain)
+                                .help(collocationHelp(col))
+                            }
+                        }
+                    }
+                    .padding(16)
+                }
+            }
+
+            if !activeSentences.isEmpty {
+                sentencesSection
+            }
+        }
+    }
+
+    private var sentencesSection: some View {
+        let sourceSentences = displayedSentences
+        let visibleList = showAllSentences ? sourceSentences : Array(sourceSentences.prefix(4))
+
+        return GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Label("Example Sentences", systemImage: "text.quote")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .help("Real example sentences that use this word. Click any underlined word to open it.")
+
+                    if let src = insights.fallbackSourceWord {
+                        if let srcId = insights.fallbackSourceEntryId {
+                            Button {
+                                engine.openWordEntry(entryId: srcId)
+                            } label: {
+                                Label("via \(src)", systemImage: "arrow.up.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.orange)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Capsule().fill(Color.orange.opacity(0.18)))
+                            }
+                            .buttonStyle(.plain)
+                            .help("No direct examples; showing usage from related word \(src). Click to open \(src).")
+                        } else {
+                            Text("via \(src)")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.orange)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(Color.orange.opacity(0.18)))
+                        }
+                    }
+
+                    Spacer()
+
+                    if sourceSentences.count > 4 {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showAllSentences.toggle()
+                            }
+                        } label: {
+                            Text(showAllSentences ? "Show Less" : "Show All (\(sourceSentences.count))")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                ForEach(visibleList) { sent in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Spacer(minLength: 0)
+                            SpeakerButton(text: sent.jpText, variant: .compact,
+                                          extraHelp: "Hear this sentence read aloud in Japanese.")
+                        }
+
+                        SentenceFlowView(
+                            segments: sent.segments,
+                            hideKana: hideKanaActive
+                        ) { targetEntryId in
+                            engine.openWordEntry(entryId: targetEntryId)
+                        }
+
+                        if !hideGlossActive {
+                            Text(sent.enText)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if sent.id != visibleList.last?.id {
+                        Divider().opacity(0.25)
+                    }
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    // MARK: - Verb / Adjective Conjugation Matrix
+
+    private func inflectionMatrixSection(title: String, forms: [InflectionForm]) -> some View {
+        GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label(title, systemImage: "tablecells")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .help("Conjugation matrix — tap a card to copy, or click Speak to hear it.")
+                    Spacer()
+                    Text("Tap card to copy")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 10)], spacing: 10) {
+                    ForEach(forms) { form in
+                        let isCopied = copiedInflectionId == form.id
+                        HStack(alignment: .center, spacing: 8) {
+                            Button {
+                                engine.copyText(form.surface)
+                                copiedInflectionId = form.id
+                                Task {
+                                    try? await Task.sleep(for: .seconds(1.2))
+                                    await MainActor.run {
+                                        if copiedInflectionId == form.id { copiedInflectionId = nil }
+                                    }
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(spacing: 4) {
+                                        Text(form.label.uppercased())
+                                            .font(.caption2.weight(.bold))
+                                            .foregroundStyle(.secondary)
+                                        if isCopied {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.caption2)
+                                                .foregroundStyle(.green)
+                                        }
+                                    }
+                                    Text(form.surface)
+                                        .font(.headline.weight(.bold))
+                                    if !hideKanaActive && form.kana != form.surface {
+                                        Text(form.kana)
+                                            .font(.caption)
+                                            .foregroundStyle(Color.accentColor)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            SpeakerButton(
+                                text: form.kana.isEmpty ? form.surface : form.kana,
+                                variant: .compact,
+                                extraHelp: "Hear \(form.label) form (\(form.surface))"
+                            )
+                        }
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.primary.opacity(isCopied ? 0.10 : 0.055))
+                        )
+                        .help("\(form.label): \(form.surface)\(form.kana != form.surface ? " (\(form.kana))" : "") — tap to copy")
+                    }
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    /// Hover tooltip for a single Corpus Collocation chip. Decodes the
+    /// particle-slot `pattern` (the `〜` marks the open side), names its
+    /// grammatical `roleLabel`, and explains the `×N` count as the number
+    /// of example sentences that show the pairing (a relative-frequency
+    /// signal: higher = a more typical neighbour).
+    private func collocationHelp(_ col: CollocationPattern) -> String {
+        var position: String
+        var particle: String
+        if col.pattern.hasPrefix("〜") {
+            particle = String(col.pattern.dropFirst().split(separator: " ").first ?? "…")
+            position = "just before"
+        } else {
+            particle = String(col.pattern.dropLast().last ?? "…")
+            position = "just after"
+        }
+        let inSentences = col.count == 1 ? "1 example sentence" : "\(col.count) example sentences"
+        return "『\(col.pattern)』  \(col.roleLabel) — the particle \(particle) sits \(position) the headword. "
+            + "The ×\(col.count) shows this pairing occurs in \(inSentences); higher numbers mark more typical neighbours."
+    }
+
+    private func telemetryPill(text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(tint.opacity(0.16)))
+    }
+}
+
+// MARK: - Pitch-Accent Mora Contour Diagram
+
+struct PitchAccentContourView: View {
+    let contour: PitchAccentContour
+
+    var body: some View {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(contour.patternName)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.accentColor)
+                Text(contour.patternSublabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(alignment: .bottom, spacing: 0) {
+                ForEach(Array(contour.morae.enumerated()), id: \.offset) { idx, mora in
+                    let isHigh = contour.highStates[idx]
+                    let isDropPoint = (contour.downstep > 0 && idx + 1 == Int(contour.downstep))
+                    let nextHigh: Bool? = {
+                        if idx + 1 < contour.highStates.count {
+                            return contour.highStates[idx + 1]
+                        } else {
+                            // No connector to the trailing particle when it is hidden.
+                            return contour.showParticle ? contour.particleHigh : nil
+                        }
+                    }()
+
+                    HStack(spacing: 0) {
+                        VStack(spacing: 4) {
+                            ZStack {
+                                Color.clear.frame(width: 24, height: 22)
+                                Circle()
+                                    .fill(isHigh ? Color.accentColor : Color.primary.opacity(0.55))
+                                    .frame(width: 8, height: 8)
+                                    .offset(y: isHigh ? -6 : 6)
+                            }
+                            Text(mora)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
+                        }
+
+                        if let nh = nextHigh {
+                            PitchConnectorSegment(fromHigh: isHigh, toHigh: nh, isDrop: isDropPoint)
+                                .frame(width: 12, height: 38)
+                        }
+                    }
+                }
+
+                // Trailing grammatical particle node (が) — rendered for nouns only,
+                // since が after a conjugated verb/adjective looks ungrammatical.
+                if contour.showParticle {
+                    VStack(spacing: 4) {
+                        ZStack {
+                            Color.clear.frame(width: 22, height: 22)
+                            Circle()
+                                .strokeBorder(contour.particleHigh ? Color.accentColor : Color.primary.opacity(0.45), lineWidth: 1.5)
+                                .frame(width: 8, height: 8)
+                                .offset(y: contour.particleHigh ? -6 : 6)
+                        }
+                        Text("が")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.primary.opacity(0.055))
+            )
+        }
+    }
+}
+
+private struct PitchConnectorSegment: View {
+    let fromHigh: Bool
+    let toHigh: Bool
+    let isDrop: Bool
+
+    var body: some View {
+        Canvas { ctx, size in
+            let y1: CGFloat = fromHigh ? 6 : 18
+            let y2: CGFloat = toHigh ? 6 : 18
+            var path = Path()
+            path.move(to: CGPoint(x: 0, y: y1))
+            path.addLine(to: CGPoint(x: size.width, y: y2))
+            ctx.stroke(
+                path,
+                with: .color(isDrop ? Color.orange : Color.accentColor.opacity(0.75)),
+                lineWidth: isDrop ? 2.0 : 1.5
+            )
+        }
+    }
+}
+
+// MARK: - Interactive Sentence Token Flow
+
+struct SentenceFlowView: View {
+    let segments: [SentenceSegment]
+    let hideKana: Bool
+    let onTapEntry: (UInt32) -> Void
+
+    var body: some View {
+        WrappingHStack(alignment: .bottom, horizontalSpacing: 2, verticalSpacing: 6) {
+            ForEach(segments) { seg in
+                let isInteractive = (seg.entryId != nil && seg.entryId! > 0)
+                Button {
+                    if let eid = seg.entryId, eid > 0 {
+                        onTapEntry(eid)
+                    }
+                } label: {
+                    VStack(spacing: 0) {
+                        if let furi = seg.furigana, !furi.isEmpty, !hideKana {
+                            Text(furi)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(" ")
+                                .font(.system(size: 10))
+                                .opacity(0)
+                        }
+                        Text(seg.text)
+                            .font(.title3)
+                            .foregroundStyle(isInteractive ? Color.primary : Color.secondary)
+                            .underline(isInteractive, color: Color.accentColor.opacity(0.45))
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(!isInteractive)
+            }
+        }
+    }
+}
+
+struct WrappingHStack: Layout {
+    var alignment: VerticalAlignment = .center
+    var horizontalSpacing: CGFloat = 4
+    var verticalSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let proposed = proposal.width
+        let effectiveLimit = (proposed != nil && proposed!.isFinite && proposed! > 0) ? proposed! : 10_000
+        var currentX: CGFloat = 0
+        var currentY: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var maxRowWidth: CGFloat = 0
+
+        for sub in subviews {
+            let size = sub.sizeThatFits(.unspecified)
+            if currentX + size.width > effectiveLimit && currentX > 0 {
+                maxRowWidth = max(maxRowWidth, currentX - horizontalSpacing)
+                currentX = 0
+                currentY += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            currentX += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        if currentX > 0 {
+            maxRowWidth = max(maxRowWidth, currentX - horizontalSpacing)
+        }
+        let finalWidth = (proposed != nil && proposed!.isFinite) ? min(proposed!, maxRowWidth) : maxRowWidth
+        return CGSize(width: max(0, finalWidth), height: currentY + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var currentX = bounds.minX
+        var currentY = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for sub in subviews {
+            let size = sub.sizeThatFits(.unspecified)
+            if currentX + size.width > bounds.maxX + 0.5 && currentX > bounds.minX {
+                currentX = bounds.minX
+                currentY += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            sub.place(at: CGPoint(x: currentX, y: currentY), proposal: .unspecified)
+            currentX += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
+// MARK: - Kanji Detail & Stroke Vector View
+
+struct KanjiDetailView: View {
+    @ObservedObject var engine: DaiJishowEngine
+    let kanji: KanjiDetail
+
+    @State private var animatedStrokeCount: Int = 999
+    @State private var isPlayingStrokes: Bool = false
+    @State private var strokeTask: Task<Void, Never>? = nil
+    @State private var peekedKana: Bool = false
+    @State private var peekedGloss: Bool = false
+    @State private var headerWidth: CGFloat = 1000
+
+    private var hideKanaActive: Bool {
+        engine.recallMode == .hideKana && !peekedKana
+    }
+
+    private var hideGlossActive: Bool {
+        engine.recallMode == .hideGloss && !peekedGloss
+    }
+
+    private var gradeBadgeText: String? {
+        switch kanji.grade {
+        case 1...6: return "Grade \(kanji.grade)"
+        case 8: return "Secondary Jōyō"
+        case 9, 10: return "Jinmeiyō"
+        default: return nil
+        }
+    }
+
+    private var primarySpeakableReading: String {
+        if let on = kanji.onReadings.first, !on.isEmpty { return on }
+        if let kun = kanji.kunReadings.first, !kun.isEmpty { return kun }
+        if let firstEntry = kanji.standaloneEntries.first, !firstEntry.header.kanaHead.isEmpty {
+            return firstEntry.header.kanaHead
+        }
+        return ""
+    }
+
+    /// The "Vocabulary & Compounds Containing" list, filtered/ordered by the
+    /// user's chosen display mode. `relatedWords` already holds every word
+    /// containing the glyph (prevalence-sorted), so this is pure client-side
+    /// filtering.
+    private var displayRelatedWords: [WordHit] {
+        let glyph = kanji.glyph
+        switch engine.kanjiRelatedMode {
+        case .prevalence:
+            return kanji.relatedWords
+        case .startsWith:
+            return kanji.relatedWords.filter { $0.displayHeadword.hasPrefix(glyph) }
+        case .endsWith:
+            return kanji.relatedWords.filter { $0.displayHeadword.hasSuffix(glyph) }
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                if let title = kanji.specialCaseTitle, let explanation = kanji.specialCaseExplanation {
+                    GlassCard(cornerRadius: 18, highlightOpacity: 0.36, surface: .content) {
+                        HStack(alignment: .top, spacing: 14) {
+                            Image(systemName: "info.circle.fill")
+                                .font(.title2)
+                                .foregroundStyle(.orange)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(title)
+                                    .font(.headline.weight(.bold))
+                                Text(explanation)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(18)
+                    }
+                }
+
+                Group {
+                    if isRowCompact(headerWidth, threshold: 760) {
+                        VStack(alignment: .leading, spacing: 18) {
+                            strokeVectorCard
+                                .frame(maxWidth: .infinity)
+                            kanjiInfoCard
+                        }
+                    } else {
+                        HStack(alignment: .top, spacing: 22) {
+                            strokeVectorCard
+                            kanjiInfoCard
+                        }
+                    }
+                }
+                .measureWidth(into: $headerWidth)
+
+                if !kanji.idioms.isEmpty {
+                    GlassCard(cornerRadius: 20, surface: .content) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Label("Idioms, Yojijukugo & Proverbs", systemImage: "quote.opening")
+                                    .font(.headline)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(kanji.idioms.count) expressions")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: 10, alignment: .top)],
+                                alignment: .leading,
+                                spacing: 10
+                            ) {
+                                ForEach(kanji.idioms) { idiom in
+                                    Button {
+                                        engine.openWordEntry(entryId: idiom.entryId)
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            HStack(spacing: 6) {
+                                                Text(idiom.displayHeadword)
+                                                    .font(.headline.weight(.bold))
+                                                    .lineLimit(1)
+                                                Text(idiom.shortKindLabel)
+                                                    .font(.caption2.weight(.bold))
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 2)
+                                                    .background(Capsule().fill(Color.orange.opacity(0.18)))
+                                                    .foregroundStyle(.orange)
+                                                    .fixedSize()
+                                            }
+                                            if !hideKanaActive && !idiom.kanaHead.isEmpty {
+                                                Text(idiom.kanaHead)
+                                                    .font(.caption)
+                                                    .foregroundStyle(Color.accentColor)
+                                                    .lineLimit(1)
+                                            }
+                                            if !hideGlossActive && !idiom.figurativeGloss.isEmpty {
+                                                Text(idiom.figurativeGloss)
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(2)
+                                            }
+                                        }
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                        .padding(12)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                .fill(Color.primary.opacity(0.055))
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                        .strokeBorder(Color.primary.opacity(0.11), lineWidth: 1)
+                                                )
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                        .padding(20)
+                    }
+                }
+
+                if !kanji.standaloneEntries.isEmpty {
+                    GlassCard(cornerRadius: 20, surface: .content) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Standalone Dictionary Entries (\(kanji.glyph))")
+                                .font(.headline)
+                                .foregroundStyle(.secondary)
+
+                            ForEach(kanji.standaloneEntries, id: \.header.id) { entry in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                        Text(entry.header.displayHeadword)
+                                            .font(.title2.weight(.bold))
+                                        if !entry.header.kanaHead.isEmpty && !hideKanaActive {
+                                            Text(entry.header.kanaHead)
+                                                .font(.headline)
+                                                .foregroundStyle(Color.accentColor)
+                                        }
+                                        if !entry.header.kanaHead.isEmpty {
+                                            SpeakerButton(
+                                                text: entry.header.kanaHead,
+                                                variant: .compact,
+                                                extraHelp: "Hear standalone pronunciation of \(entry.header.displayHeadword)"
+                                            )
+                                        }
+                                        if entry.header.pitchAccent != 255 && !hideKanaActive {
+                                            Text("[\(entry.header.pitchAccent)]")
+                                                .font(.caption.monospacedDigit())
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Button {
+                                            engine.openWordEntry(entryId: entry.header.id)
+                                        } label: {
+                                            Label("Full Entry", systemImage: "arrow.up.forward.circle.fill")
+                                                .font(.caption.weight(.semibold))
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 5)
+                                                .background(Capsule().fill(Color.primary.opacity(0.10)))
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+
+                                    if !hideGlossActive {
+                                        ForEach(entry.senses) { sense in
+                                            HStack(alignment: .top, spacing: 8) {
+                                                Text("\(sense.id + 1).")
+                                                    .font(.subheadline.monospacedDigit().weight(.bold))
+                                                    .foregroundStyle(.secondary)
+                                                Text(sense.enGlosses)
+                                                    .font(.body)
+                                                    .textSelection(.enabled)
+                                            }
+                                        }
+                                    }
+                                }
+                                if entry.header.id != kanji.standaloneEntries.last?.header.id {
+                                    Divider().opacity(0.3)
+                                }
+                            }
+                        }
+                        .padding(20)
+                    }
+                }
+
+                if !kanji.relatedWords.isEmpty {
+                    GlassCard(cornerRadius: 20, surface: .content) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Vocabulary & Compounds Containing \(kanji.glyph)")
+                                        .font(.headline)
+                                        .foregroundStyle(.secondary)
+                                        .help("Every dictionary word that contains this kanji, sorted by how often it appears in the corpus. Switch the view to only show words that start with, or end with, the kanji.")
+                                    Spacer()
+                                    Text("\(displayRelatedWords.count) of \(kanji.relatedWords.count) words")
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Picker("Display mode", selection: $engine.kanjiRelatedMode) {
+                                    ForEach(KanjiRelatedDisplayMode.allCases) { mode in
+                                        Text(mode.id).tag(mode)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .fixedSize()
+                                .help(engine.kanjiRelatedMode.help)
+                            }
+
+                            if displayRelatedWords.isEmpty {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "magnifyingglass")
+                                        .foregroundStyle(.secondary)
+                                    Text("No words \(engine.kanjiRelatedMode == .startsWith ? "start with" : "end with") \(kanji.glyph) in this view.")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else {
+                                ForEach(displayRelatedWords) { word in
+                                    Button {
+                                        engine.openWordEntry(entryId: word.id)
+                                    } label: {
+                                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                            Text(word.displayHeadword)
+                                                .font(.headline.weight(.bold))
+                                                .frame(minWidth: 96, alignment: .leading)
+
+                                            if !hideKanaActive {
+                                                Text(word.kanaHead)
+                                                    .font(.subheadline)
+                                                    .foregroundStyle(Color.accentColor)
+                                                    .frame(minWidth: 110, alignment: .leading)
+                                            }
+
+                                            if !hideGlossActive {
+                                                Text(word.primaryGloss)
+                                                    .font(.subheadline)
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(2)
+                                            }
+
+                                            Spacer()
+
+                                            if word.isName {
+                                                Text("Name")
+                                                    .font(.caption2.weight(.semibold))
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 2)
+                                                    .background(Capsule().fill(Color.purple.opacity(0.22)))
+                                                    .foregroundStyle(.purple)
+                                            }
+
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .padding(.vertical, 6)
+                                        .padding(.horizontal, 10)
+                                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("\(word.displayHeadword) — \(word.kanaHead)\n\(word.primaryGloss)")
+                                }
+                            }
+                        }
+                        .padding(20)
+                    }
+                } else if kanji.standaloneEntries.isEmpty {
+                    GlassCard(cornerRadius: 18, surface: .content) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "tray")
+                                .foregroundStyle(.secondary)
+                            Text(engine.includeNames
+                                 ? "No dictionary entries or proper names containing \(kanji.glyph) were found in the active database."
+                                 : "No standard dictionary words found for \(kanji.glyph). Enable \"Names\" in the top bar to search proper names.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding(18)
+                    }
+                }
+            }
+            .padding(28)
+            .textSelection(.enabled)
+            .contextMenu {
+                Button {
+                    engine.copyText(kanji.copyText)
+                } label: {
+                    Label("Copy Kanji", systemImage: "doc.on.doc")
+                }
+                Divider()
+                Button {
+                    engine.copyText(kanji.glyph)
+                } label: {
+                    Label("Copy Glyph", systemImage: "text.cursor")
+                }
+            }
+        }
+        .onAppear {
+            resetStrokePlayback()
+        }
+        .onChange(of: kanji.codepoint) { _, _ in
+            peekedKana = false
+            peekedGloss = false
+            resetStrokePlayback()
+        }
+        .onChange(of: engine.recallMode) { _, _ in
+            peekedKana = false
+            peekedGloss = false
+        }
+        .onDisappear {
+            strokeTask?.cancel()
+            strokeTask = nil
+            isPlayingStrokes = false
+        }
+    }
+
+    private var strokeVectorCard: some View {
+        let totalStrokes = kanji.strokePolylines.count
+        let shownStrokes = min(animatedStrokeCount, totalStrokes)
+        let highlightActive = isPlayingStrokes || shownStrokes < totalStrokes
+
+        return GlassCard(cornerRadius: 24, surface: .content) {
+            VStack(spacing: 12) {
+                if totalStrokes == 0 {
+                    VStack(spacing: 8) {
+                        Text(kanji.glyph)
+                            .font(.system(size: 120, weight: .bold))
+                            .foregroundStyle(.primary)
+                        Text("No KanjiVG Stroke Data")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(width: 240, height: 240)
+                } else {
+                    KanjiVectorDiagram(
+                        polylines: kanji.strokePolylines,
+                        visibleCount: shownStrokes,
+                        highlightLatest: highlightActive
+                    )
+                    .frame(width: 240, height: 240)
+
+                    VStack(spacing: 8) {
+                        Text("Stroke \(shownStrokes) / \(totalStrokes)")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 6) {
+                            Button {
+                                stepStrokeBackward()
+                            } label: {
+                                Image(systemName: "backward.frame.fill")
+                                    .frame(width: 30, height: 28)
+                            }
+                            .buttonStyle(.plain)
+                            .background(Circle().fill(Color.primary.opacity(0.08)))
+                            .disabled(shownStrokes <= 0)
+                            .djAccessibleControl(label: "Previous Stroke")
+                            .help("Step back one stroke")
+
+                            Button {
+                                toggleStrokePlayback()
+                            } label: {
+                                Label(
+                                    isPlayingStrokes ? "Pause" : (shownStrokes >= totalStrokes ? "Replay" : "Play"),
+                                    systemImage: isPlayingStrokes ? "pause.fill" : "play.fill"
+                                )
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(Color.accentColor.opacity(0.24)))
+                            }
+                            .buttonStyle(.plain)
+                            .help(isPlayingStrokes ? "Pause stroke animation" : "Animate stroke order")
+
+                            Button {
+                                stepStrokeForward()
+                            } label: {
+                                Image(systemName: "forward.frame.fill")
+                                    .frame(width: 30, height: 28)
+                            }
+                            .buttonStyle(.plain)
+                            .background(Circle().fill(Color.primary.opacity(0.08)))
+                            .disabled(shownStrokes >= totalStrokes)
+                            .djAccessibleControl(label: "Next Stroke")
+                            .help("Step forward one stroke")
+
+                            Button {
+                                replayStrokesFromStart()
+                            } label: {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .frame(width: 30, height: 28)
+                            }
+                            .buttonStyle(.plain)
+                            .background(Circle().fill(Color.primary.opacity(0.08)))
+                            .djAccessibleControl(label: "Restart Stroke Animation")
+                            .help("Restart from stroke 1")
+                        }
+                    }
+                }
+            }
+            .padding(20)
+        }
+    }
+
+    private var kanjiInfoCard: some View {
+        let radicalIds = RadicalCatalog.parseComponentRadicalIds(kanji.componentRadicals)
+        let resolvedMeaning = kanji.meanings.isEmpty
+            ? (kanji.standaloneEntries.first?.header.primaryGloss ?? kanji.unicodeBlockLabel)
+            : kanji.meanings
+
+        return GlassCard(cornerRadius: 24, surface: .content) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    Text(kanji.glyph)
+                        .font(.system(size: 52, weight: .bold))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        if hideGlossActive {
+                            HStack(spacing: 10) {
+                                Text("Meanings hidden")
+                                    .font(.title3.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.16)) { peekedGloss = true }
+                                } label: {
+                                    Label("Peek Meaning", systemImage: "eye")
+                                        .font(.caption.weight(.semibold))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(Capsule().fill(Color.primary.opacity(0.10)))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        } else {
+                            Text(resolvedMeaning)
+                                .font(.title2.weight(.bold))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Text(kanji.strokes > 0
+                             ? "\(kanji.unicodeHex) • \(kanji.strokes) strokes • Radical #\(kanji.radicalId)"
+                             : "\(kanji.unicodeHex) • \(kanji.unicodeBlockLabel)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    HStack(spacing: 8) {
+                        if !primarySpeakableReading.isEmpty {
+                            SpeakerButton(
+                                text: primarySpeakableReading,
+                                variant: .compact,
+                                extraHelp: "Hear primary reading (\(primarySpeakableReading))"
+                            )
+                        }
+                        BookmarkDeckControl(
+                            engine: engine,
+                            studyStore: engine.studyStore,
+                            item: engine.studyItem(for: kanji),
+                            compact: false
+                        )
+                    }
+                }
+
+                // Kanji Classification & Indexing Metadata Pills
+                WrappingHStack(alignment: .center, horizontalSpacing: 7, verticalSpacing: 7) {
+                    if kanji.jlpt > 0 {
+                        metadataPill(text: "JLPT N\(kanji.jlpt)", tint: .cyan)
+                    }
+                    if let gradeText = gradeBadgeText {
+                        metadataPill(text: gradeText, tint: .green)
+                    }
+                    if kanji.freqRank > 0 && kanji.freqRank < 999_999 {
+                        metadataPill(text: "Freq #\(kanji.freqRank)", tint: .indigo)
+                    }
+                    if !kanji.skipCodeLabel.isEmpty {
+                        metadataPill(text: "SKIP \(kanji.skipCodeLabel)", tint: .orange)
+                            .help("System of Kanji Indexing by Patterns code")
+                    }
+                    if !kanji.fourCornerLabel.isEmpty {
+                        metadataPill(text: "4-Corner \(kanji.fourCornerLabel)", tint: .purple)
+                            .help("Four-Corner Method index code")
+                    }
+                    if let kyujitai = kanji.kyujitaiGlyph,
+                       let scalar = kyujitai.unicodeScalars.first {
+                        Button {
+                            engine.openKanjiDetail(codepoint: scalar.value)
+                        } label: {
+                            metadataPill(text: "旧字体: \(kyujitai)", tint: .yellow)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open traditional (kyūjitai) kanji form \(kyujitai)")
+                    }
+                }
+
+                if hideKanaActive {
+                    HStack(spacing: 10) {
+                        Text("Readings hidden (Recall Mode)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.16)) { peekedKana = true }
+                        } label: {
+                            Label("Peek Readings", systemImage: "eye")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Capsule().fill(Color.primary.opacity(0.10)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } else {
+                    if !kanji.onReadings.isEmpty {
+                        HStack(spacing: 8) {
+                            Text("On'yomi:")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.secondary)
+                            Text(kanji.onReadings.joined(separator: "、"))
+                                .font(.headline)
+                            SpeakerButton(
+                                text: kanji.onReadings.first ?? "",
+                                variant: .compact,
+                                extraHelp: "Hear On'yomi reading (\(kanji.onReadings.first ?? ""))"
+                            )
+                        }
+                    }
+                    if !kanji.kunReadings.isEmpty {
+                        HStack(spacing: 8) {
+                            Text("Kun'yomi:")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.secondary)
+                            Text(kanji.kunReadings.joined(separator: "、"))
+                                .font(.headline)
+                                .foregroundStyle(.secondary)
+                            SpeakerButton(
+                                text: kanji.kunReadings.first ?? "",
+                                variant: .compact,
+                                extraHelp: "Hear Kun'yomi reading (\(kanji.kunReadings.first ?? ""))"
+                            )
+                        }
+                    }
+                }
+
+                if !radicalIds.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Component Radicals (Tap to Search):")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        WrappingHStack(alignment: .center, horizontalSpacing: 8, verticalSpacing: 8) {
+                            ForEach(radicalIds, id: \.self) { radId in
+                                let meta = RadicalCatalog.meta(for: radId)
+                                Button {
+                                    engine.openRadicalBuilder(withRadicals: [radId], targetStrokes: 0)
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(meta.glyph)
+                                            .font(.headline.weight(.bold))
+                                        Text(meta.name)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                } else if !kanji.componentRadicals.isEmpty {
+                    Text("Components: \(kanji.componentRadicals)")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                WrappingHStack(alignment: .center, horizontalSpacing: 10, verticalSpacing: 10) {
+                    Button {
+                        engine.openFisheye(codepoint: kanji.codepoint)
+                    } label: {
+                        Label("Explore Compound Graph", systemImage: "circle.hexagongrid.fill")
+                            .font(.subheadline.weight(.bold))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+                            .background(Capsule().fill(Color.accentColor))
+                            .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+
+                    if !radicalIds.isEmpty {
+                        Button {
+                            engine.openRadicalBuilder(withRadicals: radicalIds, targetStrokes: kanji.strokes)
+                        } label: {
+                            Label("Search by All \(radicalIds.count) Radicals", systemImage: "puzzlepiece.extension.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 9)
+                                .background(Capsule().fill(Color.primary.opacity(0.12)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(22)
+        }
+    }
+
+    private func metadataPill(text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(tint.opacity(0.16)))
+    }
+
+    private func resetStrokePlayback() {
+        strokeTask?.cancel()
+        strokeTask = nil
+        isPlayingStrokes = false
+        animatedStrokeCount = kanji.strokePolylines.count
+    }
+
+    private func replayStrokesFromStart() {
+        strokeTask?.cancel()
+        animatedStrokeCount = 0
+        startStrokeAnimationLoop()
+    }
+
+    private func toggleStrokePlayback() {
+        if isPlayingStrokes {
+            strokeTask?.cancel()
+            strokeTask = nil
+            isPlayingStrokes = false
+            return
+        }
+        if animatedStrokeCount >= kanji.strokePolylines.count {
+            animatedStrokeCount = 0
+        }
+        startStrokeAnimationLoop()
+    }
+
+    private func stepStrokeBackward() {
+        strokeTask?.cancel()
+        strokeTask = nil
+        isPlayingStrokes = false
+        withAnimation(.easeOut(duration: 0.14)) {
+            animatedStrokeCount = max(0, min(animatedStrokeCount, kanji.strokePolylines.count) - 1)
+        }
+    }
+
+    private func stepStrokeForward() {
+        strokeTask?.cancel()
+        strokeTask = nil
+        isPlayingStrokes = false
+        withAnimation(.easeOut(duration: 0.14)) {
+            animatedStrokeCount = min(kanji.strokePolylines.count, animatedStrokeCount + 1)
+        }
+    }
+
+    private func startStrokeAnimationLoop() {
+        let total = kanji.strokePolylines.count
+        guard total > 0 else { return }
+        isPlayingStrokes = true
+        let startFrom = min(animatedStrokeCount, total)
+        strokeTask = Task {
+            for nextCount in (startFrom + 1)...total {
+                try? await Task.sleep(for: .milliseconds(260))
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        animatedStrokeCount = nextCount
+                    }
+                }
+            }
+            if !Task.isCancelled {
+                await MainActor.run {
+                    isPlayingStrokes = false
+                    strokeTask = nil
+                }
+            }
+        }
+    }
+}
+
+struct KanjiVectorDiagram: View {
+    let polylines: [[CGPoint]]
+    let visibleCount: Int
+    var highlightLatest: Bool = false
+
+    var body: some View {
+        Canvas { ctx, size in
+            let w = size.width
+            let h = size.height
+
+            var grid = Path()
+            grid.move(to: CGPoint(x: w * 0.5, y: 0))
+            grid.addLine(to: CGPoint(x: w * 0.5, y: h))
+            grid.move(to: CGPoint(x: 0, y: h * 0.5))
+            grid.addLine(to: CGPoint(x: w, y: h * 0.5))
+            ctx.stroke(grid, with: .color(.primary.opacity(0.14)), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+
+            let count = min(visibleCount, polylines.count)
+            for idx in 0..<count {
+                let pts = polylines[idx]
+                guard pts.count >= 2 else { continue }
+                var path = Path()
+                path.move(to: CGPoint(x: pts[0].x * w, y: pts[0].y * h))
+                for p in pts.dropFirst() {
+                    path.addLine(to: CGPoint(x: p.x * w, y: p.y * h))
+                }
+                let isLatest = highlightLatest && (idx == count - 1)
+                ctx.stroke(
+                    path,
+                    with: .color(isLatest ? Color.accentColor : Color.primary),
+                    style: StrokeStyle(lineWidth: isLatest ? 8.5 : 6.5, lineCap: .round, lineJoin: .round)
+                )
+
+                let startPt = CGPoint(x: pts[0].x * w, y: pts[0].y * h)
+                if isLatest {
+                    let haloRect = CGRect(x: startPt.x - 6, y: startPt.y - 6, width: 12, height: 12)
+                    ctx.stroke(Path(ellipseIn: haloRect), with: .color(.orange), lineWidth: 2)
+                }
+                ctx.draw(
+                    Text("\(idx + 1)")
+                        .font(.system(size: isLatest ? 11.5 : 10, weight: .bold, design: .rounded))
+                        .foregroundColor(isLatest ? .yellow : .orange),
+                    at: CGPoint(x: startPt.x - 8, y: startPt.y - 8)
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Compound Kanji screen (decompose a word into its per-kanji parts)
+
+/// A first-class screen that takes any multi-kanji word and decomposes it into its
+/// individual kanji — each inspectable on its own (its readings, meaning, JLPT/grade,
+/// and a drill into that kanji's *own* detail page or fisheye). The header surfaces
+/// the pedagogically interesting bit: how the compound's reading assembles from the
+/// parts, flagging 熟字訓 (jukujikun) when a part uses a meaning-based reading.
+///
+/// It is a pure-SwiftUI composition over the engine's existing per-kanji `kanjiDNA`
+/// (built by `build_per_kanji_ruby`); no new core data is needed. A literal
+/// multi-centered "fisheye of fisheyes" for the whole compound is a deliberate later
+/// step — each kanji here drills into its *single*-centered fisheye instead.
+struct CompoundKanjiView: View {
+    @ObservedObject var engine: DaiJishowEngine
+    @State private var wordQuery: String = ""
+    @FocusState private var isSearchFocused: Bool
+    @State private var peekedKana: Bool = false
+    @State private var peekedGloss: Bool = false
+
+    /// Canonical multi-kanji compounds for the empty-state chips / on-screen search.
+    private let exampleWords = ["漢字", "日本語", "勉強", "日本", "言葉"]
+
+    private var entry: EntryDetail? { engine.compoundEntry }
+    private var insights: WordLexicalInsights? { engine.compoundInsights }
+    private var parts: [WordKanjiDNA] { engine.compoundInsights?.kanjiDNA ?? [] }
+
+    private var hideKanaActive: Bool {
+        engine.recallMode == .hideKana && !peekedKana
+    }
+
+    private var hideGlossActive: Bool {
+        engine.recallMode == .hideGloss && !peekedGloss
+    }
+
+    /// The "Try:" chips: the most frequent compound for each recent kanji first
+    /// (personalized to what the user has been studying), padded with the canonical
+    /// examples when the ring is sparse, capped so the row stays tidy. Words are
+    /// de-duplicated, so `id: \.word` keeps the ForEach happy even for the
+    /// canonical fallback chips (which share a zero entry id).
+    private var tryChips: [CompoundExample] {
+        var seen = Set<String>()
+        var chips = engine.recentCompoundExamples.filter { seen.insert($0.word).inserted }
+        for w in exampleWords where seen.insert(w).inserted && chips.count < 6 {
+            chips.append(CompoundExample(entryId: 0, word: w, kana: "", seedGlyph: ""))
+        }
+        return Array(chips.prefix(6))
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                searchRow
+
+                if let notice = engine.compoundSearchNotice {
+                    Text(notice)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 4)
+                }
+
+                if let entry, !parts.isEmpty {
+                    headerCard(entry)
+                    readingInsightCard(entry)
+                    kanjiCards
+                } else if let entry {
+                    headerCard(entry)
+                    kanaNote
+                } else {
+                    emptyState
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 960)
+            .frame(maxWidth: .infinity, alignment: .top)
+            .textSelection(.enabled)
+            .contextMenu {
+                copyMenu
+            }
+        }
+        // The field is the primary input on this screen, so grab focus on arrival —
+        // this is the screen whose search the user mistook for the top omni-search,
+        // so making the field obvious and ready is the whole point.
+        .onAppear {
+            isSearchFocused = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .daiJishowFocusSearch)) { _ in
+            isSearchFocused = true
+        }
+        .onChange(of: entry?.header.id) { _, _ in
+            peekedKana = false
+            peekedGloss = false
+        }
+        .onChange(of: engine.recallMode) { _, _ in
+            peekedKana = false
+            peekedGloss = false
+        }
+    }
+
+    /// Right-click affordances on the whole screen: speak the headword, copy the
+    /// entry, or copy just the headword — mirroring the word-detail context menu so
+    /// nothing on the compound screen is un-copyable.
+    @ViewBuilder
+    private var copyMenu: some View {
+        if let entry {
+            Button {
+                SpeechEngine.shared.speak(entry.header.kanaHead)
+            } label: {
+                Label("Speak Headword", systemImage: "speaker.wave.2.fill")
+            }
+            .disabled(!SpeechEngine.shared.japaneseVoiceAvailable
+                      || entry.header.kanaHead.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Divider()
+            Button {
+                engine.copyText(entry.copyText)
+            } label: {
+                Label("Copy Entry", systemImage: "doc.on.doc")
+            }
+            Button {
+                engine.copyText(entry.header.displayHeadword)
+            } label: {
+                Label("Copy Headword", systemImage: "text.cursor")
+            }
+        } else {
+            Text("Nothing to copy yet — decompose a word first.")
+                .font(.caption)
+        }
+    }
+
+    // MARK: Search row
+
+    private var searchRow: some View {
+        GlassCard(cornerRadius: 16, surface: .content) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: "square.split.2x2.fill")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                    TextField("Decompose a word…  (e.g. 漢字, 日本語, 勉強)", text: $wordQuery)
+                        .textFieldStyle(.plain)
+                        .font(.title3)
+                        .focused($isSearchFocused)
+                        .onSubmit { engine.decomposeWordQuery(wordQuery) }
+                    Button("Decompose") {
+                        engine.decomposeWordQuery(wordQuery)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                    .disabled(wordQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+
+                WrappingHStack(alignment: .center, horizontalSpacing: 8, verticalSpacing: 6) {
+                    Text("Try:")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    ForEach(tryChips, id: \.word) { ex in
+                        tryChip(ex)
+                    }
+                }
+                .padding(.horizontal, 14)
+            }
+            .padding(.vertical, 12)
+        }
+    }
+
+    /// A single "Try:" chip. A personalized chip (seeded from a recent kanji) shows
+    /// the compound + kana and names the seed kanji in its tooltip; a canonical
+    /// fallback chip just shows the word.
+    private func tryChip(_ ex: CompoundExample) -> some View {
+        Button {
+            engine.decomposeWordQuery(ex.word)
+        } label: {
+            HStack(spacing: 5) {
+                Text(ex.word)
+                    .font(.caption.weight(.medium))
+                if !ex.kana.isEmpty && !hideKanaActive {
+                    Text(ex.kana)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.accentColor.opacity(0.14)))
+        }
+        .buttonStyle(.plain)
+        .help(ex.seedGlyph.isEmpty
+              ? "Decompose \(ex.word)"
+              : "Top compound for recent kanji \(ex.seedGlyph): \(ex.word)\(ex.kana.isEmpty ? "" : " (\(ex.kana))")")
+    }
+
+    // MARK: Header — the word with per-kanji ruby
+
+    private func headerCard(_ entry: EntryDetail) -> some View {
+        GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
+                    if entry.rubyCells.isEmpty {
+                        Text(entry.header.displayHeadword)
+                            .font(.system(size: 52, weight: .bold))
+                    } else {
+                        WrappingHStack(alignment: .bottom, horizontalSpacing: 8, verticalSpacing: 6) {
+                            ForEach(entry.rubyCells) { cell in
+                                VStack(spacing: 2) {
+                                    Text(hideKanaActive || cell.furigana.isEmpty ? " " : cell.furigana)
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(.secondary)
+                                        .opacity(hideKanaActive || cell.furigana.isEmpty ? 0 : 1)
+                                        .lineLimit(1)
+                                        .fixedSize()
+                                    Text(cell.surface)
+                                        .font(.system(size: 46, weight: .bold))
+                                }
+                            }
+                        }
+                    }
+                    Spacer()
+                    WrappingHStack(alignment: .center, horizontalSpacing: 8, verticalSpacing: 8) {
+                        if !entry.header.kanaHead.isEmpty {
+                            SpeakerButton(text: entry.header.kanaHead, variant: .headword)
+                                .help("Hear the headword \(entry.header.displayHeadword)")
+                        }
+                        BookmarkDeckControl(
+                            engine: engine,
+                            studyStore: engine.studyStore,
+                            item: engine.studyItem(for: entry, insights: insights),
+                            compact: false
+                        )
+                        Button {
+                            engine.openWordEntry(entryId: entry.header.id)
+                        } label: {
+                            Label("Show in context", systemImage: "text.book.closed.fill")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open \(entry.header.displayHeadword)'s full dictionary entry — definitions, examples, and inflections — instead of this decomposition")
+                    }
+                }
+
+                WrappingHStack(alignment: .center, horizontalSpacing: 10, verticalSpacing: 6) {
+                    if !entry.header.kanaHead.isEmpty {
+                        if hideKanaActive {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.16)) { peekedKana = true }
+                            } label: {
+                                Label("Peek Reading", systemImage: "eye")
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(Capsule().fill(Color.primary.opacity(0.10)))
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Text(entry.header.kanaHead)
+                                .font(.title3.weight(.medium))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if !entry.header.primaryGloss.isEmpty {
+                        if hideGlossActive {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.16)) { peekedGloss = true }
+                            } label: {
+                                Label("Peek Meaning", systemImage: "eye")
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(Capsule().fill(Color.primary.opacity(0.10)))
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Text(entry.header.primaryGloss)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .truncationMode(.tail)
+                        }
+                    }
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    // MARK: Reading insight — how the compound's reading assembles
+
+    private func readingInsightCard(_ entry: EntryDetail) -> some View {
+        // The honest "reading part" of a compound is the *ruby cell*, not a per-kanji
+        // on-reading: the corpus bundles multi-kanji subwords (e.g. 日本→にほん) into a
+        // single cell, so iterating per-kanji on-readings would misleadingly imply 日本語
+        // is read ニチ+ホン+ご. Iterate the cells instead: 日本(にほん) + 語(ご).
+        let cells = entry.rubyCells
+        let jukujikun = parts.filter { $0.isJukujikun }
+        return GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("How the reading assembles", systemImage: "waveform.path.ecg.rectangle")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .help("Each ruby cell shows the reading it carries *inside this compound*; the compound's reading is assembled from them, but is not always their sum.")
+
+                WrappingHStack(alignment: .center, horizontalSpacing: 10, verticalSpacing: 10) {
+                    ForEach(Array(cells.enumerated()), id: \.offset) { idx, cell in
+                        VStack(spacing: 4) {
+                            Text(hideKanaActive ? "•••" : (cell.furigana.isEmpty ? "—" : cell.furigana))
+                                .font(.caption.weight(cell.furigana.isEmpty ? .regular : .medium))
+                                .foregroundStyle(hideKanaActive || cell.furigana.isEmpty ? Color.secondary : Color.cyan)
+                                .lineLimit(1)
+                                .help(cell.furigana.isEmpty
+                                      ? "No reading recorded for \(cell.surface) in this compound."
+                                      : "\(cell.surface) is read \(cell.furigana) inside this compound.")
+                            Text(cell.surface)
+                                .font(.system(size: 28, weight: .bold))
+                        }
+                        if idx < cells.count - 1 {
+                            Text("+")
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text("→")
+                        .font(.title3.weight(.bold))
+                    VStack(spacing: 4) {
+                        Text(entry.header.displayHeadword)
+                            .font(.system(size: 28, weight: .bold))
+                        Text(hideKanaActive ? "•••" : (entry.header.kanaHead.isEmpty ? "—" : entry.header.kanaHead))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(hideKanaActive ? .secondary : Color.accentColor)
+                    }
+                }
+
+                if !jukujikun.isEmpty {
+                    Text("…uses 熟字訓 (jukujikun): \(jukujikun.map { $0.glyph }.joined(separator: "・")) takes a meaning-based reading here, not one in its own standard on/kun set.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("The compound's reading is assembled from the parts' on readings — not always their literal sum.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    // MARK: Per-kanji component cards (the core)
+
+    private var kanjiCards: some View {
+        GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Components (\(parts.count))", systemImage: "square.grid.2x2.fill")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .help("Each kanji that makes up this word. Open its detail page, or its own single-kanji fisheye, to inspect it on its own.")
+
+                WrappingHStack(alignment: .top, horizontalSpacing: 12, verticalSpacing: 12) {
+                    ForEach(parts) { part in
+                        kanjiCard(part)
+                    }
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    private func kanjiCard(_ part: WordKanjiDNA) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Text(part.glyph)
+                    .font(.system(size: 40, weight: .bold))
+                    .frame(width: 58, height: 58)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.primary.opacity(0.08))
+                    )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(hideGlossActive
+                             ? "Hidden"
+                             : (part.meanings.split(separator: ";").first.map(String.init) ?? "Kanji"))
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(hideGlossActive ? .secondary : .primary)
+                            .lineLimit(1)
+                        if part.strokes > 0 {
+                            Text("\(part.strokes)画")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        if !part.jlptLabel.isEmpty {
+                            Text(part.jlptLabel)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.cyan)
+                        }
+                        if !part.gradeLabel.isEmpty {
+                            Text(part.gradeLabel)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        if part.isJukujikun {
+                            Text("熟字訓")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.orange.opacity(0.22)))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+
+                    if !hideKanaActive {
+                        if !part.onReadings.isEmpty {
+                            readingTokenRow(label: "音", tokens: part.onReadings.prefix(4).map { $0 }, matched: part.matchedReadingNormalized)
+                        }
+                        if !part.kunReadings.isEmpty {
+                            readingTokenRow(label: "訓", tokens: part.kunReadings.prefix(4).map { $0 }, matched: part.matchedReadingNormalized)
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                if let read = part.intermediateReading {
+                    SpeakerButton(text: read, variant: .compact)
+                        .help(part.intermediateIsFallback
+                              ? "Hear \(part.glyph)'s on-reading \(read)"
+                              : "Hear \(part.glyph) read \(read) inside this compound")
+                }
+                Button {
+                    engine.openKanjiDetail(codepoint: part.codepoint)
+                } label: {
+                    Label("Detail", systemImage: "character.book.closed")
+                }
+                .controlSize(.small)
+                .help("Open \(part.glyph)'s detail page")
+
+                Button {
+                    engine.openFisheye(codepoint: part.codepoint)
+                } label: {
+                    Label("Graph", systemImage: "circle.hexagongrid.fill")
+                }
+                .controlSize(.small)
+                .help("Open \(part.glyph)'s own single-kanji compound graph — the whole compound's multi-centered fisheye is a later step")
+
+                Spacer()
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                )
+        )
+    }
+
+    private func readingTokenRow(label: String, tokens: [String], matched: String?) -> some View {
+        HStack(spacing: 5) {
+            Text(label)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
+            ForEach(Array(tokens.enumerated()), id: \.offset) { _, tok in
+                let isMatch = matched != nil && tok == matched
+                Text(tok)
+                    .font(.caption2.weight(isMatch ? .bold : .regular))
+                    .foregroundStyle(isMatch ? .cyan : .primary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(isMatch ? Color.cyan.opacity(0.18) : Color.primary.opacity(0.06)))
+            }
+        }
+    }
+
+    // MARK: States
+
+    private var kanaNote: some View {
+        GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.title)
+                    .foregroundStyle(.secondary)
+                Text("This word has no kanji to decompose — it's written in kana only.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text("Try a two-kanji word like 漢字 or 勉強.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(24)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "square.split.2x2.fill")
+                .font(.system(size: 56, weight: .light))
+                .foregroundStyle(.secondary)
+            VStack(spacing: 6) {
+                Text("Compound Kanji")
+                    .font(.title.weight(.bold))
+                Text("Decompose any multi-kanji word into its parts — inspect each kanji's readings & meaning, and see how the compound's reading assembles from them.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 460)
+            }
+            WrappingHStack(alignment: .center, horizontalSpacing: 8, verticalSpacing: 8) {
+                ForEach(exampleWords, id: \.self) { word in
+                    Button(word) {
+                        engine.decomposeWordQuery(word)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .help("Decompose \(word)")
+                }
+            }
+            Text("Or type a word above and press Enter.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(40)
+    }
+}
+
+// MARK: - 7-Slot Multi-Radical Builder View
+
+struct RadicalBuilderView: View {
+    @ObservedObject var engine: DaiJishowEngine
+    @State private var activeSlot: Int = 0
+    @State private var radicalStrokeFilter: Int = 0
+    @State private var radicalSearchText: String = ""
+    @State private var layoutWidth: CGFloat = 1000
+
+    private var filteredCatalog: [RadicalMeta] {
+        let q = radicalSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return RadicalCatalog.all.filter { rad in
+            if radicalStrokeFilter > 0 && rad.strokes != radicalStrokeFilter {
+                return false
+            }
+            if !q.isEmpty {
+                let idStr = String(rad.id)
+                let matchText = rad.glyph.contains(q)
+                    || rad.name.lowercased().contains(q)
+                    || rad.variants.contains(q)
+                    || idStr == q
+                if !matchText { return false }
+            }
+            return true
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            WrappingHStack(alignment: .center, horizontalSpacing: 10, verticalSpacing: 10) {
+                ForEach(0..<7, id: \.self) { slotIdx in
+                    let isFilled = slotIdx < engine.radicalSelectedIds.count
+                    let isSelectedSlot = (slotIdx == activeSlot)
+                    let radId = isFilled ? engine.radicalSelectedIds[slotIdx] : 0
+                    let meta = isFilled ? RadicalCatalog.meta(for: radId) : nil
+
+                    Button {
+                        if isFilled {
+                            var updated = engine.radicalSelectedIds
+                            updated.remove(at: slotIdx)
+                            activeSlot = min(slotIdx, updated.count)
+                            engine.searchRadicals(
+                                selectedIds: updated,
+                                targetStrokes: Int16(engine.radicalTargetStrokes),
+                                tolerance: engine.radicalStrokeTolerance
+                            )
+                        } else {
+                            activeSlot = slotIdx
+                        }
+                    } label: {
+                        VStack(spacing: 2) {
+                            Text(isFilled ? (meta?.glyph ?? "?") : "＋")
+                                .font(.system(size: 26, weight: .bold))
+                                .foregroundStyle(isFilled ? .primary : .secondary)
+
+                            Text(isFilled ? (meta?.name ?? "#\(radId)") : "Slot \(slotIdx + 1)")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        .frame(width: 68, height: 68)
+                        .background {
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .strokeBorder(
+                                            isSelectedSlot ? Color.accentColor : Color.primary.opacity(0.22),
+                                            lineWidth: isSelectedSlot ? 2.5 : 1
+                                        )
+                                }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help(isFilled ? "Remove \(meta?.glyph ?? "") (\(meta?.name ?? "")) from slot \(slotIdx + 1)" : "Select slot \(slotIdx + 1)")
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Total Kanji Strokes")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Stepper(
+                            engine.radicalTargetStrokes == 0 ? "Any Strokes" : "\(engine.radicalTargetStrokes) strokes",
+                            value: $engine.radicalTargetStrokes,
+                            in: 0...30
+                        )
+                        .onChange(of: engine.radicalTargetStrokes) { _, newVal in
+                            engine.searchRadicals(
+                                selectedIds: engine.radicalSelectedIds,
+                                targetStrokes: Int16(newVal),
+                                tolerance: engine.radicalStrokeTolerance
+                            )
+                        }
+
+                        if engine.radicalTargetStrokes > 0 {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Tolerance")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize()
+                                Picker("Stroke Tolerance", selection: $engine.radicalStrokeTolerance) {
+                                    Text("Exact").tag(Int8(0))
+                                    Text("±1").tag(Int8(1))
+                                    Text("±2").tag(Int8(2))
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                                .fixedSize(horizontal: true, vertical: false)
+                                .frame(minWidth: 120, alignment: .center)
+                                .onChange(of: engine.radicalStrokeTolerance) { _, newTol in
+                                    engine.searchRadicals(
+                                        selectedIds: engine.radicalSelectedIds,
+                                        targetStrokes: Int16(engine.radicalTargetStrokes),
+                                        tolerance: newTol
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+
+                if !engine.radicalSelectedIds.isEmpty || engine.radicalTargetStrokes > 0 {
+                    Button {
+                        activeSlot = 0
+                        engine.searchRadicals(selectedIds: [], targetStrokes: 0, tolerance: 0)
+                    } label: {
+                        Label("Clear", systemImage: "xmark.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(Color.primary.opacity(0.10)))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 14)
+
+            Group {
+                if isRowCompact(layoutWidth, threshold: 840) {
+                    VStack(spacing: 16) {
+                        catalogCard
+                            .frame(maxHeight: 310)
+                        matchesCard
+                    }
+                } else {
+                    HStack(alignment: .top, spacing: 20) {
+                        catalogCard
+                            .frame(maxWidth: 440)
+                        matchesCard
+                    }
+                }
+            }
+            .measureWidth(into: $layoutWidth)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 20)
+        }
+        .onAppear {
+            activeSlot = min(6, engine.radicalSelectedIds.count)
+        }
+    }
+
+    private var catalogCard: some View {
+        GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("214 Kangxi Radicals")
+                        .font(.headline)
+                    Spacer()
+                    Text("\(filteredCatalog.count) shown")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Filter radical by name, kanji, or #...", text: $radicalSearchText)
+                        .textFieldStyle(.plain)
+                    if !radicalSearchText.isEmpty {
+                        Button {
+                            radicalSearchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .djAccessibleControl(label: "Clear radical filter")
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        strokeFilterChip(label: "All", strokes: 0)
+                        ForEach(1...17, id: \.self) { st in
+                            if RadicalCatalog.all.contains(where: { $0.strokes == st }) {
+                                strokeFilterChip(label: "\(st)画", strokes: st)
+                            }
+                        }
+                    }
+                }
+
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 66))], spacing: 8) {
+                        ForEach(filteredCatalog) { rad in
+                            let isSelected = engine.radicalSelectedIds.contains(rad.id)
+                            Button {
+                                var updated = engine.radicalSelectedIds
+                                if let existingIdx = updated.firstIndex(of: rad.id) {
+                                    updated.remove(at: existingIdx)
+                                    activeSlot = min(existingIdx, updated.count)
+                                } else {
+                                    if activeSlot < updated.count {
+                                        updated[activeSlot] = rad.id
+                                    } else if updated.count < 7 {
+                                        updated.append(rad.id)
+                                    }
+                                    activeSlot = min(6, updated.count)
+                                }
+                                engine.searchRadicals(
+                                    selectedIds: updated,
+                                    targetStrokes: Int16(engine.radicalTargetStrokes),
+                                    tolerance: engine.radicalStrokeTolerance
+                                )
+                            } label: {
+                                VStack(spacing: 2) {
+                                    Text(rad.glyph)
+                                        .font(.system(size: 24, weight: .bold))
+                                    Text(rad.name)
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                    Text("\(rad.strokes)画")
+                                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                        .foregroundStyle(isSelected ? Color.accentColor : .secondary.opacity(0.85))
+                                }
+                                .frame(width: 64, height: 64)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(isSelected ? Color.accentColor.opacity(0.28) : Color.primary.opacity(0.06))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5)
+                                        )
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .help("Radical #\(rad.id): \(rad.glyph) (\(rad.name), \(rad.strokes) strokes)")
+                        }
+                    }
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    private var matchesCard: some View {
+        GlassCard(cornerRadius: 20, surface: .content) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Matching Kanji (\(engine.radicalMatches.count))")
+                        .font(.headline)
+                    Spacer()
+                    if engine.radicalTargetStrokes > 0 {
+                        Text("Filtered to \(engine.radicalTargetStrokes)\(engine.radicalStrokeTolerance > 0 ? " ±\(engine.radicalStrokeTolerance)" : "") strokes")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+
+                if engine.radicalMatches.isEmpty {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 8) {
+                            Image(systemName: "character.magnify")
+                                .font(.largeTitle)
+                                .foregroundStyle(.secondary)
+                            Text(engine.radicalSelectedIds.isEmpty && engine.radicalTargetStrokes == 0
+                                 ? "Pick one or more radicals, or set a stroke count above."
+                                 : "No Kanji match this exact radical + stroke combination.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding()
+                        Spacer()
+                    }
+                    Spacer()
+                } else {
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 68))], spacing: 10) {
+                            ForEach(engine.radicalMatches, id: \.self) { cp in
+                                let meta = engine.kanjiIndexItem(for: cp)
+                                Button {
+                                    engine.openKanjiDetail(codepoint: cp)
+                                } label: {
+                                    VStack(spacing: 2) {
+                                        Text(String(UnicodeScalar(cp)!))
+                                            .font(.system(size: 30, weight: .bold))
+                                        if let st = meta?.strokes, st > 0 {
+                                            Text("\(st)画")
+                                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .frame(width: 66, height: 66)
+                                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.08)))
+                                }
+                                .buttonStyle(.plain)
+                                .help(meta.map { "\($0.glyph) — \($0.meanings)" } ?? "Open kanji detail")
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    private func strokeFilterChip(label: String, strokes: Int) -> some View {
+        let active = (radicalStrokeFilter == strokes)
+        return Button {
+            radicalStrokeFilter = strokes
+        } label: {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(active ? Color.accentColor : Color.primary.opacity(0.08)))
+                .foregroundStyle(active ? .white : .primary)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Multi-Mode Kanji Lookup View
+
+struct KanjiLookupView: View {
+    @ObservedObject var engine: DaiJishowEngine
+
+    private let skipPatterns: [(id: Int, title: String, subtitle: String, icon: String)] = [
+        (1, "Left-Right (⿰)", "e.g. 明, 休, 時", "rectangle.split.2x1"),
+        (2, "Top-Bottom (⿱)", "e.g. 花, 男, 字", "rectangle.split.1x2"),
+        (3, "Enclosure (⿵/⿷/⿴)", "e.g. 国, 道, 医", "rectangle.inset.filled"),
+        (4, "Solid / Single", "e.g. 大, 木, 水", "square.fill")
+    ]
+
+    private let gradeOptions: [(id: Int, label: String)] = [
+        (1, "Grade 1 (80)"),
+        (2, "Grade 2 (160)"),
+        (3, "Grade 3 (200)"),
+        (4, "Grade 4 (202)"),
+        (5, "Grade 5 (193)"),
+        (6, "Grade 6 (191)"),
+        (8, "Secondary Jōyō"),
+        (9, "Jinmeiyō"),
+        (-5, "JLPT N5"),
+        (-4, "JLPT N4"),
+        (-3, "JLPT N3"),
+        (-2, "JLPT N2"),
+        (-1, "JLPT N1")
+    ]
+
+    var body: some View {
+        VStack(spacing: 16) {
+            GlassCard(cornerRadius: 20, surface: .content) {
+                VStack(alignment: .leading, spacing: 14) {
+                    WrappingHStack(alignment: .center, horizontalSpacing: 12, verticalSpacing: 10) {
+                        Picker("Lookup Mode", selection: $engine.kanjiLookupMode) {
+                            ForEach(KanjiLookupMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(minWidth: 460)
+                        .onChange(of: engine.kanjiLookupMode) { _, _ in
+                            engine.runKanjiLookup()
+                        }
+
+                        Picker("Sort By", selection: $engine.kanjiLookupSort) {
+                            ForEach(KanjiSortOrder.allCases) { order in
+                                Label(order.rawValue, systemImage: "arrow.up.arrow.down").tag(order)
+                            }
+                        }
+                        .frame(width: 185)
+                        .onChange(of: engine.kanjiLookupSort) { _, _ in
+                            engine.runKanjiLookup()
+                        }
+                    }
+
+                    modeControlsView
+                }
+                .padding(18)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 14)
+
+            GlassCard(cornerRadius: 20, surface: .content) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Indexed Kanji Results (\(engine.kanjiLookupResults.count))")
+                            .font(.headline)
+                        Spacer()
+                        Text("Tap any kanji (or press Enter) for strokes, readings & compounds")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if engine.kanjiLookupResults.isEmpty {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 8) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(.secondary)
+                                Text("No kanji matched the current \(engine.kanjiLookupMode.rawValue) filter.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        Spacer()
+                    } else {
+                        ScrollView {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96))], spacing: 10) {
+                                ForEach(engine.kanjiLookupResults) { item in
+                                    Button {
+                                        engine.openKanjiDetail(codepoint: item.codepoint)
+                                    } label: {
+                                        VStack(spacing: 3) {
+                                            HStack {
+                                                Text("\(item.strokes)画")
+                                                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                                                    .foregroundStyle(.secondary)
+                                                Spacer()
+                                                if !item.gradeLabel.isEmpty {
+                                                    Text(item.gradeLabel)
+                                                        .font(.system(size: 10, weight: .bold))
+                                                        .foregroundStyle(Color.accentColor)
+                                                } else if !item.jlptLabel.isEmpty {
+                                                    Text(item.jlptLabel)
+                                                        .font(.system(size: 10, weight: .bold))
+                                                        .foregroundStyle(.green)
+                                                }
+                                            }
+                                            .padding(.horizontal, 6)
+
+                                            Text(item.glyph)
+                                                .font(.system(size: 34, weight: .bold))
+                                                .foregroundStyle(.primary)
+
+                                            Text(item.primaryReading.isEmpty ? (item.meanings.split(separator: ";").first.map(String.init) ?? "") : item.primaryReading)
+                                                .font(.system(size: 11, weight: .medium))
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                                .padding(.horizontal, 4)
+                                        }
+                                        .frame(width: 92, height: 88)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                .fill(Color.primary.opacity(0.07))
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                                                )
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("\(item.glyph) • \(item.meanings)")
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(18)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 20)
+        }
+        .onAppear {
+            if engine.kanjiLookupResults.isEmpty {
+                engine.runKanjiLookup()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var modeControlsView: some View {
+        switch engine.kanjiLookupMode {
+        case .strokes:
+            VStack(alignment: .leading, spacing: 10) {
+                WrappingHStack(alignment: .center, horizontalSpacing: 14, verticalSpacing: 8) {
+                    Text("Total Strokes:")
+                        .font(.subheadline.weight(.semibold))
+                    Stepper("\(engine.kanjiLookupStrokeCount) strokes", value: $engine.kanjiLookupStrokeCount, in: 1...34)
+                        .frame(width: 170)
+                        .onChange(of: engine.kanjiLookupStrokeCount) { _, _ in
+                            engine.runKanjiLookup()
+                        }
+
+                    Picker("Tolerance", selection: $engine.kanjiLookupStrokeTolerance) {
+                        Text("Exact").tag(0)
+                        Text("±1").tag(1)
+                        Text("±2").tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 150)
+                    .onChange(of: engine.kanjiLookupStrokeTolerance) { _, _ in
+                        engine.runKanjiLookup()
+                    }
+
+                    Picker("Set", selection: $engine.kanjiLookupLevelFilter) {
+                        Text("All Kanji").tag(0)
+                        Text("Jōyō Only").tag(1)
+                        Text("Kyōiku (G1–G6)").tag(2)
+                        Text("JLPT Only").tag(3)
+                    }
+                    .frame(width: 170)
+                    .onChange(of: engine.kanjiLookupLevelFilter) { _, _ in
+                        engine.runKanjiLookup()
+                    }
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(1...24, id: \.self) { st in
+                            let isSelected = (engine.kanjiLookupStrokeCount == st)
+                            Button {
+                                engine.kanjiLookupStrokeCount = st
+                                engine.runKanjiLookup()
+                            } label: {
+                                Text("\(st)")
+                                    .font(.caption.monospacedDigit().weight(.bold))
+                                    .frame(width: 30, height: 26)
+                                    .background(RoundedRectangle(cornerRadius: 8).fill(isSelected ? Color.accentColor : Color.primary.opacity(0.08)))
+                                    .foregroundStyle(isSelected ? .white : .primary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
+        case .reading:
+            WrappingHStack(alignment: .center, horizontalSpacing: 12, verticalSpacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "character.ja")
+                        .foregroundStyle(.secondary)
+                    TextField("Enter On or Kun reading in Romaji, Hiragana, or Katakana (e.g. sei, せい, おお)...", text: $engine.kanjiLookupReadingQuery)
+                        .textFieldStyle(.plain)
+                        .onChange(of: engine.kanjiLookupReadingQuery) { _, _ in
+                            engine.runKanjiLookup()
+                        }
+                        .onSubmit {
+                            if let first = engine.kanjiLookupResults.first {
+                                engine.openKanjiDetail(codepoint: first.codepoint)
+                            }
+                        }
+                    if !engine.kanjiLookupReadingQuery.isEmpty {
+                        Button {
+                            engine.kanjiLookupReadingQuery = ""
+                            engine.runKanjiLookup()
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .djAccessibleControl(label: "Clear reading search")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
+                .frame(minWidth: 240, maxWidth: 420)
+
+                Picker("Scope", selection: $engine.kanjiLookupReadingScope) {
+                    Text("All Readings").tag(0)
+                    Text("On'yomi").tag(1)
+                    Text("Kun'yomi").tag(2)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 240)
+                .onChange(of: engine.kanjiLookupReadingScope) { _, _ in
+                    engine.runKanjiLookup()
+                }
+
+                Toggle("Exact", isOn: $engine.kanjiLookupReadingExact)
+                    .toggleStyle(.switch)
+                    .onChange(of: engine.kanjiLookupReadingExact) { _, _ in
+                        engine.runKanjiLookup()
+                    }
+            }
+
+        case .skip:
+            VStack(alignment: .leading, spacing: 10) {
+                WrappingHStack(alignment: .center, horizontalSpacing: 10, verticalSpacing: 8) {
+                    ForEach(skipPatterns, id: \.id) { pat in
+                        let selected = (engine.kanjiLookupSkipPattern == pat.id)
+                        Button {
+                            engine.kanjiLookupSkipPattern = pat.id
+                            engine.runKanjiLookup()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: pat.icon)
+                                    .font(.title3)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(pat.title)
+                                        .font(.caption.weight(.bold))
+                                    Text(pat.subtitle)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(selected ? Color.accentColor.opacity(0.28) : Color.primary.opacity(0.07))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .strokeBorder(selected ? Color.accentColor : Color.clear, lineWidth: 1.5)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                WrappingHStack(alignment: .center, horizontalSpacing: 18, verticalSpacing: 8) {
+                    Stepper(
+                        engine.kanjiLookupSkipPart1 == 0 ? "Part 1 Strokes: Any" : "Part 1: \(engine.kanjiLookupSkipPart1) strokes",
+                        value: $engine.kanjiLookupSkipPart1,
+                        in: 0...25
+                    )
+                    .frame(width: 210)
+                    .onChange(of: engine.kanjiLookupSkipPart1) { _, _ in
+                        engine.runKanjiLookup()
+                    }
+
+                    Stepper(
+                        engine.kanjiLookupSkipPart2 == 0 ? "Part 2 Strokes: Any" : "Part 2: \(engine.kanjiLookupSkipPart2) strokes",
+                        value: $engine.kanjiLookupSkipPart2,
+                        in: 0...25
+                    )
+                    .frame(width: 210)
+                    .onChange(of: engine.kanjiLookupSkipPart2) { _, _ in
+                        engine.runKanjiLookup()
+                    }
+
+                    if engine.kanjiLookupSkipPart1 > 0 || engine.kanjiLookupSkipPart2 > 0 {
+                        Button("Reset Part Counts") {
+                            engine.kanjiLookupSkipPart1 = 0
+                            engine.kanjiLookupSkipPart2 = 0
+                            engine.runKanjiLookup()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                    }
+                }
+            }
+
+        case .fourCorner:
+            WrappingHStack(alignment: .center, horizontalSpacing: 14, verticalSpacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "number.square")
+                        .foregroundStyle(.secondary)
+                    TextField("Enter 1 to 4 Four-Corner digits (0–9, e.g. 4003 for 大)...", text: $engine.kanjiLookupFourCorner)
+                        .textFieldStyle(.plain)
+                        .onChange(of: engine.kanjiLookupFourCorner) { _, _ in
+                            engine.runKanjiLookup()
+                        }
+                        .onSubmit {
+                            if let first = engine.kanjiLookupResults.first {
+                                engine.openKanjiDetail(codepoint: first.codepoint)
+                            }
+                        }
+                    if !engine.kanjiLookupFourCorner.isEmpty {
+                        Button {
+                            engine.kanjiLookupFourCorner = ""
+                            engine.runKanjiLookup()
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .djAccessibleControl(label: "Clear Four-Corner search")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
+                .frame(minWidth: 240, maxWidth: 420)
+
+                Text("0=Lid • 1=Horizontal • 2=Vertical • 3=Dot • 4=Cross • 5=Skewer • 6=Box • 7=Angle • 8=Eight • 9=Small")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+        case .gradeJlpt:
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(gradeOptions, id: \.id) { opt in
+                        let selected = (engine.kanjiLookupGradeFilter == opt.id)
+                        Button {
+                            engine.kanjiLookupGradeFilter = opt.id
+                            engine.runKanjiLookup()
+                        } label: {
+                            Text(opt.label)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(Capsule().fill(selected ? Color.accentColor : Color.primary.opacity(0.08)))
+                                .foregroundStyle(selected ? .white : .primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+        case .meaning:
+            HStack(spacing: 8) {
+                Image(systemName: "text.magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search English Kanji meaning keywords (e.g. dragon, bridge, harmony, thunder)...", text: $engine.kanjiLookupMeaningQuery)
+                    .textFieldStyle(.plain)
+                    .onChange(of: engine.kanjiLookupMeaningQuery) { _, _ in
+                        engine.runKanjiLookup()
+                    }
+                    .onSubmit {
+                        if let first = engine.kanjiLookupResults.first {
+                            engine.openKanjiDetail(codepoint: first.codepoint)
+                        }
+                    }
+                if !engine.kanjiLookupMeaningQuery.isEmpty {
+                    Button {
+                        engine.kanjiLookupMeaningQuery = ""
+                        engine.runKanjiLookup()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .djAccessibleControl(label: "Clear meaning search")
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
+        }
+    }
+}

@@ -2,6 +2,21 @@
 
 `tools/corpus-builder` compiles open linguistic datasets into a single normalized, read-only SQLite database (`daijishow.db`) shared identically across all platforms.
 
+> **Status snapshot.** The tables below are the **designed** schema; the
+> **current `daijishow.db`** ships a subset. As of the current build:
+> `entries` (~963k), `senses` (~998k), `kanji` (13,108), `kanji_edges`
+> (~384k), `kanji_radicals` (~33k), `idioms` (4,177), `sentences` (80,000) and
+> `sentence_index` (~193k) are populated. `collocations`, `keigo_ladders`, and
+> `idiom_triggers` exist in the schema but are **empty (0 rows)** in the current
+> ETL — the macOS UI guards them, so those sections simply render nothing until
+> the ETL fills them. Designed-but-not-yet-ingested sources (Wiktionary monolingual
+> *Kokugo* glosses, BCCWJ/Jiten split frequency ranks, NINJAL collocations) are
+> listed below as targets.
+>
+> **Licenses:** JMdict / JMnedict are **CC BY 4.0**; KANJIDIC2 is **CC BY-SA
+> 4.0**; KanjiVG and the Kanjium pitch accents are **Open Source**; Tatoeba
+> sentences are **CC BY 2.0**. The About window credits all of these.
+
 ---
 
 ## 1. Master Linguistic Source Stack
@@ -10,7 +25,7 @@
 | :--- | :--- | :--- |
 | **Core Bilingual Lexicon** | **JMdict** + **Jitendex** enrichments | ~210k entries, headwords, readings, POS bitmasks, dialect/register tags, antonyms/xrefs |
 | **Proper Names** | **JMnedict (ENAMDICT)** | ~740k people, places, train stations, companies, historical names (`is_name = 1`) |
-| **Monolingual Glosses** | **Wiktionary Japanese Monolingual Dump** | Native *Kokugo* definitions (all words tokenized for recursive WordTank jumps) |
+| **Monolingual Glosses** | **Wiktionary Japanese Monolingual Dump** | Native *Kokugo* definitions (all words tokenized for recursive "jump" lookups) |
 | **Kanji Metadata** | **KANJIDIC2** + **Kanjium** + **CHISE IDS** | *On/Kun* readings, strokes, grade, JLPT, Kanken, SKIP, 4-Corner, JIS, *Kyūjitai/Shinjitai*, phonetic series |
 | **Stroke Vectors & Radicals** | **KanjiVG** | Stroke-by-stroke vector paths (quantized to `uint16` binary blobs) + sub-component radical trees |
 | **Pitch Accent** | **Kanjium Pitch Accent** + **UniDic** | Tokyo pitch-accent drop positions (`Heiban`, `Atamadaka`, `Nakadaka`, `Odaka`) |
